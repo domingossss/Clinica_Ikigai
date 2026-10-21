@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Painel de agendamento | Clínica Ikigai</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Figtree:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#dcefe9;--card:#f8e5d2;--ink:#10292a;--mute:#56635d;--line:#c6d9d0;--acc:#4db39c;--acc2:#e6a56d;--bad:#9b5134;--ok:#4db39c;--slate:#6f8494;--rgb:77,179,156;--onacc:#10292a;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#153a32;--card:#29473e;--ink:#f1f4ee;--mute:#b3c9bf;--line:#3b6558;--acc:#4db39c;--acc2:#e6a56d;--bad:#f2b17b;--ok:#4db39c;--slate:#8fa5b5;--rgb:77,179,156;--onacc:#06201d}}
+:root[data-theme="dark"]{--bg:#153a32;--card:#29473e;--ink:#f1f4ee;--mute:#b3c9bf;--line:#3b6558;--acc:#4db39c;--acc2:#e6a56d;--bad:#f2b17b;--ok:#4db39c;--slate:#8fa5b5;--rgb:77,179,156;--onacc:#06201d}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 Figtree,system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 16px 48px}
+h1,h2,h3{font-family:"Bricolage Grotesque",Figtree,system-ui,sans-serif;margin:0;letter-spacing:-.01em}
+h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.1}
+header{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:flex-end;margin-bottom:12px}
+header p{margin:6px 0 0;color:var(--mute)}
+.ctl{display:flex;gap:10px;flex-wrap:wrap}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:3px}
+select{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:40px}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.note{background:color-mix(in srgb,var(--acc2) 16%,var(--card));border-left:3px solid var(--acc2);padding:8px 12px;border-radius:6px;font-size:13px;margin:0 0 20px}
+h2{font-size:1.15rem;margin:26px 0 10px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.k{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.k .t{font-size:13px;color:var(--mute)}
+.k .v{font:700 1.65rem/1.15 "Bricolage Grotesque",Figtree,sans-serif;margin:4px 0 2px;overflow-wrap:anywhere}
+.k .s{font-size:12px;color:var(--mute)}
+.d{font-size:12px;font-weight:600;margin-top:6px}
+.d.up{color:var(--ok)}.d.dn{color:var(--bad)}.d.flat{color:var(--mute)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:12px}
+.p{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
+.p h3{font-size:1rem}.p .h{color:var(--mute);font-size:12px;margin:2px 0 10px}
+.cv{position:relative;height:250px}
+.p.w{grid-column:1/-1}
+.hm{display:grid;grid-template-columns:42px repeat(6,1fr);gap:3px;font-size:12px;overflow-x:auto;min-width:0}
+.hm div{padding:6px 2px;text-align:center;border-radius:4px}
+.hm .l{color:var(--mute);background:none}
+details{margin-top:26px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+summary{cursor:pointer;font-weight:600}
+.tb{overflow-x:auto;margin-top:10px}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:13px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mute);font-weight:600}
+@media(max-width:520px){.cv{height:220px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+[hidden]{display:none!important}
+button.k{font:inherit;color:inherit;text-align:left;cursor:pointer;width:100%;display:block;transition:border-color .15s}
+button.k:hover{border-color:var(--acc)}
+.k .go{font-size:12px;color:var(--acc);font-weight:600;margin-top:8px}
+.bk{font:inherit;background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 14px;cursor:pointer;margin:4px 0 16px;min-height:40px}
+.dh{display:flex;flex-wrap:wrap;gap:8px 32px;align-items:flex-end}
+.dh .big{font:700 clamp(2rem,6vw,2.8rem)/1.1 "Bricolage Grotesque",Figtree,sans-serif;overflow-wrap:anywhere}
+.dd{color:var(--mute);margin:8px 0 0;max-width:70ch}
+.chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:16px 0}
+.chips div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.chips b{display:block;font:700 1.1rem/1.25 "Bricolage Grotesque",Figtree,sans-serif;overflow-wrap:anywhere}
+.chips span{font-size:12px;color:var(--mute)}
+.cv.tall{height:310px}
+.fun{display:grid;gap:12px;margin-top:6px}
+.fun b{font-weight:600}.fun .bar{height:12px;background:var(--line);border-radius:6px;overflow:hidden;margin-top:4px}
+.fun .bar i{display:block;height:100%;background:var(--acc)}
+.cal{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.mc{font:inherit;color:inherit;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer;display:block;width:100%}
+.mc:hover{border-color:var(--acc)}.mc.on{border-color:var(--acc);box-shadow:inset 0 0 0 2px var(--acc)}.mc:disabled{opacity:.5;cursor:default}
+.mc b{display:block;font-family:"Bricolage Grotesque",Figtree,sans-serif}.mc span{font-size:12px;color:var(--mute)}
+.mg{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-top:8px;font-size:10px;text-align:center}
+.mg i{font-style:normal;border-radius:3px;padding:3px 0;min-height:18px}.mg .l{color:var(--mute)}.mg .off,.cg .off{color:var(--mute);opacity:.45}
+.cg{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cg i{font-style:normal;border-radius:6px;min-height:62px;padding:4px 6px;font-size:11px;display:flex;flex-direction:column;justify-content:space-between}
+.cg i small{font-size:10px;text-align:right;white-space:nowrap;opacity:.9}
+.cg i b{font:700 1.05rem "Bricolage Grotesque",Figtree,sans-serif;text-align:right}
+.cg .l{min-height:0;display:block;color:var(--mute);text-align:center;padding:2px}
+.cs{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:6px 0 4px}
+@media(max-width:520px){.cg i{min-height:40px;padding:3px 4px}}
+:root{--sg:#2a7f50;--sy:#e0a21b;--sr:#b3382a;--onf:#fff}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--sg:#6fcf97;--sy:#f2c94c;--sr:#ff8f7e;--onf:#10231f}}
+:root[data-theme="dark"]{--sg:#6fcf97;--sy:#f2c94c;--sr:#ff8f7e;--onf:#10231f}
+.s0{--c:var(--sr)}.s1{--c:var(--sy)}.s2{--c:var(--sg)}
+.dot,.badge i{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--c);color:var(--onf);font:800 15px/1 Figtree,system-ui,sans-serif;font-style:normal;flex:none}
+.s1 .dot,.s1.dot,.badge.s1 i{color:#2a1d00}
+.badge{display:inline-flex;gap:6px;align-items:center;font-weight:700;font-size:13px;padding:3px 12px 3px 4px;border-radius:999px;border:2px solid var(--c);background:color-mix(in srgb,var(--c) 20%,var(--card));color:var(--ink)}
+.badge i{width:20px;height:20px;font-size:12px}
+.alerta{display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:16px 18px;border-radius:12px;border:2px solid var(--c);background:color-mix(in srgb,var(--c) 16%,var(--card));margin-top:6px}
+.alerta .dot{width:42px;height:42px;font-size:22px}
+.alerta>div{flex:1;min-width:200px}
+.alerta b{display:block;font:700 clamp(1.25rem,3.6vw,1.8rem)/1.2 "Bricolage Grotesque",Figtree,sans-serif}
+.alerta em{font-style:normal;font-weight:500;color:var(--mute);font-size:.75em}
+.alerta small{display:block;color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+.alerta .bk{margin:0}
+.rk{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 0;font-size:13px;color:var(--mute)}
+.rk button{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--c);border-radius:999px;padding:4px 12px 4px 5px;cursor:pointer;display:inline-flex;gap:8px;align-items:center;min-height:36px}
+.rk .dot{width:22px;height:22px;font-size:12px}
+.leg{font-size:13px;color:var(--mute);max-width:95ch;margin:0 0 12px}
+.macros{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));gap:14px}
+.mac{border:1px solid var(--line);border-left:10px solid var(--c);background:color-mix(in srgb,var(--c) 11%,var(--card));border-radius:12px;padding:16px;min-width:0}
+.mac header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.mac h3{font-size:1.3rem}
+.sc{display:flex;align-items:baseline;gap:8px;margin-top:6px}
+.sc b{font:700 3.4rem/1 "Bricolage Grotesque",Figtree,sans-serif}.sc span{color:var(--mute)}
+.mac>p{margin:2px 0 12px;color:var(--mute);font-size:13px}
+.subs{display:grid;gap:8px}
+.sub{font:inherit;color:inherit;text-align:left;cursor:pointer;display:grid;grid-template-columns:28px 1fr auto;gap:2px 12px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:5px solid var(--c);border-radius:10px;padding:10px 12px;width:100%}
+.sub:hover{border-color:var(--c)}
+.sub .sn{display:block;font-weight:600}
+.sub em{font-style:normal;font-weight:400;color:var(--mute);font-size:12px;margin-left:8px}
+.sub small{display:block;color:var(--mute);font-size:12px;font-weight:400}
+.sub b{font:700 1.8rem/1 "Bricolage Grotesque",Figtree,sans-serif;text-align:right}
+.sub .d{grid-column:2/-1;margin:0}
+.f0{background:color-mix(in srgb,var(--sr) 42%,var(--card))}.f1{background:color-mix(in srgb,var(--sy) 45%,var(--card))}.f2{background:color-mix(in srgb,var(--sg) 38%,var(--card))}
+.mc.s0,.mc.s1,.mc.s2{border-left:8px solid var(--c)}
+.ins{background:color-mix(in srgb,var(--acc2) 20%,var(--card));border-left:4px solid var(--acc2);border-radius:8px;padding:10px 14px;margin:8px 0 12px}
+.hm b{font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+ <div><h1>Painel de agendamento</h1><p>Clínica Ikigai · saúde integrativa com agendamento por chatbot de IA</p></div>
+ <div class="ctl">
+  <label>Período<select id="per"><option value="7">Últimos 7 dias</option><option value="30" selected>Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="180">Últimos 6 meses</option><option value="365">Últimos 12 meses</option></select></label>
+  <label>Especialidade<select id="esp"></select></label>
+ </div>
+</header>
+<p class="note">Dados simulados para demonstração. As metas do farol são provisórias, a validar com a clínica. Clique em um indicador para abrir a análise detalhada; as variações comparam com o período anterior de mesmo tamanho.</p>
+<div id="home">
+<div id="alerta"></div>
+<h2>Visão macro</h2>
+<p class="leg"><b>Como ler:</b> cada área reúne indicadores com peso. A nota da área vai de 0 a 100 (indicador verde vale 100, amarelo 50 e vermelho 0, multiplicado pelo peso). Área verde: nota de 75 ou mais. Amarela: de 30 a 74. Vermelha: abaixo de 30. Uma área nunca fica verde se tiver indicador vermelho. As metas são provisórias e estão na tabela no fim da página.</p>
+<div class="macros" id="macros"></div>
+<h2>Informativos</h2><div class="kpis" id="kinfo"></div>
+
+<h2>Calendário de atendimentos</h2>
+<div class="cs">
+ <label>Ano<select id="cy"></select></label>
+ <label>Colorir por<select id="cm"><option value="NC" selected>Não comparecimento (%)</option><option value="C">Cancelamentos (%)</option><option value="N">No-show (%)</option><option value="R">Atendimentos realizados</option><option value="A">Agendamentos</option></select></label>
+</div>
+<p class="h" style="color:var(--mute);font-size:12px;margin:0 0 6px">Não comparecimento = cancelamentos + no-show, em % dos agendamentos. Segue o filtro de especialidade; o filtro de período não se aplica aqui.</p>
+<div class="ins" id="ci"></div>
+<div class="chips" id="cc"></div>
+<div class="grid" id="cyr"></div>
+<h3 style="margin:22px 0 8px">Mês a mês</h3>
+<div class="cal" id="cal"></div>
+<div id="cd"></div>
+
+<details open><summary>Metas, pesos e regra de cálculo do farol</summary><div class="tb"><table id="rt"></table></div></details>
+
+<details><summary>Definição e fórmula de cada KPI</summary><div class="tb"><table>
+<thead><tr><th>KPI</th><th>Fórmula</th><th>Fonte de dados</th></tr></thead><tbody>
+<tr><td>Taxa de reagendamento</td><td>Reagendados ÷ agendamentos totais</td><td>Sistema de agenda</td></tr>
+<tr><td>Não comparecimento</td><td>(Cancelamentos + no-show) ÷ agendamentos totais</td><td>Agenda / recepção</td></tr>
+<tr><td>Ocupação da agenda</td><td>Horários preenchidos (não cancelados) ÷ horários disponíveis</td><td>Agenda</td></tr>
+<tr><td>Atraso médio</td><td>Soma dos minutos de atraso ÷ consultas realizadas</td><td>Recepção (check-in x horário marcado)</td></tr>
+<tr><td>Atendimento integrativo mais realizado</td><td>Ranking de terapias concluídas por especialidade</td><td>Prontuário / agenda</td></tr>
+<tr><td>Perfil do paciente</td><td>Distribuição por idade, sexo e convênio x particular</td><td>Cadastro</td></tr>
+<tr><td>Satisfação (NPS)</td><td>% promotores (9–10) − % detratores (0–6)</td><td>Pesquisa pós-consulta</td></tr>
+<tr><td>Ticket médio</td><td>Receita ÷ atendimentos realizados</td><td>Financeiro</td></tr>
+<tr><td>Taxa de retorno</td><td>Atendimentos de retorno ÷ atendimentos realizados</td><td>Prontuário / cadastro</td></tr>
+<tr><td>Resolução sem humano</td><td>Agendamentos concluídos pelo bot sem atendente ÷ agendamentos pelo bot</td><td>Logs do chatbot</td></tr>
+<tr><td>Conversão em agendamento</td><td>Agendamentos pelo bot ÷ conversas iniciadas</td><td>Logs do chatbot</td></tr>
+</tbody></table></div></details>
+</div>
+<section id="det" hidden aria-live="polite">
+ <button class="bk" id="bk">← Todos os indicadores</button>
+ <div id="dh"></div>
+ <div class="chips" id="ch"></div>
+ <div class="grid" id="dg"></div>
+</section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+/* ===== Dados simulados: troque D e AB pelos dados reais da clínica ===== */
+const SP=[['Acupuntura',220,25,.10],['Nutrição integrativa',280,20,.12],['Psicoterapia integrativa',250,18,.10],['Massoterapia',180,17,.15],['Fitoterapia',200,10,.14],['Naturopatia',300,10,.12]];
+const AGE=['0–17','18–30','31–45','46–60','60+'];
+function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rd=rng(7),D=[],AB=[],today=new Date();
+const slotRd=rng(29),SLOT_COUNTS=[...Array(10).fill(0),...Array(40).fill(1),...Array(10).fill(2)];
+for(let slotIndex=SLOT_COUNTS.length-1;slotIndex>0;slotIndex--){const swapIndex=Math.floor(slotRd()*(slotIndex+1));[SLOT_COUNTS[slotIndex],SLOT_COUNTS[swapIndex]]=[SLOT_COUNTS[swapIndex],SLOT_COUNTS[slotIndex]]}
+const dow=d=>new Date(today-d*864e5).getDay();
+for(let d=0;d<730;d++){
+ const w=dow(d);if(w===0)continue;
+ AB[d]=2+Math.floor(rd()*4);
+ for(let h=8;h<=17;h++)for(let i=0;i<SLOT_COUNTS[(w-1)*10+h-8];i++){
+  let x=rd()*100,si=0;for(;si<5&&x>SP[si][2];si++)x-=SP[si][2];
+  const sp=SP[si],r=rd(),ns=.05+Math.min(d,180)*.0004;
+  const s=r<sp[3]?'C':r<sp[3]+ns?'N':r<sp[3]+ns+.1?'M':'R',ok=s==='R',a=rd();
+  D.push({d,w,h,sp:si,s,
+   dl:ok?Math.round(4+rd()*rd()*40+(h>13?6:0)):0,
+   pr:ok?Math.round(sp[1]*(.8+rd()*.4)):0,
+   nt:ok&&rd()<.62?Math.round(10-rd()*rd()*6.5):null,
+   age:a<.12?0:a<.38?1:a<.68?2:a<.88?3:4,
+   sx:rd()<.62?'Feminino':'Masculino',cv:rd()<.55?'Convênio':'Particular',
+   rt:ok&&rd()<.4,bot:rd()<.72,esc:rd()<.17});
+ }
+}
+/* ===== Cálculo dos KPIs ===== */
+const cap=(a,b)=>{let c=0;for(let d=a;d<b;d++){const w=dow(d);c+=w===0?0:12}return c};
+const avg=(l,f)=>l.length?l.reduce((s,x)=>s+f(x),0)/l.length:0;
+function M(a,b,sp){
+ const share=sp<0?1:SP[sp][2]/100;
+ const L=D.filter(x=>x.d>=a&&x.d<b&&(sp<0||x.sp===sp));
+ const n=Math.max(1,L.length),f=s=>L.filter(x=>x.s===s),Rl=f('R'),C=f('C').length,N=f('N').length,Mm=f('M').length;
+ const rated=Rl.filter(x=>x.nt!=null),pro=rated.filter(x=>x.nt>=9).length,det=rated.filter(x=>x.nt<=6).length;
+ const bot=L.filter(x=>x.bot),botOk=bot.filter(x=>x.s==='R'&&!x.esc).length,cp=Math.round(cap(a,b)*share);
+ let ab=0;for(let d=a;d<b;d++)ab+=(AB[d]||0)*share;
+ const ss=SP.map((s,i)=>{const l=L.filter(x=>x.sp===i),r=l.filter(x=>x.s==='R'),k=l.length||1,ra=r.filter(x=>x.nt!=null),pm=ra.filter(x=>x.nt>=9).length,dt=ra.filter(x=>x.nt<=6).length,q=z=>l.filter(x=>x.s===z).length/k*100;
+  return{nm:s[0],t:l.length,r:r.length,cr:q('C'),nc:q('C')+q('N'),rr:q('M'),nsr:q('N'),dl:avg(r,x=>x.dl),tk:avg(r,x=>x.pr),rv:r.reduce((a,x)=>a+x.pr,0),rt:r.length?r.filter(x=>x.rt).length/r.length*100:0,nps:ra.length?(pm-dt)/ra.length*100:0,bt:l.filter(x=>x.bot).length/k*100}}).filter(s=>s.t);
+ const ages=AGE.map((_,i)=>Rl.filter(x=>x.age===i).length),am=ages.indexOf(Math.max(...ages));
+ const top=[...ss].sort((p,q)=>q.r-p.r)[0]||{nm:'—',r:0},worst=[...ss].sort((p,q)=>q.cr-p.cr)[0];
+ return{L,Rl,ss,ages,n,nR:Rl.length,C,N,Mm,cp,rated:rated.length,
+  rr:Mm/n*100,ns:N/n*100,nc:(C+N)/n*100,oc:cp?(L.length-C)/cp*100:0,dl:avg(Rl,x=>x.dl),cr:C/n*100,
+  top,worst,ageTop:AGE[am],ageSh:Rl.length?ages[am]/Rl.length*100:0,cv:Rl.length?Rl.filter(x=>x.cv==='Convênio').length/Rl.length*100:0,
+  nps:rated.length?(pro-det)/rated.length*100:0,tk:avg(Rl,x=>x.pr),rt:Rl.length?Rl.filter(x=>x.rt).length/Rl.length*100:0,
+  bn:bot.length,res:bot.length?botOk/bot.length*100:0,conv:bot.length+ab?bot.length/(bot.length+ab)*100:0,conversas:Math.round(bot.length+ab),botOk};
+}
+const pc=v=>v.toFixed(1).replace('.',',')+'%',rs=v=>'R$ '+Math.round(v).toLocaleString('pt-BR');
+/* [grupo, título, valor, número p/ variação, sentido bom, unidade, subtítulo] */
+const K=[
+ [0,'Taxa de reagendamento',m=>pc(m.rr),m=>m.rr,-1,'pp',m=>`${m.Mm} de ${m.n} agendamentos`],
+ [0,'Não comparecimento',m=>pc(m.nc),m=>m.nc,-1,'pp',m=>`${m.C+m.N} consultas perdidas · cancel. ${pc(m.cr)} · no-show ${pc(m.ns)}`],
+ [0,'Ocupação da agenda',m=>pc(m.oc),m=>m.oc,1,'pp',m=>`${m.L.length-m.C} de ${m.cp} horários`],
+ [0,'Atraso médio',m=>Math.round(m.dl)+' min',m=>m.dl,-1,'min',m=>'nas consultas realizadas'],
+ [0,'Atendimento integrativo mais realizado',m=>m.top.nm,null,0,'',m=>`${m.top.r} atendimentos · ${pc(m.top.r/Math.max(1,m.nR)*100)}`],
+ [1,'Perfil predominante',m=>m.ageTop+' anos',null,0,'',m=>`${pc(m.ageSh)} dos pacientes · ${pc(m.cv)} com convênio`],
+ [1,'Satisfação (NPS)',m=>Math.round(m.nps),m=>m.nps,1,'pts',m=>`${m.rated} avaliações`],
+ [1,'Ticket médio',m=>rs(m.tk),m=>m.tk,1,'rel',m=>`${m.nR} atendimentos`],
+ [1,'Taxa de retorno',m=>pc(m.rt),m=>m.rt,1,'pp',m=>'pacientes que voltaram'],
+ [2,'Resolução sem humano',m=>pc(m.res),m=>m.res,1,'pp',m=>`${m.botOk} de ${m.bn} agendamentos do bot`],
+ [2,'Conversão em agendamento',m=>pc(m.conv),m=>m.conv,1,'pp',m=>`${m.bn} de ${m.conversas} conversas`]
+];
+/* ===== Gráficos e páginas de detalhe ===== */
+const $=s=>document.querySelector(s),css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let CH=[],c,p,A,AP,N,sp,cur=null,PV='age';
+const dn=['Seg','Ter','Qua','Qui','Sex','Sáb'],HR=[8,9,10,11,12,13,14,15,16,17];
+const mk=(id,cfg)=>CH.push(new Chart(document.getElementById(id),cfg));
+const P=()=>[css('--acc'),css('--acc2'),css('--bad'),css('--slate'),css('--ok'),'#b58aa5'];
+const f1=v=>+v.toFixed(1),maxI=a=>a.indexOf(Math.max(...a)),sh=n=>n.split(' ');
+const rate=(l,s)=>l.length?l.filter(x=>x.s===s).length/l.length*100:0;
+const pct=(l,fn)=>l.length?l.filter(fn).length/l.length*100:0;
+const byW=f=>dn.map((_,i)=>f1(f(c.L.filter(x=>x.w===i+1))));
+const byH=f=>HR.map(h=>f1(f(c.L.filter(x=>x.h===h))));
+const topS=(k,fm=pc)=>{const s=[...c.ss].sort((x,y)=>y[k]-x[k])[0];return s?`${s.nm} (${fm(s[k])})`:'—'};
+const sg=(m,n)=>m.ss.find(s=>s.nm===n);
+const dc=(a,b)=>{const o={};for(let d=a;d<b;d++){const w=dow(d);if(w)o[w]=(o[w]||0)+1}return o};
+function opt(o={}){const mu=css('--mute'),ln=css('--line');
+ return{maintainAspectRatio:false,indexAxis:o.ix||'x',plugins:{legend:{display:!!o.lg,position:'bottom',labels:{color:mu,boxWidth:12}}},
+ scales:o.no?{}:{x:{stacked:!!o.st,grid:{display:false},ticks:{color:mu}},y:{stacked:!!o.st,beginAtZero:true,grid:{color:ln},ticks:{color:mu}}}}}
+const ro=()=>({maintainAspectRatio:false,plugins:{legend:{display:true,position:'bottom',labels:{color:css('--mute'),boxWidth:12}}},scales:{r:{beginAtZero:true,grid:{color:css('--line')},angleLines:{color:css('--line')},pointLabels:{color:css('--ink'),font:{size:11}},ticks:{color:css('--mute'),backdropColor:'transparent'}}}});
+const br=(lb,d,col,o)=>({type:'bar',data:{labels:lb,datasets:[{data:d,backgroundColor:col}]},options:opt(o)});
+const lc=(lb,sets)=>({type:'line',data:{labels:lb,datasets:sets.map(([n,d,col,ds],i)=>({label:n,data:d,borderColor:col,backgroundColor:col+'26',fill:i===0&&sets.length<3,tension:.3,pointRadius:2,borderDash:ds?[5,4]:[],spanGaps:true}))},options:opt({lg:1})});
+const rds=(n,d,col)=>({label:n,data:d,borderColor:col,backgroundColor:col+'33',pointBackgroundColor:col});
+const pie=(lb,d,type)=>({type:type||'doughnut',data:{labels:lb,datasets:[{data:d,backgroundColor:P(),borderColor:css('--card')}]},options:{maintainAspectRatio:false,plugins:{legend:{display:true,position:'bottom',labels:{color:css('--mute'),boxWidth:12}}},...(type==='polarArea'?{scales:{r:{grid:{color:css('--line')},ticks:{display:false}}}}:{})}});
+/* evolução: período atual x anterior, em blocos de dias */
+function tr(fn,t){const B=N<=7?7:N<=30?10:12,z=Math.ceil(N/B),lb=[],a=[],b=[];
+ for(let i=0;i<B;i++){const hi=N-i*z,lo=Math.max(0,hi-z);if(hi<=0)break;
+  const m=M(lo,hi,sp),q=M(lo+N,hi+N,sp),d=new Date(today-(hi-1)*864e5);
+  lb.push(String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'));
+  a.push(m.L.length?f1(fn(m)):null);b.push(q.L.length?f1(fn(q)):null)}
+ return{t,h:'Linha cheia: período atual · tracejada: período anterior',cfg:lc(lb,[['Atual',a,P()[0]],['Anterior',b,P()[3],1]])}}
+/* radar por terapia: atual x anterior */
+function rad(f,t,h){const nm=SP.map(s=>s[0]),g=m=>nm.map(n=>{const s=sg(m,n);return s?f1(f(s)):0});
+ return{t,h:h||'Compara todas as terapias (ignora o filtro de especialidade)',cfg:{type:'radar',data:{labels:nm.map(sh),datasets:[rds('Atual',g(A),P()[0]),rds('Anterior',g(AP),P()[3])]},options:ro()}}}
+function wk(){const ws=d=>{const x=new Date(today.getFullYear(),today.getMonth(),today.getDate()-d);x.setDate(x.getDate()-((x.getDay()+6)%7));return x};
+ const W=new Map();for(let d=N-1;d>=0;d--){const x=ws(d),k=x.getTime();if(!W.has(k))W.set(k,{x,R:0,C:0,N:0,M:0})}
+ c.L.forEach(a=>W.get(ws(a.d).getTime())[a.s]++);
+ const v=[...W.values()].sort((a,b)=>a.x-b.x),lb=v.map(w=>String(w.x.getDate()).padStart(2,'0')+'/'+String(w.x.getMonth()+1).padStart(2,'0'));
+ return{t:'Situação dos agendamentos por semana (%)',h:'% de cada situação sobre os agendamentos da semana',w:1,cfg:{type:'bar',data:{labels:lb,datasets:[['R','Realizadas',0],['M','Reagendadas',1],['C','Canceladas',2],['N','No-show',3]].map(([k,n,i])=>({label:n,data:v.map(w=>{const t=w.R+w.C+w.N+w.M;return t?f1(w[k]/t*100):0}),backgroundColor:P()[i]}))},options:opt({st:1,lg:1})}}}
+function heat(){const g={},dy=dc(0,N);c.L.filter(x=>x.s!=='C').forEach(x=>{const k=x.w+'-'+x.h;g[k]=(g[k]||0)+1});
+ let h='<div class="l"></div>'+dn.map(d=>`<div class="l">${d}</div>`).join('');
+ for(const hr of HR){h+=`<div class="l">${hr}h</div>`;for(let w=1;w<=6;w++){const v=Math.min(2,Math.round((g[w+'-'+hr]||0)/Math.max(1,dy[w]||0))),r=v/2;
+  h+=`<div style="background:rgba(${css('--rgb')},${(.06+.9*r).toFixed(2)});color:${r>.55?css('--onacc'):css('--ink')}">${v}</div>`}}
+ return{t:'Mapa de demanda',h:'Média diária de atendimentos por horário',w:1,html:'<div class="hm">'+h+'</div>'}}
+function fun(){const f=[['Conversas iniciadas',c.conversas],['Agendamentos feitos pelo bot',c.bn],['Concluídos sem humano',c.botOk]];
+ return{t:'Funil do chatbot',h:'Da conversa iniciada até o atendimento realizado sem humano',w:1,html:`<div class="fun">${f.map(([n,v])=>`<div><b>${n}</b> · ${v}<div class="bar"><i style="width:${(v/Math.max(1,f[0][1])*100).toFixed(0)}%"></i></div></div>`).join('')}</div>`}}
+function prof(){let pl,d;
+ if(PV==='age'){pl=AGE;d=c.ages}else if(PV==='tx'){pl=c.ss.map(s=>s.nm);d=c.ss.map(s=>s.r)}else{pl=PV==='sx'?['Feminino','Masculino']:['Convênio','Particular'];d=pl.map(v=>c.Rl.filter(x=>x[PV]===v).length)}
+ const o=[['age','Faixa etária'],['sx','Sexo'],['cv','Forma de pagamento'],['tx','Atendimentos realizados']].map(([v,n])=>`<option value="${v}"${v===PV?' selected':''}>${n}</option>`).join('');
+ return{t:'Perfil do paciente',h:`<select id="pv" aria-label="Perfil por">${o}</select>`,cfg:pie(pl,d)}}
+const tx=(l,fn)=>l.length?f1(l.filter(fn).length/l.length*100):0;
+/* conteúdo de cada KPI: descrição, números de apoio e painéis */
+const DT=[
+()=>({d:'Agendamentos remarcados para outra data, entre todos os agendamentos do período.',
+ st:[['Reagendamentos',`${c.Mm} (${pc(c.rr)})`],['Dia com mais remarcações',dn[maxI(byW(l=>l.filter(x=>x.s==='M').length))]],['Terapia com maior taxa',topS('rr')]],
+ pn:[tr(m=>m.rr,'Evolução da taxa de reagendamento'),rad(s=>s.rr,'Reagendamento por terapia'),{t:'Reagendamento por dia da semana',h:'% dos agendamentos de cada dia',cfg:br(dn,byW(l=>rate(l,'M')),P()[1])}]}),
+()=>({d:'Consultas perdidas: cancelamentos somados às faltas sem aviso (no-show), sobre todos os agendamentos do período.',
+ st:[['Consultas perdidas',`${c.C+c.N} (${pc(c.nc)})`],['Cancelamentos',`${c.C} (${pc(c.cr)})`],['No-show',`${c.N} (${pc(c.ns)})`],['Receita potencial perdida',rs((c.C+c.N)*c.tk)],['Dia da semana mais crítico',(()=>{const v=byW(l=>rate(l,'C')+rate(l,'N')),i=maxI(v);return dn[i]+' · '+pc(v[i])})()]],
+ pn:[tr(m=>m.nc,'Evolução do não comparecimento (%)'),
+ {t:'Cancelamento e no-show por dia da semana',h:'% dos agendamentos de cada dia',cfg:{type:'bar',data:{labels:dn,datasets:[['Cancelamentos',byW(l=>rate(l,'C')),P()[2]],['No-show',byW(l=>rate(l,'N')),P()[1]]].map(([n,d,col])=>({label:n,data:d,backgroundColor:col}))},options:opt({st:1,lg:1})}},
+ rad(s=>s.nc,'Não comparecimento por terapia'),
+ {t:'Não comparecimento por horário',h:'% dos agendamentos de cada hora',cfg:lc(HR.map(h=>h+'h'),[['Não comparecimento (%)',byH(l=>rate(l,'C')+rate(l,'N')),P()[2]]])},
+ {t:'Situação final dos agendamentos',h:'Para onde vão os agendamentos',cfg:pie(['Realizadas','Reagendadas','Canceladas','No-show'],[c.nR,c.Mm,c.C,c.N])}]}),
+()=>{const sh_=sp<0?1:SP[sp][2]/100,oc=(m,a,b)=>{const o=dc(a,b);return dn.map((_,i)=>f1(m.L.filter(x=>x.w===i+1&&x.s!=='C').length/Math.max(1,12*sh_*(o[i+1]||0))*100))};
+ return{d:'Horários ocupados (não cancelados) em relação à capacidade da agenda.',
+ st:[['Horários ocupados',c.L.length-c.C],['Capacidade da agenda',c.cp],['Horários ociosos',Math.max(0,c.cp-(c.L.length-c.C))]],
+ pn:[tr(m=>m.oc,'Evolução da ocupação'),{t:'Ocupação por dia da semana',h:'% da capacidade preenchida em cada dia',cfg:{type:'radar',data:{labels:dn,datasets:[rds('Atual',oc(c,0,N),P()[0]),rds('Anterior',oc(p,N,2*N),P()[3])]},options:ro()}},heat(),wk()]}},
+()=>({d:'Minutos médios entre o horário marcado e o início real da consulta.',
+ st:[['Pontuais (até 5 min)',pc(pct(c.Rl,x=>x.dl<=5))],['Atrasos acima de 30 min',c.Rl.filter(x=>x.dl>30).length],['Maior atraso médio',topS('dl',v=>Math.round(v)+' min')]],
+ pn:[tr(m=>m.dl,'Evolução do atraso médio (min)'),{t:'Distribuição dos atrasos',h:'Consultas por faixa de atraso',cfg:br(['0–5','6–10','11–20','21–30','30+ min'],[[0,5],[6,10],[11,20],[21,30],[31,999]].map(([a,b])=>c.Rl.filter(x=>x.dl>=a&&x.dl<=b).length),P()[1])},
+ {t:'Atraso médio por horário',h:'O atraso se acumula ao longo do dia?',cfg:lc(HR.map(h=>h+'h'),[['Minutos',byH(l=>avg(l.filter(x=>x.s==='R'),x=>x.dl)),P()[1]]])},rad(s=>s.dl,'Atraso médio por terapia (min)')]}),
+()=>({d:'Ranking das terapias concluídas no período.',
+ st:[['Atendimentos concluídos',c.nR],['Terapia líder',c.top.nm],['Peso das 3 primeiras',pc([...c.ss].sort((x,y)=>y.r-x.r).slice(0,3).reduce((a,s)=>a+s.r,0)/Math.max(1,c.nR)*100)]],
+ pn:[{t:'Ranking de terapias',h:'Atendimentos concluídos',cfg:br([...c.ss].sort((x,y)=>y.r-x.r).map(s=>s.nm),[...c.ss].sort((x,y)=>y.r-x.r).map(s=>s.r),P()[0],{ix:'y'})},
+ {t:'Participação de cada terapia',h:'% dos atendimentos concluídos',cfg:pie(c.ss.map(s=>s.nm),c.ss.map(s=>s.r),'polarArea')},
+ {t:'Terapias por dia da semana',h:'Atendimentos concluídos, empilhados por terapia',w:1,cfg:{type:'bar',data:{labels:dn,datasets:SP.map((s,i)=>({label:s[0],data:dn.map((_,j)=>c.Rl.filter(x=>x.sp===i&&x.w===j+1).length),backgroundColor:P()[i]}))},options:opt({st:1,lg:1})}}]}),
+()=>({d:'Quem são os pacientes atendidos: idade, sexo e forma de pagamento.',
+ st:[['Faixa predominante',c.ageTop+' anos'],['Com convênio',pc(c.cv)],['Mulheres',pc(pct(c.Rl,x=>x.sx==='Feminino'))]],
+ pn:[prof(),{t:'Faixa etária por sexo',h:'% de cada sexo em cada faixa',cfg:{type:'radar',data:{labels:AGE,datasets:['Feminino','Masculino'].map((s,i)=>{const l=c.Rl.filter(x=>x.sx===s);return rds(s,AGE.map((_,j)=>tx(l,x=>x.age===j)),P()[i])})},options:ro()}},
+ {t:'Faixa etária por terapia',h:'% dos pacientes de cada terapia (todas as terapias)',w:1,cfg:{type:'bar',data:{labels:SP.map(s=>s[0]),datasets:AGE.map((g,i)=>({label:g,data:SP.map((_,j)=>tx(A.Rl.filter(x=>x.sp===j),x=>x.age===i)),backgroundColor:P()[i]}))},options:opt({st:1,lg:1})}}]}),
+()=>{const ra=c.Rl.filter(x=>x.nt!=null),n=Math.max(1,ra.length);
+ return{d:'Promotores (notas 9 e 10) menos detratores (notas 0 a 6), entre quem avaliou a consulta.',
+ st:[['Promotores',pc(ra.filter(x=>x.nt>=9).length/n*100)],['Neutros (7–8)',pc(ra.filter(x=>x.nt>=7&&x.nt<=8).length/n*100)],['Detratores',pc(ra.filter(x=>x.nt<=6).length/n*100)]],
+ pn:[tr(m=>m.nps,'Evolução do NPS'),rad(s=>s.nps,'NPS por terapia'),{t:'Notas de satisfação',h:'Avaliações por nota (0 a 10)',cfg:br(Array.from({length:11},(_,i)=>i),Array.from({length:11},(_,i)=>ra.filter(x=>x.nt===i).length),Array.from({length:11},(_,i)=>i>=9?P()[0]:i>=7?P()[3]:P()[2]))}]}},
+()=>{const mx=Math.max(1,...A.ss.map(s=>s.rv));
+ return{d:'Valor médio recebido por atendimento realizado.',
+ st:[['Receita no período',rs(c.Rl.reduce((a,x)=>a+x.pr,0))],['Maior ticket',topS('tk',rs)],['Maior receita',[...c.ss].sort((x,y)=>y.rv-x.rv)[0]?.nm||'—']],
+ pn:[tr(m=>m.tk,'Evolução do ticket médio (R$)'),{t:'Ticket médio por terapia',h:'R$ por atendimento realizado',cfg:br(c.ss.map(s=>s.nm),c.ss.map(s=>Math.round(s.tk)),P()[0])},
+ {t:'Volume x valor x receita',h:'Eixo X: atendimentos · eixo Y: ticket · tamanho: receita (todas as terapias)',w:1,cfg:{type:'bubble',data:{datasets:A.ss.map((s,i)=>({label:s.nm,data:[{x:s.r,y:Math.round(s.tk),r:6+s.rv/mx*22}],backgroundColor:P()[i]+'bb'}))},options:{...opt({lg:1}),scales:{x:{title:{display:true,text:'Atendimentos',color:css('--mute')},grid:{display:false},ticks:{color:css('--mute')}},y:{title:{display:true,text:'Ticket (R$)',color:css('--mute')},grid:{color:css('--line')},ticks:{color:css('--mute')}}}}}}]}},
+()=>({d:'Atendimentos de retorno entre os atendimentos realizados.',
+ st:[['Retornos',c.Rl.filter(x=>x.rt).length],['Terapia que mais retorna',topS('rt')],['Faixa que mais retorna',AGE[maxI(AGE.map((_,i)=>tx(c.Rl.filter(x=>x.age===i),x=>x.rt)))]+' anos']],
+ pn:[tr(m=>m.rt,'Evolução da taxa de retorno'),rad(s=>s.rt,'Retorno por terapia'),{t:'Retorno por faixa etária',h:'% dos atendimentos que são retorno',cfg:br(AGE,AGE.map((_,i)=>tx(c.Rl.filter(x=>x.age===i),x=>x.rt)),P()[4])}]}),
+()=>({d:'Agendamentos feitos pelo chatbot e concluídos sem a ajuda de um atendente humano.',
+ st:[['Agendamentos do bot',c.bn],['Escalonados para humano',c.L.filter(x=>x.bot&&x.esc).length],['Concluídos sem humano',c.botOk]],
+ pn:[tr(m=>m.res,'Evolução da resolução sem humano'),fun(),{t:'Resolução por horário',h:'% dos agendamentos do bot concluídos sem humano',w:1,cfg:lc(HR.map(h=>h+'h'),[['Resolução (%)',byH(l=>{const b=l.filter(x=>x.bot);return b.length?b.filter(x=>x.s==='R'&&!x.esc).length/b.length*100:0}),P()[0]]])},]}),
+()=>({d:'Conversas iniciadas no chatbot que terminaram em um agendamento.',
+ st:[['Conversas iniciadas',c.conversas],['Agendamentos gerados',c.bn],['Conversas abandonadas',Math.max(0,c.conversas-c.bn)]],
+ pn:[tr(m=>m.conv,'Evolução da conversão'),fun(),{t:'Origem dos agendamentos',h:'Chatbot x atendimento humano',cfg:pie(['Chatbot','Atendimento humano'],[c.bn,c.L.length-c.bn])},rad(s=>s.bt,'Uso do chatbot por terapia','% dos agendamentos de cada terapia feitos pelo bot')]})
+];
+const dlt=k=>{if(!k[3])return'';const d=k[5]==='rel'?(k[3](c)-k[3](p))/Math.max(1e-9,k[3](p))*100:k[3](c)-k[3](p),
+ cl=Math.abs(d)<.05?'flat':k[4]*d>0?'up':'dn',u=k[5]==='rel'?'%':' '+k[5];
+ return`<div class="d ${cl}">${d>=0?'▲':'▼'} ${Math.abs(d).toFixed(1).replace('.',',')}${u} vs anterior</div>`};
+function detail(){const k=K[cur],d=DT[cur](),bg=cur in FR?`<span class="badge s${stat(cur,c)}"><i>${SI[stat(cur,c)]}</i>${SN[stat(cur,c)]}</span> <span class="s">${metaTxt(cur)}</span>`:'';
+ $('#dh').innerHTML=`<div class="dh"><div><div class="t">${k[1]}</div><div class="big">${k[2](c)}</div></div><div>${bg}${dlt(k)}<div class="s">${k[6](c)}</div></div></div><p class="dd">${d.d}</p>`;
+ $('#ch').innerHTML=d.st.map(([l,v])=>`<div><b>${v}</b><span>${l}</span></div>`).join('');
+ $('#dg').innerHTML=d.pn.map((x,i)=>`<div class="p${x.w?' w':''}"><h3>${x.t}</h3><div class="h">${x.h||''}</div>${x.html||`<div class="cv${/radar|polar|bubble/.test(x.cfg.type)?' tall':''}"><canvas id="d${i}"></canvas></div>`}</div>`).join('');
+ d.pn.forEach((x,i)=>x.cfg&&mk('d'+i,x.cfg));
+ const s=$('#pv');s&&s.addEventListener('change',e=>{PV=e.target.value;render()})}
+/* ===== Farol e visão macro =====
+   ok = limite do verde · bad = limite do amarelo (além dele é vermelho) · dir: -1 menor é melhor, 1 maior é melhor.
+   Metas provisórias: ajustar com a clínica. Índices = posição em K. */
+const FR={0:{ok:8,bad:12,dir:-1},1:{ok:15,bad:20,dir:-1},2:{ok:80,bad:70,dir:1},3:{ok:10,bad:15,dir:-1},6:{ok:50,bad:30,dir:1},7:{ok:250,bad:220,dir:1},8:{ok:40,bad:30,dir:1},9:{ok:80,bad:65,dir:1},10:{ok:75,bad:60,dir:1}};
+const MAC=[
+ {n:'Perdas de agenda',d:'Consultas perdidas e remarcações',s:[[1,.6],[0,.4]]},
+ {n:'Uso da agenda',d:'Quanto da agenda é aproveitada e com que pontualidade',s:[[2,.6],[3,.4]]},
+ {n:'Paciente e financeiro',d:'Satisfação, fidelização e valor por atendimento',s:[[6,.4],[8,.3],[7,.3]]},
+ {n:'Chatbot de IA',d:'Quanto o bot resolve e converte sem ajuda humana',s:[[9,.5],[10,.5]]}];
+const SN=['Vermelho','Amarelo','Verde'],SI=['✕','!','✓'];
+const nf=v=>v.toFixed(1).replace('.',',');
+const fv=(i,v)=>{const u=K[i][5];return u==='pp'?nf(v)+'%':u==='min'?Math.round(v)+' min':u==='rel'?rs(v):Math.round(v)+' pts'};
+const metaTxt=i=>{const r=FR[i];return`Meta ${r.dir<0?'≤':'≥'} ${fv(i,r.ok)} · crítico ${r.dir<0?'>':'<'} ${fv(i,r.bad)}`};
+const stat=(i,m)=>{const r=FR[i],v=K[i][3](m);return r.dir<0?(v<=r.ok?2:v<=r.bad?1:0):(v>=r.ok?2:v>=r.bad?1:0)};
+const gap=(i,m)=>{const r=FR[i],v=K[i][3](m);return r.dir<0?(v-r.ok)/(r.bad-r.ok):(r.ok-v)/(r.ok-r.bad)};
+function macro(mc,m){const ss=mc.s.map(([i,w])=>({i,w,st:stat(i,m),g:gap(i,m)}));
+ const sc=Math.round(ss.reduce((a,x)=>a+x.w*[0,50,100][x.st],0));let st=sc>=75?2:sc>=30?1:0;
+ if(ss.some(x=>x.st===0))st=Math.min(st,1);return{ss,sc,st}}
+function home(){
+ const R=MAC.map(mc=>({mc,...macro(mc,c)})),
+  all=R.flatMap(r=>r.ss.map(x=>({...x,mc:r.mc,pen:x.st===2?0:(x.st===0?1:0)+x.w*Math.max(0,x.g)}))).sort((a,b)=>b.pen-a.pen),
+  t=all[0],rest=all.filter(x=>x.st<2).slice(1,5),wa=[...R].sort((a,b)=>a.sc-b.sc)[0];
+ $('#alerta').innerHTML=t.st===2?`<div class="alerta s2" role="status"><span class="dot">✓</span><div><b>Tudo dentro da meta neste período</b><small>Nenhum indicador em atenção ou crítico</small></div></div>`
+ :`<div class="alerta s${t.st}" role="alert"><span class="dot">${SI[t.st]}</span><div><small>Maior foco de atenção agora</small><b>${K[t.i][1]} <em>· ${t.mc.n}</em></b><span>${K[t.i][2](c)} · ${metaTxt(t.i)}</span></div><button class="bk" data-i="${t.i}">Abrir análise</button></div>`
+ +(rest.length?`<div class="rk"><span>Depois dele:</span>${rest.map((x,j)=>`<button class="s${x.st}" data-i="${x.i}"><i class="dot">${SI[x.st]}</i>${j+2}º ${K[x.i][1]} · ${K[x.i][2](c)}</button>`).join('')}</div>`:'');
+ $('#macros').innerHTML=R.map(r=>`<article class="mac s${r.st}"><header><h3>${r.mc.n}</h3><span class="badge s${r.st}"><i>${SI[r.st]}</i>${SN[r.st]}</span></header>
+  <div class="sc"><b>${r.sc}</b><span>/100 nota da área</span></div>
+  <p>${r.mc.d}${wa===r&&r.st<2?' · <strong>área que mais pesa</strong>':''}</p>
+  <div class="subs">${r.ss.map(x=>`<button class="sub s${x.st}" data-i="${x.i}"><i class="dot">${SI[x.st]}</i><span class="sn">${K[x.i][1]}<em>peso ${Math.round(x.w*100)}%</em><small>${metaTxt(x.i)}</small></span><b>${K[x.i][2](c)}</b>${dlt(K[x.i])}</button>`).join('')}</div></article>`).join('');
+ $('#kinfo').innerHTML=K.map((k,i)=>[k,i]).filter(([k,i])=>!(i in FR)).map(([k,i])=>
+  `<button class="k" data-i="${i}" aria-label="Abrir análise: ${k[1]}"><div class="t">${k[1]}</div><div class="v">${k[2](c)}</div><div class="s">${k[6](c)}</div><div class="go">Abrir análise</div></button>`).join('');
+ $('#rt').innerHTML='<thead><tr><th>Área</th><th>Indicador</th><th>Peso</th><th>Verde</th><th>Amarelo</th><th>Vermelho</th></tr></thead><tbody>'+MAC.flatMap(mc=>mc.s.map(([i,w],j)=>{const r=FR[i];
+  return`<tr><td>${j?'':'<b>'+mc.n+'</b>'}</td><td>${K[i][1]}</td><td>${Math.round(w*100)}%</td><td>${r.dir<0?'≤':'≥'} ${fv(i,r.ok)}</td><td>${r.dir<0?fv(i,r.ok)+' a '+fv(i,r.bad):fv(i,r.bad)+' a '+fv(i,r.ok)}</td><td>${r.dir<0?'>':'<'} ${fv(i,r.bad)}</td></tr>`})).join('')+'</tbody>';
+}
+/* ===== Calendário ===== */
+const MN=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'],PT=['Início (dias 1–10)','Meio (dias 11–20)','Final (dia 21 em diante)'],DNF=['Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+const T0=new Date(today.getFullYear(),today.getMonth(),today.getDate()),OLD=new Date(T0.getFullYear(),T0.getMonth(),T0.getDate()-729);
+let CMo=null;
+const fdn=i=>DNF[i]+(i<5?'-feira':'');
+const MT={NC:{n:'Não comparecimento (%)',s:'não comparecimento',pc:1,f:x=>x.c+x.n},C:{n:'Cancelamentos (%)',s:'cancelamentos',pc:1,f:x=>x.c},N:{n:'No-show (%)',s:'no-show',pc:1,f:x=>x.n},R:{n:'Atendimentos realizados (média por dia)',s:'atendimentos',pc:0,f:x=>x.r},A:{n:'Agendamentos (média por dia)',s:'agendamentos',pc:0,f:x=>x.t}};
+const hcl=(v,mx)=>`background:rgba(${css('--rgb')},${(.08+.87*Math.min(1,v/mx)).toFixed(2)});color:${v/mx>.55?css('--onacc'):css('--ink')}`;
+function calendar(){
+ const Y=+$('#cy').value,mt=$('#cm').value,Q=MT[mt],k3={},W6=[1,2,3,4,5,6];
+ const pr=(l,f)=>{const t=l.reduce((a,x)=>a+x.t,0);return t?l.reduce((a,x)=>a+f(x),0)/t*100:0};
+ const ag=l=>Q.pc?pr(l,Q.f):(l.length?l.reduce((a,x)=>a+Q.f(x),0)/l.length:0);
+ const fm=v=>Q.pc?nf(v)+'%':nf(v),dv=x=>Q.pc?(x.t?Q.f(x)/x.t*100:0):Q.f(x),nc=x=>x.c+x.n,pts=l=>[l.filter(x=>x.d<=10),l.filter(x=>x.d>10&&x.d<=20),l.filter(x=>x.d>20)];
+ D.forEach(x=>{if(sp>=0&&x.sp!==sp)return;const dt=new Date(T0.getFullYear(),T0.getMonth(),T0.getDate()-x.d);if(dt.getFullYear()!==Y)return;const k=dt.getMonth()*32+dt.getDate(),o=k3[k]||(k3[k]={R:0,C:0,N:0,M:0,T:0});o.T++;o[x.s]++});
+ const MS=[];
+ for(let m=0;m<12;m++){const ds=[];
+  for(let d=1,n=new Date(Y,m+1,0).getDate();d<=n;d++){const dt=new Date(Y,m,d),ok=dt>=OLD&&dt<=T0&&dt.getDay()!==0,q=(ok&&k3[m*32+d])||{R:0,C:0,N:0,M:0,T:0};ds.push({d,w:dt.getDay(),ok,r:q.R,c:q.C,n:q.N,t:q.T})}
+  const va=ds.filter(x=>x.ok),sm=k=>va.reduce((a,x)=>a+x[k],0),tR=sm('r'),tC=sm('c'),tN=sm('n'),tT=sm('t');
+  MS.push({m,ds,va,tR,tC,tN,tT,nc:tT?(tC+tN)/tT*100:0,cr:tT?tC/tT*100:0,ns:tT?tN/tT*100:0,agg:ag(va),wd:W6.map(w=>ag(va.filter(x=>x.w===w))),pt:pts(va).map(ag)})}
+ const all=MS.flatMap(x=>x.va),ywd=W6.map(w=>ag(all.filter(x=>x.w===w))),ypt=pts(all).map(ag),yag=ag(all);
+ const wdNC=W6.map(w=>pr(all.filter(x=>x.w===w),nc)),wdC=W6.map(w=>pr(all.filter(x=>x.w===w),x=>x.c)),wdN=W6.map(w=>pr(all.filter(x=>x.w===w),x=>x.n)),ncY=pr(all,nc),ptNC=pts(all).map(l=>pr(l,nc));
+ const w5=MS.filter(x=>x.va.length>=5),best=[...w5].sort((a,b)=>b.agg-a.agg)[0],mNC=[...w5].sort((a,b)=>b.nc-a.nc)[0];
+ if(CMo===null||!MS[CMo].va.length)CMo=Y===T0.getFullYear()?T0.getMonth():(best?best.m:0);
+ const dd=(m,x)=>String(x.d).padStart(2,'0')+'/'+String(m+1).padStart(2,'0'),pd=(x,k)=>x.t?Math.round(k/x.t*100):0;
+ const mxd=Math.max(1e-9,...all.map(dv)),tip=(m,x)=>`${x.d}/${m+1}: ${x.r} atendimentos · ${x.c} cancelamentos (${pd(x,x.c)}%) · ${x.n} no-show (${pd(x,x.n)}%) · não comparecimento ${pd(x,nc(x))}% de ${x.t} agendamentos`;
+ /* resumo de ausências + números do ano */
+ $('#ci').innerHTML=mNC?`<b>Onde as ausências pesam mais em ${Y}:</b> <strong>${fdn(maxI(wdNC))}</strong> com ${nf(Math.max(...wdNC))}% de não comparecimento (média do ano ${nf(ncY)}%) · pior mês: <strong>${MN[mNC.m]}</strong> (${nf(mNC.nc)}%) · parte do mês: <strong>${PT[maxI(ptNC)].split(' (')[0].toLowerCase()}</strong> (${nf(Math.max(...ptNC))}%).`:'Sem dados neste ano.';
+ const bd=[...all.filter(x=>!Q.pc||x.t>=5)].sort((a,b)=>dv(b)-dv(a))[0];
+ $('#cc').innerHTML=[[`Mês com maior ${Q.s}`,best?`${MN[best.m]} · ${fm(best.agg)}`:'—'],[`Dia da semana com maior ${Q.s}`,all.length?`${dn[maxI(ywd)]} · ${fm(Math.max(...ywd))}`:'—'],[`Parte do mês com maior ${Q.s}`,all.length?`${PT[maxI(ypt)].split(' (')[0]} · ${fm(Math.max(...ypt))}`:'—'],[`Dia do ano com maior ${Q.s}`,bd?`${dd(MS.find(z=>z.va.includes(bd)).m,bd)} · ${fm(dv(bd))}`:'—']].map(([l,v])=>`<div><b>${v}</b><span>${l}</span></div>`).join('');
+ /* visão consolidada do ano: mês x dia da semana (sem precisar clicar mês a mês) */
+ const mxv=Math.max(1e-9,...MS.flatMap(x=>x.wd)),cs=v=>mt==='NC'?`class="f${stat(1,{nc:v})}"`:`style="${hcl(v,mxv)}"`;
+ const mat=`<div class="hm" style="grid-template-columns:44px repeat(6,1fr) 58px;min-width:470px"><div class="l"></div>${dn.map(d=>`<div class="l">${d}</div>`).join('')}<div class="l">Mês</div>${MS.map(ms=>`<div class="l">${MN[ms.m].slice(0,3)}</div>`+(ms.va.length?ms.wd.map(v=>`<div ${cs(v)}>${fm(v)}</div>`).join('')+`<div ${cs(ms.agg)}><b>${fm(ms.agg)}</b></div>`:'<div class="l">–</div>'.repeat(7))).join('')}<div class="l"><b>Ano</b></div>${ywd.map(v=>`<div ${cs(v)}><b>${fm(v)}</b></div>`).join('')}<div ${cs(yag)}><b>${fm(yag)}</b></div></div>`;
+ $('#cyr').innerHTML=`<div class="p w"><h3>Mês × dia da semana · ${Q.n}</h3><div class="h">${mt==='NC'?`Cor pelo farol: verde ≤ ${fv(1,FR[1].ok)} · amarelo ≤ ${fv(1,FR[1].bad)} · vermelho acima`:'Cor mais forte = valor maior'} · a linha "Ano" e a coluna "Mês" resumem o total</div><div style="overflow-x:auto">${mat}</div></div>
+ <div class="p"><h3>Ausências por dia da semana (ano todo)</h3><div class="h">% dos agendamentos · cancelamento + no-show = não comparecimento</div><div class="cv"><canvas id="cwd"></canvas></div></div>
+ <div class="p"><h3>Dia da semana ao longo dos meses</h3><div class="h">${Q.n} · compare os dias sem clicar mês a mês</div><div class="cv"><canvas id="cwm"></canvas></div></div>`;
+ mk('cwd',{type:'bar',data:{labels:dn,datasets:[['Cancelamentos',wdC,P()[2]],['No-show',wdN,P()[1]]].map(([n,d,col])=>({label:n,data:d.map(f1),backgroundColor:col}))},options:opt({st:1,lg:1})});
+ mk('cwm',lc(MN.map(x=>x.slice(0,3)),dn.map((d,i)=>[d,MS.map(ms=>ms.va.length?f1(ms.wd[i]):null),P()[i]])));
+ /* cartões dos meses (borda = farol do não comparecimento do mês) */
+ $('#cal').innerHTML=MS.map(ms=>`<button class="mc${ms.va.length?' s'+stat(1,{nc:ms.nc}):''}${ms.m===CMo?' on':''}" data-m="${ms.m}" aria-pressed="${ms.m===CMo}"${ms.va.length?'':' disabled'}><b>${MN[ms.m]}</b>${ms.va.length?`<span>Atend. ${ms.tR} · NC <strong>${nf(ms.nc)}%</strong></span><br><span>Cancel. ${nf(ms.cr)}% · No-show ${nf(ms.ns)}%</span>`:'<span>sem dados</span>'}<div class="mg">${['S','T','Q','Q','S','S','D'].map(x=>`<i class="l">${x}</i>`).join('')}${'<i></i>'.repeat((new Date(Y,ms.m,1).getDay()+6)%7)}${ms.ds.map(x=>x.ok?`<i style="${hcl(dv(x),mxd)}" title="${tip(ms.m,x)}">${x.d}</i>`:`<i class="off">${x.d}</i>`).join('')}</div></button>`).join('');
+ /* detalhe do mês */
+ const S=MS[CMo],wi=maxI(S.wd),pi=maxI(S.pt),bm=[...S.va.filter(x=>!Q.pc||x.t>=3)].sort((a,b)=>dv(b)-dv(a))[0],mxM=Math.max(1e-9,...S.va.map(dv));
+ const st=[['Atendimentos realizados',S.tR],['Não comparecimento',`${nf(S.nc)}% · ${S.tC+S.tN} consultas`],['Cancelamentos',`${nf(S.cr)}% · ${S.tC}`],['No-show',`${nf(S.ns)}% · ${S.tN}`],[`Dia da semana com maior ${Q.s}`,S.va.length?`${dn[wi]} · ${fm(S.wd[wi])}`:'—'],[`Parte do mês com maior ${Q.s}`,S.va.length?`${PT[pi].split(' (')[0]} · ${fm(S.pt[pi])}`:'—'],[`Dia com maior ${Q.s}`,bm?`${dd(CMo,bm)} · ${fm(dv(bm))}`:'—']];
+ const big=`<div class="cg">${['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(x=>`<i class="l">${x}</i>`).join('')}${'<i></i>'.repeat((new Date(Y,CMo,1).getDay()+6)%7)}${S.ds.map(x=>x.ok?`<i title="${tip(CMo,x)}" style="${hcl(dv(x),mxM)}">${x.d}<b>${x.r}</b><small>${x.t?'NC '+pd(x,nc(x))+'%':'—'}</small></i>`:`<i class="off">${x.d}</i>`).join('')}</div>`;
+ $('#cd').innerHTML=`<div class="chips">${st.map(([l,v])=>`<div><b>${v}</b><span>${l}</span></div>`).join('')}</div>
+ <div class="grid"><div class="p w"><h3>${MN[CMo]} de ${Y}</h3><div class="h">Número grande: atendimentos realizados · NC: não comparecimento (cancelamentos + no-show ÷ agendamentos do dia) · cor segue &quot;${Q.n}&quot; · passe o mouse no dia para ver os detalhes · domingo fechado</div>${big}</div>
+ <div class="p w"><h3>Dia a dia em ${MN[CMo]} (%)</h3><div class="h">Não comparecimento, cancelamentos e no-show sobre os agendamentos de cada dia</div><div class="cv"><canvas id="cdl"></canvas></div></div>
+ <div class="p"><h3>Dia da semana: mês x média do ano</h3><div class="h">${Q.n}</div><div class="cv"><canvas id="cw"></canvas></div></div>
+ <div class="p"><h3>Início, meio e final do mês</h3><div class="h">${Q.n}</div><div class="cv"><canvas id="cp"></canvas></div></div>
+ <div class="p w"><h3>Cancelamentos e no-show por mês (%)</h3><div class="h">${Y} · % dos agendamentos de cada mês</div><div class="cv"><canvas id="cmn"></canvas></div></div></div>`;
+ const a=P()[0],b=P()[1],pdv=(x,f)=>x.ok&&x.t?f1(f(x)/x.t*100):null;
+ mk('cdl',lc(S.ds.map(x=>x.d),[['Não comparecimento',S.ds.map(x=>pdv(x,nc)),P()[2]],['Cancelamentos',S.ds.map(x=>pdv(x,y=>y.c)),b],['No-show',S.ds.map(x=>pdv(x,y=>y.n)),P()[3]]]));
+ mk('cw',{type:'bar',data:{labels:dn,datasets:[{label:MN[CMo],data:S.wd.map(f1),backgroundColor:a},{type:'line',label:'Média do ano',data:ywd.map(f1),borderColor:b,backgroundColor:b,tension:.3,pointRadius:3}]},options:opt({lg:1})});
+ mk('cp',{type:'bar',data:{labels:PT.map(x=>x.split(' (')[0]),datasets:[{label:MN[CMo],data:S.pt.map(f1),backgroundColor:a},{label:'Média do ano',data:ypt.map(f1),backgroundColor:b}]},options:opt({lg:1})});
+ mk('cmn',{type:'bar',data:{labels:MN.map(x=>x.slice(0,3)),datasets:[['Cancelamentos','cr',P()[2]],['No-show','ns',b]].map(([n,k,col])=>({label:n,data:MS.map(x=>x.va.length?f1(x[k]):null),backgroundColor:col}))},options:opt({st:1,lg:1})});
+}
+function render(){
+ CH.forEach(x=>x.destroy());CH=[];
+ N=+$('#per').value;sp=+$('#esp').value;c=M(0,N,sp);p=M(N,2*N,sp);A=sp<0?c:M(0,N,-1);AP=sp<0?p:M(N,2*N,-1);
+ Chart.defaults.font.family='Figtree,system-ui,sans-serif';
+ $('#home').hidden=cur!==null;$('#det').hidden=cur===null;
+ if(cur!==null)detail();else{home();calendar()}
+}
+function go(i,pop){cur=i;if(!pop)try{history.pushState({i},'')}catch(e){}render();scrollTo(0,0);if(i!==null)$('#bk').focus()}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-i]');if(b)go(+b.dataset.i)});
+$('#bk').addEventListener('click',()=>go(null));
+addEventListener('popstate',e=>go(e.state&&e.state.i!=null?e.state.i:null,1));
+addEventListener('keydown',e=>{if(e.key==='Escape'&&cur!==null)go(null)});
+$('#esp').innerHTML='<option value="-1">Todas</option>'+SP.map((s,i)=>`<option value="${i}">${s[0]}</option>`).join('');
+$('#cy').innerHTML=Array.from({length:T0.getFullYear()-OLD.getFullYear()+1},(_,i)=>OLD.getFullYear()+i).map(y=>`<option${y===T0.getFullYear()?' selected':''}>${y}</option>`).join('');
+['#per','#esp','#cm'].forEach(s=>$(s).addEventListener('change',render));
+$('#cy').addEventListener('change',()=>{CMo=null;render()});
+document.addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(b&&!b.disabled){CMo=+b.dataset.m;render();$('#cd').scrollIntoView({block:'start'})}});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',render);
+render();
+</script>
+</body>
+</html>
