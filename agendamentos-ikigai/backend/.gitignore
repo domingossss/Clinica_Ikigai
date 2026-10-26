@@ -1,0 +1,13 @@
+# === Dependencias ===
+node_modules/
+dist/
+
+# === Credenciais e segredos ===
+.env
+.env.local
+.env.*.local
+
+# === Logs ===
+logs/
+*.log
+npm-debug.log*
