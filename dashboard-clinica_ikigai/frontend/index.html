@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Painel de Agendamento | Clínica Ikigai</title>
+  
+  <!-- Fontes Tipográficas Oficiais -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Figtree:wght@400;600&display=swap" rel="stylesheet">
+  
+  <!-- Estilos CSS Modularizados (Clean Code) -->
+  <link rel="stylesheet" href="./src/styles/main.css">
+  
+  <!-- Biblioteca Gráfica Chart.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <!-- Cabeçalho e Controles Globais -->
+    <header>
+      <div>
+        <h1>Painel de agendamento</h1>
+        <p>Clínica Ikigai · saúde integrativa com agendamento por chatbot de IA</p>
+      </div>
+      <div class="ctl">
+        <label>
+          Período
+          <select id="per" aria-label="Filtro de período em dias">
+            <option value="7">Últimos 7 dias</option>
+            <option value="30" selected>Últimos 30 dias</option>
+            <option value="90">Últimos 90 dias</option>
+            <option value="180">Últimos 6 meses</option>
+            <option value="365">Últimos 12 meses</option>
+          </select>
+        </label>
+        <label>
+          Especialidade
+          <select id="esp" aria-label="Filtro de especialidade clínica"></select>
+        </label>
+      </div>
+    </header>
+
+    <p class="note">
+      Dados integrados em tempo real ao banco de dados relacional MySQL local (clinica_ikigai_db).
+      Clique em qualquer indicador para abrir a análise analítica detalhada.
+    </p>
+
+    <!-- Visão Principal (Home) -->
+    <div id="home">
+      <!-- Banner de Alerta Dinâmico -->
+      <div id="alerta"></div>
+
+      <!-- Visão Macro com Semáforo / Farol -->
+      <h2>Visão macro</h2>
+      <p class="leg">
+        <b>Como ler:</b> cada área reúne indicadores com peso. A nota da área vai de 0 a 100
+        (indicador verde vale 100, amarelo 50 e vermelho 0, multiplicado pelo peso).
+        Área verde: nota de 75 ou mais. Amarela: de 30 a 74. Vermelha: abaixo de 30.
+        Uma área nunca fica verde se tiver indicador vermelho.
+      </p>
+      <div class="macros" id="macros"></div>
+
+      <!-- Indicadores Informativos -->
+      <h2>Informativos</h2>
+      <div class="kpis" id="kinfo"></div>
+
+      <!-- Calendário Operacional de Atendimentos -->
+      <h2>Calendário de atendimentos</h2>
+      <div class="cs">
+        <label>
+          Ano
+          <select id="cy" aria-label="Seletor de ano do calendário"></select>
+        </label>
+        <label>
+          Colorir por
+          <select id="cm" aria-label="Métrica de coloração do calendário">
+            <option value="NC" selected>Não comparecimento (%)</option>
+            <option value="C">Cancelamentos (%)</option>
+            <option value="N">No-show (%)</option>
+            <option value="R">Atendimentos realizados</option>
+            <option value="A">Agendamentos</option>
+          </select>
+        </label>
+      </div>
+      <p class="h" style="color:var(--mute); font-size:12px; margin:0 0 6px;">
+        Não comparecimento = cancelamentos + no-show, em % dos agendamentos. Segue o filtro de especialidade; o filtro de período não se aplica aqui.
+      </p>
+
+      <div class="ins" id="ci"></div>
+      <div class="chips" id="cc"></div>
+      <div class="grid" id="cyr"></div>
+
+      <h3 style="margin:22px 0 8px;">Mês a mês</h3>
+      <div class="cal" id="cal"></div>
+      <div id="cd"></div>
+
+      <!-- Tabela de Regras e Metas -->
+      <details open>
+        <summary>Metas, pesos e regra de cálculo do farol</summary>
+        <div class="tb">
+          <table id="rt"></table>
+        </div>
+      </details>
+
+      <!-- Fórmulas dos KPIs -->
+      <details>
+        <summary>Definição e fórmula de cada KPI</summary>
+        <div class="tb">
+          <table>
+            <thead>
+              <tr>
+                <th>KPI</th>
+                <th>Fórmula</th>
+                <th>Fonte de dados no MySQL</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Taxa de reagendamento</td><td>Reagendados ÷ agendamentos totais</td><td>tabela agendamento (status = 'Reagendado')</td></tr>
+              <tr><td>Não comparecimento</td><td>(Cancelamentos + no-show) ÷ agendamentos totais</td><td>tabela agendamento (status IN ('Cancelado', 'No_Show'))</td></tr>
+              <tr><td>Ocupação da agenda</td><td>Horários preenchidos (não cancelados) ÷ horários disponíveis</td><td>agendamento / capacidade_diaria</td></tr>
+              <tr><td>Atraso médio</td><td>Soma dos minutos de atraso ÷ consultas realizadas</td><td>agendamento.minutos_atraso</td></tr>
+              <tr><td>Atendimento integrativo mais realizado</td><td>Ranking de terapias concluídas por especialidade</td><td>procedimento / especialidade</td></tr>
+              <tr><td>Perfil do paciente</td><td>Distribuição por idade, sexo e convênio x particular</td><td>tabela paciente</td></tr>
+              <tr><td>Satisfação (NPS)</td><td>% promotores (9–10) − % detratores (0–6)</td><td>tabela avaliacao_atendimento (nota_nps)</td></tr>
+              <tr><td>Ticket médio</td><td>Receita ÷ atendimentos realizados</td><td>agendamento.valor_cobrado</td></tr>
+              <tr><td>Taxa de retorno</td><td>Atendimentos de retorno ÷ atendimentos realizados</td><td>agendamento (tipo_atendimento = 'Retorno')</td></tr>
+              <tr><td>Resolução sem humano</td><td>Agendamentos concluídos pelo bot sem atendente ÷ agendamentos pelo bot</td><td>agendamento (origem = 'Chatbot' AND escalonado_humano = 0)</td></tr>
+              <tr><td>Conversão em agendamento</td><td>Agendamentos pelo bot ÷ conversas iniciadas</td><td>agendamento / sessao_chatbot</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+
+    <!-- Visão Detalhada do KPI (Drill-down) -->
+    <section id="det" hidden aria-live="polite">
+      <button class="bk" id="bk" aria-label="Voltar para a visão geral">← Todos os indicadores</button>
+      <div id="dh"></div>
+      <div class="chips" id="ch"></div>
+      <div class="grid" id="dg"></div>
+    </section>
+  </div>
+
+  <!-- Entrada da Aplicação TypeScript Modularizada -->
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>
