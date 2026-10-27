@@ -10,8 +10,8 @@ import {
   MONTH_SEGMENTS,
   WEEKDAY_SHORT_NAMES
 } from '../utils/dateUtils';
-import { formatNumber, formatPercent } from '../utils/formatters';
-import { calculateKpiStatus, TRAFFIC_LIGHT_THRESHOLDS } from '../core/trafficLight';
+import { formatNumber } from '../utils/formatters';
+import { calculateKpiStatus } from '../core/trafficLight';
 
 declare const Chart: any;
 
@@ -38,6 +38,10 @@ interface DayRecord {
   canceled: number;
   noShow: number;
   total: number;
+  r: number;
+  c: number;
+  n: number;
+  t: number;
 }
 
 interface MonthSummary {
@@ -164,7 +168,11 @@ export class CalendarView {
           completed: record.r,
           canceled: record.c,
           noShow: record.n,
-          total: record.t
+          total: record.t,
+          r: record.r,
+          c: record.c,
+          n: record.n,
+          t: record.t
         });
       }
 

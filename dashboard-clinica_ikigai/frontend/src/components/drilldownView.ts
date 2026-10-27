@@ -12,14 +12,8 @@ import {
   TRAFFIC_LIGHT_NAMES,
   TRAFFIC_LIGHT_THRESHOLDS
 } from '../core/trafficLight';
-import { formatCurrency, formatDeltaHtml, formatNumber, formatPercent } from '../utils/formatters';
-import {
-  AGE_BRACKETS,
-  CLINIC_HOURS,
-  countDaysOfWeekInRange,
-  WEEKDAY_SHORT_NAMES
-} from '../utils/dateUtils';
-import { calculateAverage, calculatePeriodMetrics } from '../core/metricsEngine';
+import { formatCurrency, formatDeltaHtml, formatPercent } from '../utils/formatters';
+import { calculatePeriodMetrics } from '../core/metricsEngine';
 
 declare const Chart: any;
 
@@ -68,7 +62,7 @@ export class DrilldownView {
     specialties: SpecialtyTuple[],
     periodDays: number,
     specialtyFilter: number,
-    onProfileDimensionChange: (dim: 'age' | 'sx' | 'cv' | 'tx') => void
+    _onProfileDimensionChange?: (dim: any) => void
   ): void {
     this.destroyCharts();
 
@@ -79,9 +73,6 @@ export class DrilldownView {
     const muteColor = this.getCssVariable('--mute');
     const lineColor = this.getCssVariable('--line');
     const inkColor = this.getCssVariable('--ink');
-    const onAccentColor = this.getCssVariable('--onacc');
-    const rgbAccent = this.getCssVariable('--rgb');
-
     const status = calculateKpiStatus(kpiId, currentMetrics);
     const hasThreshold = kpiId in TRAFFIC_LIGHT_THRESHOLDS;
     const badgeHtml = hasThreshold

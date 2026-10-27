@@ -26,6 +26,11 @@ export class DashboardController {
         ORDER BY e.id_especialidade ASC
       `);
 
+      const espIndexMap = new Map<number, number>();
+      espRows.forEach((e: any, idx: number) => {
+        espIndexMap.set(e.id_especialidade, idx);
+      });
+
       const SP = espRows.map((e: any, idx: number) => [
         e.nome,
         parseFloat(e.preco_base) || 200,
@@ -34,7 +39,7 @@ export class DashboardController {
       ]);
 
       // 2. Agendamentos com cálculo dinâmico de dia de deslocamento
-      const [agendamentos] = await pool.query<any[]>(`
+      const [agendamentosRaw] = await pool.query<any[]>(`
         SELECT 
           DATEDIFF(CURDATE(), DATE(a.data_hora_agendamento)) AS d,
           CASE 
@@ -42,9 +47,9 @@ export class DashboardController {
             ELSE DAYOFWEEK(a.data_hora_agendamento) - 1 
           END AS w,
           HOUR(a.data_hora_agendamento) AS h,
-          (pr.id_especialidade - 1) AS sp,
+          pr.id_especialidade,
           CASE 
-            WHEN a.status = 'Realizado' THEN 'R'
+            WHEN a.status IN ('Realizado', 'Concluído') THEN 'R'
             WHEN a.status = 'Cancelado' THEN 'C'
             WHEN a.status = 'No_Show' THEN 'N'
             WHEN a.status = 'Reagendado' THEN 'M'
@@ -71,6 +76,23 @@ export class DashboardController {
         LEFT JOIN avaliacao_atendimento av ON a.id_agendamento = av.id_agendamento
         ORDER BY a.data_hora_agendamento DESC
       `);
+
+      const agendamentos = agendamentosRaw.map((row: any) => ({
+        d: row.d,
+        w: row.w,
+        h: row.h,
+        sp: espIndexMap.has(row.id_especialidade) ? espIndexMap.get(row.id_especialidade)! : 0,
+        s: row.s,
+        dl: row.dl,
+        pr: row.pr,
+        nt: row.nt,
+        age: row.age,
+        sx: row.sx,
+        cv: row.cv,
+        rt: row.rt,
+        bot: row.bot,
+        esc: row.esc
+      }));
 
       // 3. Abandonos diários de conversas no chatbot
       const [abandonos] = await pool.query<any[]>(`

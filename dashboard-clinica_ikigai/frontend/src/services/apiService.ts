@@ -8,7 +8,7 @@ import { Appointment, DashboardDataApiResponse, SpecialtyTuple } from '../types'
 export class ApiService {
   private baseUrl: string;
 
-  constructor(baseUrl = 'http://localhost:3000/api') {
+  constructor(baseUrl = 'http://localhost:3001/api') {
     this.baseUrl = baseUrl;
   }
 
