@@ -1,4 +1,4 @@
-readme = r'''# Clínica Ikigai
+# Clínica Ikigai
 Repositório contém a arquitetura com duas aplicações relacionadas à operação da Clínica Ikigai:
 
 1. **Agendamentos Ikigai** — interface React para agenda, pacientes e serviços, com API própria e integração prevista/implementada para fluxos de atendimento e WhatsApp.
