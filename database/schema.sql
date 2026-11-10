@@ -238,6 +238,23 @@ CREATE TABLE IF NOT EXISTS historico_status_agendamento (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =====================================================================
+-- 12. TABELA: bloqueio_agenda (Bloqueio de Horários/Indisponibilidades)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS bloqueio_agenda (
+    id_bloqueio INT AUTO_INCREMENT PRIMARY KEY,
+    id_profissional INT NOT NULL,
+    data DATE NOT NULL,
+    horario_inicio TIME NOT NULL,
+    horario_fim TIME NOT NULL,
+    motivo VARCHAR(255) NOT NULL DEFAULT 'Horário Bloqueado',
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_bloqueio_profissional
+        FOREIGN KEY (id_profissional) REFERENCES profissional (id_profissional)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    INDEX idx_bloqueio_data_prof (data, id_profissional)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =====================================================================
 -- TRIGGERS DE INTEGRIDADE AUTOMÁTICA EM AGENDAMENTO
 -- =====================================================================
 
@@ -377,5 +394,16 @@ SELECT
     status, 
     criado_em 
 FROM agendamento;
+
+CREATE OR REPLACE VIEW bloqueios AS 
+SELECT 
+    id_bloqueio AS id, 
+    id_profissional AS profissional_id, 
+    data, 
+    horario_inicio, 
+    horario_fim, 
+    motivo, 
+    criado_em 
+FROM bloqueio_agenda;
 
 SET FOREIGN_KEY_CHECKS = @OLD_FOREIGN_KEY_CHECKS;

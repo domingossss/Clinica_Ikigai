@@ -129,3 +129,68 @@ export function obterNomeDiaSemana(diaSemana: number): string {
   ];
   return dias[diaSemana] || 'Desconhecido';
 }
+
+/**
+ * Converte string de horário "HH:MM" ou "HH:MM:SS" em minutos a partir da meia-noite
+ */
+export function converterHorarioParaMinutos(horario: string): number {
+  const [h, m] = horario.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+/**
+ * Converte minutos a partir da meia-noite em formato "HH:MM:00"
+ */
+export function converterMinutosParaHorario(minutos: number): string {
+  const h = Math.floor(minutos / 60).toString().padStart(2, '0');
+  const m = (minutos % 60).toString().padStart(2, '0');
+  return `${h}:${m}:00`;
+}
+
+/**
+ * Verifica se dois intervalos de horário se sobrepõem (Overlap).
+ * Ocorre conflito se: InicioA < FimB E InicioB < FimA
+ */
+export function verificarSobreposicao(inicioA: string, fimA: string, inicioB: string, fimB: string): boolean {
+  const startA = converterHorarioParaMinutos(inicioA);
+  const endA = converterHorarioParaMinutos(fimA);
+  const startB = converterHorarioParaMinutos(inicioB);
+  const endB = converterHorarioParaMinutos(fimB);
+
+  return startA < endB && startB < endA;
+}
+
+/**
+ * Calcula o horário de término com duração e buffer opcional (padrão 15 min de respiro operacional)
+ */
+export function calcularHorarioTermino(horarioInicio: string, duracaoMinutos: number, bufferMinutos: number = 15): string {
+  const inicioMins = converterHorarioParaMinutos(horarioInicio);
+  const fimMins = inicioMins + duracaoMinutos + bufferMinutos;
+  return converterMinutosParaHorario(fimMins);
+}
+
+/**
+ * Valida se um período de bloqueio é válido (dentro do expediente das 08h às 18h e início < término)
+ */
+export function validarPeriodoBloqueio(horarioInicio: string, horarioFim: string): { valido: boolean; motivo?: string } {
+  if (!horarioInicio || !horarioFim) {
+    return { valido: false, motivo: 'Horários de início e término são obrigatórios.' };
+  }
+
+  const iniMins = converterHorarioParaMinutos(horarioInicio);
+  const fimMins = converterHorarioParaMinutos(horarioFim);
+
+  if (iniMins >= fimMins) {
+    return { valido: false, motivo: 'O horário de término deve ser posterior ao horário de início.' };
+  }
+
+  if (iniMins < HORARIO_EXPEDIENTE.MINUTOS_INICIO) {
+    return { valido: false, motivo: `Horário de início não pode ser anterior a ${HORARIO_EXPEDIENTE.HORA_INICIO}.` };
+  }
+
+  if (fimMins > HORARIO_EXPEDIENTE.MINUTOS_FIM) {
+    return { valido: false, motivo: `Horário de término não pode ultrapassar ${HORARIO_EXPEDIENTE.HORA_FIM}.` };
+  }
+
+  return { valido: true };
+}

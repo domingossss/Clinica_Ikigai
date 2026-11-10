@@ -142,6 +142,15 @@ export default function DashboardDemo() {
     setIsBookingModalOpen(true);
   };
 
+  // Abrir agendamento a partir de um paciente específico (ex.: direto do histórico)
+  const handleAbrirAgendamentoParaPaciente = (pacienteId: string) => {
+    setBookingInitialPacienteId(pacienteId);
+    setBookingInitialData(dataHoje());
+    setBookingInitialHorario(undefined);
+    setBookingInitialProfissionalId(undefined);
+    setIsBookingModalOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-light-gray text-dark font-sans transition-colors duration-300">
       
@@ -268,7 +277,7 @@ export default function DashboardDemo() {
         )}
 
         {currentTab === 'cadastro' && (
-          <CadastroPacientes />
+          <CadastroPacientes onNovoAgendamento={handleAbrirAgendamentoParaPaciente} />
         )}
 
         {currentTab === 'servicos' && (

@@ -5,6 +5,7 @@
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
+    "db:start": "\"C:\\Program Files\\MySQL\\MySQL Server 8.4\\bin\\mysqld.exe\" --datadir=\"C:\\Users\\batis\\mysql_data\" --port=3306 --bind-address=127.0.0.1 --console",
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsc && node dist/server.js",

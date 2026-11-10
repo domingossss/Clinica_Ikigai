@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Swal from 'sweetalert2';
+import ModalHistoricoPaciente from './ModalHistoricoPaciente';
 
 export interface PacienteItem {
   id: string;
@@ -62,6 +63,7 @@ export default function ModalAgendamentoRapido({
 
   // Controle de Paciente Selecionado
   const [selectedPaciente, setSelectedPaciente] = useState<PacienteItem | null>(null);
+  const [isHistoricoModalOpen, setIsHistoricoModalOpen] = useState(false);
 
   // Modo de Paciente: 'busca' ou 'novo'
   const [modoPaciente, setModoPaciente] = useState<'busca' | 'novo'>('busca');
@@ -416,16 +418,29 @@ export default function ModalAgendamentoRapido({
                     </p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedPaciente(null);
-                    setTermoBusca('');
-                  }}
-                  className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50 transition-colors"
-                >
-                  Trocar
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsHistoricoModalOpen(true)}
+                    className="text-xs font-bold text-primary hover:text-primary-dark bg-secondary/15 hover:bg-secondary/25 px-2.5 py-1.5 rounded-lg border border-secondary/30 transition-all flex items-center gap-1 cursor-pointer"
+                    title="Visualizar histórico de atendimentos anteriores deste paciente"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Histórico</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPaciente(null);
+                      setTermoBusca('');
+                    }}
+                    className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1.5 rounded hover:bg-red-50 transition-colors cursor-pointer"
+                  >
+                    Trocar
+                  </button>
+                </div>
               </div>
             ) : modoPaciente === 'busca' ? (
               /* MODO BUSCA COM AUTOCOMPLETE */
@@ -687,6 +702,16 @@ export default function ModalAgendamentoRapido({
           </button>
         </div>
       </div>
+
+      {/* Modal de Histórico do Paciente (IK-77) */}
+      {selectedPaciente && (
+        <ModalHistoricoPaciente
+          isOpen={isHistoricoModalOpen}
+          onClose={() => setIsHistoricoModalOpen(false)}
+          pacienteId={selectedPaciente.id}
+          pacienteNome={selectedPaciente.nome}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
+import ModalHistoricoPaciente from './ModalHistoricoPaciente';
 
 interface Paciente {
   id: string;
@@ -19,13 +20,26 @@ interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
+interface CadastroPacientesProps {
+  onNovoAgendamento?: (pacienteId: string) => void;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
-export default function CadastroPacientes() {
+export default function CadastroPacientes({ onNovoAgendamento }: CadastroPacientesProps) {
   // Estados de dados
   const [pacientes, setPacientes] = useState<Paciente[]>([]);
   const [loadingPacientes, setLoadingPacientes] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Estados do Modal de Histórico do Paciente (IK-77)
+  const [historicoModalOpen, setHistoricoModalOpen] = useState(false);
+  const [historicoPaciente, setHistoricoPaciente] = useState<Paciente | null>(null);
+
+  const handleAbrirHistorico = (p: Paciente) => {
+    setHistoricoPaciente(p);
+    setHistoricoModalOpen(true);
+  };
 
   // Estados de Formulário
   const [form, setForm] = useState({
@@ -585,7 +599,19 @@ export default function CadastroPacientes() {
                   ) : (
                     filteredPacientes.map(p => (
                       <tr key={p.id} className="hover:bg-light-gray/40 transition-colors">
-                        <td className="px-4 py-4 font-bold text-dark">{p.nome_completo}</td>
+                        <td className="px-4 py-4">
+                          <button
+                            type="button"
+                            onClick={() => handleAbrirHistorico(p)}
+                            className="text-left font-bold text-dark hover:text-primary transition-colors cursor-pointer group flex items-center gap-1.5"
+                            title="Clique para ver o histórico de atendimentos deste paciente"
+                          >
+                            <span>{p.nome_completo}</span>
+                            <span className="opacity-0 group-hover:opacity-100 text-[10px] bg-secondary/15 text-primary-dark font-semibold px-1.5 py-0.5 rounded transition-opacity">
+                              Ver Histórico
+                            </span>
+                          </button>
+                        </td>
                         <td className="px-4 py-4 text-gray font-mono">{formatarCPFExibicao(p.cpf)}</td>
                         <td className="px-4 py-4 text-gray font-semibold">{formatarTelefoneExibicao(p.telefone)}</td>
                         <td className="px-4 py-4 text-gray max-w-[150px] truncate" title={p.endereco}>
@@ -595,6 +621,15 @@ export default function CadastroPacientes() {
                           {new Date(p.criado_em).toLocaleDateString('pt-BR')}
                         </td>
                         <td className="px-4 py-4 text-right flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleAbrirHistorico(p)}
+                            title="Visualizar histórico de atendimentos (IK-77)"
+                            className="p-1.5 bg-light-gray hover:bg-secondary/30 text-gray hover:text-primary-dark rounded-lg transition-colors cursor-pointer"
+                          >
+                            <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </button>
                           <button
                             onClick={() => handleEditClick(p)}
                             title="Editar paciente"
@@ -625,6 +660,18 @@ export default function CadastroPacientes() {
         </div>
 
       </div>
+
+      {/* Modal de Histórico do Paciente (IK-77) */}
+      <ModalHistoricoPaciente
+        isOpen={historicoModalOpen}
+        onClose={() => {
+          setHistoricoModalOpen(false);
+          setHistoricoPaciente(null);
+        }}
+        pacienteId={historicoPaciente?.id || null}
+        pacienteNome={historicoPaciente?.nome_completo}
+        onNovoAgendamento={onNovoAgendamento}
+      />
     </div>
   );
 }

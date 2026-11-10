@@ -402,6 +402,21 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
       [profId, data as string]
     );
 
+    // 3b. Obter bloqueios de horário existentes no dia (IK-87)
+    let bloqueios: any[] = [];
+    try {
+      const [blRows] = await pool.query(
+        `SELECT id, horario_inicio, horario_fim, motivo 
+         FROM bloqueios 
+         WHERE profissional_id = ? AND data = ?
+         ORDER BY horario_inicio`,
+        [profId, data as string]
+      );
+      bloqueios = blRows as any[];
+    } catch {
+      bloqueios = [];
+    }
+
     // 4. Gerar slots de 30 em 30 min
     const startMins = parseTimeToMins(horaInicio);
     const endMins = parseTimeToMins(horaFim);
@@ -426,6 +441,18 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
         }
       }
 
+      // Verificar se este bloco se sobrepõe a algum bloqueio de horário (IK-87)
+      if (!overlap && Array.isArray(bloqueios)) {
+        for (const bl of bloqueios) {
+          const blStart = parseTimeToMins(bl.horario_inicio);
+          const blEnd = parseTimeToMins(bl.horario_fim);
+          if (current < blEnd && blStart < currentEnd) {
+            overlap = true;
+            break;
+          }
+        }
+      }
+
       slots.push({
         horario: currentStartStr.substring(0, 5), // Formato HH:MM
         disponivel: !overlap
@@ -441,6 +468,12 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
         horario_fim: ag.horario_fim.substring(0, 5),
         paciente_nome: ag.paciente_nome,
         servico_nome: ag.servico_nome
+      })),
+      bloqueios: bloqueios.map(bl => ({
+        id: bl.id,
+        horario_inicio: bl.horario_inicio.substring(0, 5),
+        horario_fim: bl.horario_fim.substring(0, 5),
+        motivo: bl.motivo
       }))
     });
 
@@ -552,6 +585,26 @@ router.post('/agendamentos', async (req: Request, res: Response): Promise<any> =
       });
     }
 
+    // 6b. Verificar se há sobreposição com bloqueios de agenda (IK-87)
+    try {
+      const [bloqueiosConflito] = await pool.query(
+        `SELECT id, motivo, horario_inicio, horario_fim 
+         FROM bloqueios 
+         WHERE profissional_id = ? AND data = ? 
+           AND ? < horario_fim AND horario_inicio < ?`,
+        [profissional_id, data, horario_inicio, horario_fim]
+      );
+      if ((bloqueiosConflito as any[]).length > 0) {
+        const blk = (bloqueiosConflito as any[])[0];
+        return res.status(400).json({
+          sucesso: false,
+          erro: `Horário bloqueado na agenda (${blk.motivo || 'Horário Bloqueado'}). Não é possível realizar agendamentos neste intervalo.`
+        });
+      }
+    } catch {
+      // Ignora se tabela/view ainda não estiver disponível
+    }
+
     // 7. Inserir no Banco de Dados
     const [result] = await pool.query(
       `INSERT INTO agendamentos (paciente_id, profissional_id, servico_id, data, horario_inicio, horario_fim, status) 
@@ -601,6 +654,192 @@ router.get('/pacientes', async (req: Request, res: Response): Promise<any> => {
   } catch (error: any) {
     console.error('Erro ao buscar pacientes:', error);
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao buscar pacientes.' });
+  }
+});
+
+// ============================================================================
+// ENDPOINT: GET /api/pacientes/:id/historico (Histórico de atendimentos - IK-77)
+// Critérios de Aceite:
+// CA01 — Histórico em ordem cronológica
+// CA02 — Informações mínimas: data, procedimento, profissional, situação (status)
+// CA03 — Sem histórico: informa que não existem registros (total: 0, historico: [])
+// ============================================================================
+router.get('/pacientes/:id/historico', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const { ordem = 'DESC' } = req.query;
+
+    if (!id || typeof id !== 'string' || !id.trim()) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do paciente inválido ou não informado.' });
+    }
+
+    const sortDirection = String(ordem).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const isInteger = /^\d+$/.test(id.trim());
+
+    // 1. Verificar se o paciente existe (suporta UUID ou ID numérico de forma tipada)
+    const [pacientes]: any = isInteger
+      ? await pool.query(
+          `SELECT 
+             uuid AS id, 
+             id_paciente, 
+             nome AS nome_completo, 
+             cpf, 
+             telefone, 
+             whatsapp, 
+             endereco, 
+             etapa_tratamento, 
+             atendimento_status, 
+             criado_em 
+           FROM paciente 
+           WHERE id_paciente = ? 
+           LIMIT 1`,
+          [parseInt(id.trim(), 10)]
+        )
+      : await pool.query(
+          `SELECT 
+             uuid AS id, 
+             id_paciente, 
+             nome AS nome_completo, 
+             cpf, 
+             telefone, 
+             whatsapp, 
+             endereco, 
+             etapa_tratamento, 
+             atendimento_status, 
+             criado_em 
+           FROM paciente 
+           WHERE uuid = ? 
+           LIMIT 1`,
+          [id.trim()]
+        );
+
+    if (!pacientes || pacientes.length === 0) {
+      return res.status(404).json({
+        sucesso: false,
+        erro: 'Paciente não encontrado no sistema.'
+      });
+    }
+
+    const paciente = pacientes[0];
+
+    // 2. Buscar histórico de atendimentos em ordem cronológica (CA01 e CA02)
+    const [historico]: any = await pool.query(
+      `SELECT 
+         a.id_agendamento AS id,
+         DATE_FORMAT(a.data, '%Y-%m-%d') AS data,
+         TIME_FORMAT(a.horario_inicio, '%H:%i') AS horario_inicio,
+         TIME_FORMAT(a.horario_fim, '%H:%i') AS horario_fim,
+         a.status,
+         a.tipo_atendimento,
+         a.origem,
+         a.valor_cobrado,
+         p.id_procedimento AS servico_id,
+         COALESCE(p.nome, 'Atendimento / Procedimento') AS servico_nome,
+         COALESCE(p.duracao_minutos, 60) AS duracao_minutos,
+         p.preco AS servico_preco,
+         e.nome AS categoria_nome,
+         pr.id_profissional AS profissional_id,
+         COALESCE(pr.nome, 'Profissional da Clínica') AS profissional_nome,
+         COALESCE(pr.especialidade_principal, 'Especialista') AS profissional_especialidade,
+         a.criado_em
+       FROM agendamento a
+       LEFT JOIN procedimento p ON a.id_procedimento = p.id_procedimento
+       LEFT JOIN especialidade e ON p.id_especialidade = e.id_especialidade
+       LEFT JOIN profissional pr ON a.id_profissional = pr.id_profissional
+       WHERE a.paciente_uuid = ? OR a.id_paciente = ?
+       ORDER BY a.data ${sortDirection}, a.horario_inicio ${sortDirection}`,
+      [paciente.id, paciente.id_paciente]
+    );
+
+    // Resposta estruturada para atender CA01, CA02 e CA03
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: historico.length > 0 
+        ? `${historico.length} atendimento(s) encontrado(s) no histórico.` 
+        : 'Nenhum registro de atendimento encontrado para este paciente.',
+      dados: {
+        paciente: {
+          id: paciente.id,
+          id_paciente: paciente.id_paciente,
+          nome_completo: paciente.nome_completo,
+          cpf: paciente.cpf,
+          telefone: paciente.telefone,
+          whatsapp: paciente.whatsapp,
+          endereco: paciente.endereco,
+          etapa_tratamento: paciente.etapa_tratamento,
+          criado_em: paciente.criado_em
+        },
+        historico,
+        total: historico.length
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Erro ao buscar histórico do paciente:', error);
+    return res.status(500).json({
+      sucesso: false,
+      erro: 'Erro interno ao consultar o histórico de atendimentos do paciente.'
+    });
+  }
+});
+
+// ============================================================================
+// ENDPOINT: GET /api/pacientes/:id (Detalhes de um paciente por ID ou UUID)
+// ============================================================================
+router.get('/pacientes/:id', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+
+    if (!id || typeof id !== 'string' || !id.trim()) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do paciente inválido.' });
+    }
+
+    const isInteger = /^\d+$/.test(id.trim());
+
+    const [rows]: any = isInteger
+      ? await pool.query(
+          `SELECT 
+             uuid AS id, 
+             id_paciente, 
+             nome AS nome_completo, 
+             cpf, 
+             telefone, 
+             whatsapp, 
+             endereco, 
+             etapa_tratamento, 
+             atendimento_status, 
+             criado_em 
+           FROM paciente 
+           WHERE id_paciente = ? 
+           LIMIT 1`,
+          [parseInt(id.trim(), 10)]
+        )
+      : await pool.query(
+          `SELECT 
+             uuid AS id, 
+             id_paciente, 
+             nome AS nome_completo, 
+             cpf, 
+             telefone, 
+             whatsapp, 
+             endereco, 
+             etapa_tratamento, 
+             atendimento_status, 
+             criado_em 
+           FROM paciente 
+           WHERE uuid = ? 
+           LIMIT 1`,
+          [id.trim()]
+        );
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Paciente não encontrado.' });
+    }
+
+    return res.status(200).json({ sucesso: true, dados: rows[0] });
+  } catch (error: any) {
+    console.error('Erro ao buscar paciente por ID:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao buscar paciente.' });
   }
 });
 
@@ -1113,7 +1352,28 @@ router.get('/agendamentos/dia', async (req: Request, res: Response): Promise<any
       [data as string]
     );
 
-    return res.status(200).json({ sucesso: true, dados: rows });
+    // Buscar bloqueios de horários do dia (IK-87)
+    let bloqueios: any[] = [];
+    try {
+      const [blRows] = await pool.query(
+        `SELECT 
+           id,
+           profissional_id,
+           DATE_FORMAT(data, '%Y-%m-%d') as data,
+           TIME_FORMAT(horario_inicio, '%H:%i') as horario_inicio,
+           TIME_FORMAT(horario_fim, '%H:%i') as horario_fim,
+           motivo
+         FROM bloqueios
+         WHERE data = ?
+         ORDER BY profissional_id, horario_inicio`,
+        [data as string]
+      );
+      bloqueios = blRows as any[];
+    } catch {
+      bloqueios = [];
+    }
+
+    return res.status(200).json({ sucesso: true, dados: rows, bloqueios });
 
   } catch (error: any) {
     console.error('Erro ao buscar grade de agenda:', error);
@@ -1133,7 +1393,7 @@ router.put('/agendamentos/:id/status', async (req: Request, res: Response): Prom
       return res.status(400).json({ sucesso: false, erro: 'ID do agendamento inválido.' });
     }
 
-    const statusValidos = ['Agendado', 'Confirmado', 'Na Recepção', 'Em Atendimento', 'Concluído', 'Cancelado'];
+    const statusValidos = ['Agendado', 'Confirmado', 'Na Recepção', 'Em Atendimento', 'Concluído', 'Cancelado', 'Reagendado'];
     if (!status || !statusValidos.includes(status)) {
       return res.status(400).json({
         sucesso: false,
@@ -1160,6 +1420,409 @@ router.put('/agendamentos/:id/status', async (req: Request, res: Response): Prom
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao atualizar status.' });
   }
 });
+
+// ============================================================================
+// ENDPOINT: PUT /api/agendamentos/:id/reagendar (Reagendar atendimento - IK-85)
+// ============================================================================
+router.put('/agendamentos/:id/reagendar', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const { data, horario_inicio, motivo } = req.body;
+
+    if (!validarIdNumerico(id)) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do agendamento inválido.' });
+    }
+
+    if (!data || !horario_inicio) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Dados incompletos. Informe nova data (YYYY-MM-DD) e novo horario_inicio (HH:MM).'
+      });
+    }
+
+    if (!validarFormatoData(data)) {
+      return res.status(400).json({ sucesso: false, erro: 'Formato de data inválido. Use YYYY-MM-DD.' });
+    }
+
+    if (!validarFormatoHorario(horario_inicio)) {
+      return res.status(400).json({ sucesso: false, erro: 'Formato de horário inválido. Use HH:MM.' });
+    }
+
+    // 1. Obter agendamento existente
+    const [existing] = await pool.query(
+      `SELECT a.*, s.duracao_minutos 
+       FROM agendamentos a 
+       JOIN servicos s ON a.servico_id = s.id 
+       WHERE a.id = ?`,
+      [id]
+    );
+
+    if ((existing as any[]).length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Agendamento não encontrado.' });
+    }
+
+    const agendamento = (existing as any[])[0];
+
+    if (agendamento.status === 'Cancelado') {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Atendimentos cancelados não podem ser reagendados.'
+      });
+    }
+
+    const duracao = agendamento.duracao_minutos || 60;
+    const profissional_id = agendamento.profissional_id;
+
+    // 2. Critério CA02: Validar funcionamento da clínica (Segunda a Sexta)
+    const dataObj = new Date(data + 'T00:00:00');
+    if (!validarRegraAgendamento(dataObj)) {
+      const diasSemanaNomes = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+      const diaSemanaNome = diasSemanaNomes[dataObj.getDay()];
+      return res.status(400).json({
+        sucesso: false,
+        erro: `Reagendamento bloqueado: a clínica não atende aos finais de semana (${diaSemanaNome}).`,
+        detalhes: 'A Clínica Ikigai realiza atendimentos apenas de segunda a sexta-feira, das 08:00 às 18:00.'
+      });
+    }
+
+    // 3. Critério CA02: Validar expediente operacional (08:00 às 18:00)
+    const checagemHorario = validarHorarioExpediente(horario_inicio, duracao);
+    if (!checagemHorario.valido) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Horário fora do expediente operacional.',
+        detalhes: checagemHorario.motivo || 'Os atendimentos devem iniciar a partir das 08:00 e encerrar até 18:00.'
+      });
+    }
+
+    // 4. Calcular novo horário de término (+15 min buffer)
+    const inicioMins = parseTimeToMins(horario_inicio);
+    const fimMins = inicioMins + duracao + 15;
+    const horario_fim = formatMinsToTime(fimMins);
+
+    // 5. Critério CA03: Verificar conflito com outros agendamentos (preservando o original em caso de conflito)
+    const [conflitos] = await pool.query(
+      `SELECT id, horario_inicio, horario_fim 
+       FROM agendamentos 
+       WHERE profissional_id = ? AND data = ? AND id != ? AND status != 'Cancelado' 
+         AND ? < horario_fim AND horario_inicio < ?`,
+      [profissional_id, data, id, horario_inicio, horario_fim]
+    );
+
+    if ((conflitos as any[]).length > 0) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Conflito de agenda. Já existe outro agendamento neste horário (ou no período de respiro).'
+      });
+    }
+
+    // 6. Critério CA03: Verificar conflito com bloqueios de agenda
+    try {
+      const [bloqueiosConflito] = await pool.query(
+        `SELECT id, motivo, horario_inicio, horario_fim 
+         FROM bloqueios 
+         WHERE profissional_id = ? AND data = ? 
+           AND ? < horario_fim AND horario_inicio < ?`,
+        [profissional_id, data, horario_inicio, horario_fim]
+      );
+
+      if ((bloqueiosConflito as any[]).length > 0) {
+        const blk = (bloqueiosConflito as any[])[0];
+        return res.status(400).json({
+          sucesso: false,
+          erro: `Conflito de agenda: o período coincide com um bloqueio (${blk.motivo || 'Horário Bloqueado'}).`
+        });
+      }
+    } catch {
+      // Ignora se tabela/view ainda não estiver disponível
+    }
+
+    // 7. Critério CA04: Atualizar atendimento e refletir na agenda
+    await pool.query(
+      `UPDATE agendamentos 
+       SET data = ?, horario_inicio = ?, horario_fim = ?, status = 'Reagendado' 
+       WHERE id = ?`,
+      [data, horario_inicio, horario_fim, id]
+    );
+
+    // Auditoria opcional no histórico
+    try {
+      await pool.query(
+        `INSERT INTO historico_status_agendamento (id_agendamento, status_anterior, status_novo, motivo, alterado_por)
+         VALUES (?, ?, 'Reagendado', ?, 'Recepção')`,
+        [id, agendamento.status, motivo || `Reagendado para ${data} às ${horario_inicio}`]
+      );
+    } catch {
+      // Ignora se tabela não existir
+    }
+
+    console.log(`[MySQL] Agendamento ID ${id} reagendado para ${data} (${horario_inicio} - ${horario_fim})`);
+
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: 'Atendimento reagendado com sucesso!',
+      dados: {
+        id: parseInt(id, 10),
+        data,
+        horario_inicio,
+        horario_fim,
+        status: 'Reagendado'
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Erro ao reagendar atendimento:', error);
+    return res.status(500).json({
+      sucesso: false,
+      erro: 'Erro interno no servidor ao processar o reagendamento.'
+    });
+  }
+});
+
+// ============================================================================
+// ENDPOINT: POST /api/bloqueios (Criar bloqueio de horário na agenda - IK-87)
+// ============================================================================
+router.post('/bloqueios', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { profissional_id, data, horario_inicio, horario_fim, motivo } = req.body;
+
+    if (!profissional_id || !data || !horario_inicio || !horario_fim) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Dados incompletos. Informe profissional_id, data, horario_inicio e horario_fim.'
+      });
+    }
+
+    if (!validarFormatoData(data)) {
+      return res.status(400).json({ sucesso: false, erro: 'Formato de data inválido. Use YYYY-MM-DD.' });
+    }
+
+    if (!validarFormatoHorario(horario_inicio) || !validarFormatoHorario(horario_fim)) {
+      return res.status(400).json({ sucesso: false, erro: 'Formato de horário inválido. Use HH:MM.' });
+    }
+
+    const iniMins = parseTimeToMins(horario_inicio);
+    const fimMins = parseTimeToMins(horario_fim);
+
+    if (iniMins >= fimMins) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'O horário de término deve ser posterior ao horário de início.'
+      });
+    }
+
+    // 1. Validar dias de atendimento (Segunda a Sexta)
+    const dataObj = new Date(data + 'T00:00:00');
+    if (!validarRegraAgendamento(dataObj)) {
+      const diasSemanaNomes = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+      const diaSemanaNome = diasSemanaNomes[dataObj.getDay()];
+      return res.status(400).json({
+        sucesso: false,
+        erro: `Bloqueio desnecessário: a clínica já permanece fechada aos finais de semana (${diaSemanaNome}).`
+      });
+    }
+
+    // 2. Validar expediente (08:00 às 18:00)
+    const checagemInicio = validarHorarioExpediente(horario_inicio);
+    if (!checagemInicio.valido) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Horário de início fora do expediente (08:00 às 18:00).'
+      });
+    }
+
+    if (fimMins > 18 * 60) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Horário de término ultrapassa o expediente da clínica (18:00).'
+      });
+    }
+
+    // 3. Validar se o profissional existe
+    const [profissionais] = await pool.query('SELECT id FROM profissionais WHERE id = ?', [profissional_id]);
+    if ((profissionais as any[]).length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Profissional não cadastrado.' });
+    }
+
+    // 4. Critério CA04 (IK-87): O sistema não deverá criar bloqueio conflitante sem informar o administrador
+    const [conflitosAgendamento] = await pool.query(
+      `SELECT a.id, TIME_FORMAT(a.horario_inicio, '%H:%i') as horario_inicio, TIME_FORMAT(a.horario_fim, '%H:%i') as horario_fim, p.nome_completo as paciente_nome 
+       FROM agendamentos a 
+       JOIN pacientes p ON a.paciente_id = p.id
+       WHERE a.profissional_id = ? AND a.data = ? AND a.status != 'Cancelado' 
+         AND ? < a.horario_fim AND a.horario_inicio < ?`,
+      [profissional_id, data, horario_inicio, horario_fim]
+    );
+
+    if ((conflitosAgendamento as any[]).length > 0) {
+      const ag = (conflitosAgendamento as any[])[0];
+      return res.status(400).json({
+        sucesso: false,
+        erro: `Conflito detectado: já existe o agendamento #${ag.id} (${ag.paciente_nome}, das ${ag.horario_inicio} às ${ag.horario_fim}) neste período. Reagende ou cancele o atendimento antes de bloquear o horário.`
+      });
+    }
+
+    // 5. Validar se já existe outro bloqueio no mesmo período
+    try {
+      const [conflitosBloqueio] = await pool.query(
+        `SELECT id, horario_inicio, horario_fim, motivo 
+         FROM bloqueios 
+         WHERE profissional_id = ? AND data = ? 
+           AND ? < horario_fim AND horario_inicio < ?`,
+        [profissional_id, data, horario_inicio, horario_fim]
+      );
+
+      if ((conflitosBloqueio as any[]).length > 0) {
+        return res.status(400).json({
+          sucesso: false,
+          erro: 'Já existe um bloqueio cadastrado para este profissional neste período.'
+        });
+      }
+    } catch {
+      // Tabela pode estar sendo inicializada
+    }
+
+    const motivoSanitizado = motivo ? sanitizarTexto(motivo) : 'Horário Bloqueado';
+
+    const [result] = await pool.query(
+      `INSERT INTO bloqueio_agenda (id_profissional, data, horario_inicio, horario_fim, motivo)
+       VALUES (?, ?, ?, ?, ?)`,
+      [profissional_id, data, horario_inicio, horario_fim, motivoSanitizado]
+    );
+
+    const novoBloqueioId = (result as any).insertId;
+    console.log(`[MySQL] Bloqueio ID ${novoBloqueioId} criado para prof #${profissional_id} em ${data} (${horario_inicio} às ${horario_fim})`);
+
+    return res.status(201).json({
+      sucesso: true,
+      mensagem: 'Horário bloqueado com sucesso na agenda!',
+      dados: {
+        id: novoBloqueioId,
+        profissional_id: Number(profissional_id),
+        data,
+        horario_inicio,
+        horario_fim,
+        motivo: motivoSanitizado
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Erro ao registrar bloqueio na agenda:', error);
+    return res.status(500).json({
+      sucesso: false,
+      erro: 'Erro interno no servidor ao registrar bloqueio de horário.'
+    });
+  }
+});
+
+// ============================================================================
+// ENDPOINT: GET /api/bloqueios (Consultar bloqueios da agenda - IK-87)
+// ============================================================================
+router.get('/bloqueios', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { data, profissional_id } = req.query;
+
+    let sql = `
+      SELECT 
+        b.id,
+        b.profissional_id,
+        pr.nome as profissional_nome,
+        DATE_FORMAT(b.data, '%Y-%m-%d') as data,
+        TIME_FORMAT(b.horario_inicio, '%H:%i') as horario_inicio,
+        TIME_FORMAT(b.horario_fim, '%H:%i') as horario_fim,
+        b.motivo,
+        b.criado_em
+      FROM bloqueios b
+      JOIN profissionais pr ON b.profissional_id = pr.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (data) {
+      sql += ' AND b.data = ?';
+      params.push(data);
+    }
+    if (profissional_id) {
+      sql += ' AND b.profissional_id = ?';
+      params.push(profissional_id);
+    }
+
+    sql += ' ORDER BY b.data, b.horario_inicio';
+
+    const [rows] = await pool.query(sql, params);
+    return res.status(200).json({ sucesso: true, dados: rows });
+
+  } catch (error: any) {
+    console.error('Erro ao buscar bloqueios:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao consultar bloqueios.' });
+  }
+});
+
+// ============================================================================
+// ENDPOINT: DELETE /api/bloqueios/:id (Remover bloqueio da agenda - IK-87)
+// ============================================================================
+router.delete('/bloqueios/:id', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+
+    if (!validarIdNumerico(id)) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do bloqueio inválido.' });
+    }
+
+    const [existing] = await pool.query('SELECT id FROM bloqueio_agenda WHERE id_bloqueio = ?', [id]);
+    if ((existing as any[]).length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Bloqueio não encontrado.' });
+    }
+
+    await pool.query('DELETE FROM bloqueio_agenda WHERE id_bloqueio = ?', [id]);
+    console.log(`[MySQL] Bloqueio ID ${id} removido.`);
+
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: 'Bloqueio removido com sucesso! O horário voltou a ficar disponível para novos atendimentos.'
+    });
+
+  } catch (error: any) {
+    console.error('Erro ao remover bloqueio:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao remover bloqueio.' });
+  }
+});
+
+// ============================================================================
+// AUTO-INICIALIZAÇÃO DA TABELA DE BLOQUEIO DE HORÁRIOS (IK-87)
+// ============================================================================
+async function garantirTabelaBloqueios() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bloqueio_agenda (
+        id_bloqueio INT AUTO_INCREMENT PRIMARY KEY,
+        id_profissional INT NOT NULL,
+        data DATE NOT NULL,
+        horario_inicio TIME NOT NULL,
+        horario_fim TIME NOT NULL,
+        motivo VARCHAR(255) NOT NULL DEFAULT 'Horário Bloqueado',
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_bloqueio_data_prof (data, id_profissional)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await pool.query(`
+      CREATE OR REPLACE VIEW bloqueios AS 
+      SELECT 
+        id_bloqueio AS id, 
+        id_profissional AS profissional_id, 
+        data, 
+        horario_inicio, 
+        horario_fim, 
+        motivo, 
+        criado_em 
+      FROM bloqueio_agenda;
+    `);
+  } catch {
+    // Ignora se o banco não estiver disponível durante inicialização estática
+  }
+}
+garantirTabelaBloqueios();
 
 export default router;
 
