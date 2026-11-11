@@ -72,6 +72,13 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
     especialidade: ''
   });
 
+  // IK-80: Vínculos de Procedimentos por Profissional
+  const [vinculosPorProfissional, setVinculosPorProfissional] = useState<Record<number, number[]>>({});
+  const [modalVinculosProf, setModalVinculosProf] = useState<ProfissionalItem | null>(null);
+  const [modalSelectedProcs, setModalSelectedProcs] = useState<number[]>([]);
+  const [modalTermoBusca, setModalTermoBusca] = useState<string>('');
+  const [salvandoVinculos, setSalvandoVinculos] = useState<boolean>(false);
+
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
   
@@ -102,6 +109,28 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
     }
   };
 
+  // Carregar vínculos de procedimentos para a lista de profissionais (IK-80)
+  const carregarVinculosProfissionais = async (profs: ProfissionalItem[]) => {
+    if (!profs || profs.length === 0) return;
+    const mapa: Record<number, number[]> = {};
+    await Promise.all(
+      profs.map(async prof => {
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/profissionais/${prof.id}/procedimentos`);
+          const data = await res.json();
+          if (data.sucesso && Array.isArray(data.procedimento_ids)) {
+            mapa[prof.id] = data.procedimento_ids;
+          } else {
+            mapa[prof.id] = [];
+          }
+        } catch {
+          mapa[prof.id] = [];
+        }
+      })
+    );
+    setVinculosPorProfissional(mapa);
+  };
+
   // Carregar dados de Profissionais
   const carregarProfissionais = async () => {
     setLoadingProfissionais(true);
@@ -110,6 +139,7 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
       const data = await res.json();
       if (data.sucesso && Array.isArray(data.dados)) {
         setProfissionais(data.dados);
+        carregarVinculosProfissionais(data.dados);
       }
     } catch (error) {
       console.error(error);
@@ -505,6 +535,101 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
         prev.map(item => item.id === p.id ? { ...item, ativo: isAtivoAtual ? 1 : 0 } : item)
       );
       showToast('Erro de comunicação ao alterar status do profissional.', 'error');
+    }
+  };
+
+  // ==========================================
+  // IK-80: AÇÕES DE VINCULAÇÃO DE PROCEDIMENTOS
+  // ==========================================
+  const abrirModalVincularProcedimentos = async (p: ProfissionalItem) => {
+    setModalVinculosProf(p);
+    setModalTermoBusca('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profissionais/${p.id}/procedimentos`);
+      const data = await res.json();
+      if (data.sucesso && Array.isArray(data.procedimento_ids)) {
+        setModalSelectedProcs(data.procedimento_ids);
+        setVinculosPorProfissional(prev => ({ ...prev, [p.id]: data.procedimento_ids }));
+      } else {
+        setModalSelectedProcs(vinculosPorProfissional[p.id] || []);
+      }
+    } catch {
+      setModalSelectedProcs(vinculosPorProfissional[p.id] || []);
+    }
+  };
+
+  const fecharModalVinculos = () => {
+    setModalVinculosProf(null);
+    setModalSelectedProcs([]);
+    setModalTermoBusca('');
+  };
+
+  const handleToggleProcInModal = (procId: number) => {
+    setModalSelectedProcs(prev =>
+      prev.includes(procId) ? prev.filter(id => id !== procId) : [...prev, procId]
+    );
+  };
+
+  const handleSelecionarTodosProcedimentos = () => {
+    setModalSelectedProcs(servicos.map(s => s.id));
+  };
+
+  const handleLimparTodosProcedimentos = () => {
+    setModalSelectedProcs([]);
+  };
+
+  const handleSalvarVinculos = async () => {
+    if (!modalVinculosProf) return;
+    setSalvandoVinculos(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profissionais/${modalVinculosProf.id}/procedimentos`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ procedimentos: modalSelectedProcs })
+      });
+      const data = await res.json();
+
+      if (data.sucesso) {
+        setVinculosPorProfissional(prev => ({
+          ...prev,
+          [modalVinculosProf.id]: modalSelectedProcs
+        }));
+        showToast(`Procedimentos vinculados com sucesso para ${modalVinculosProf.nome}!`, 'success');
+        fecharModalVinculos();
+        onProfissionaisAtualizados?.();
+      } else {
+        showToast(data.erro || 'Falha ao salvar vínculos.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Erro de conexão ao salvar vínculos.', 'error');
+    } finally {
+      setSalvandoVinculos(false);
+    }
+  };
+
+  const handleDesvincularRapido = async (prof: ProfissionalItem, procId: number) => {
+    const servico = servicos.find(s => s.id === procId);
+    const nomeProc = servico?.nome || `Procedimento #${procId}`;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profissionais/${prof.id}/procedimentos/${procId}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.sucesso) {
+        setVinculosPorProfissional(prev => ({
+          ...prev,
+          [prof.id]: (prev[prof.id] || []).filter(id => id !== procId)
+        }));
+        showToast(`Vínculo de "${nomeProc}" removido de ${prof.nome}.`, 'info');
+        onProfissionaisAtualizados?.();
+      } else {
+        showToast(data.erro || 'Não foi possível desvincular.', 'error');
+      }
+    } catch {
+      showToast('Erro de conexão ao remover vínculo.', 'error');
     }
   };
 
@@ -974,6 +1099,68 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
                         </div>
                       </div>
 
+                      {/* Procedimentos Vinculados (IK-80) */}
+                      {(() => {
+                        const procIds = vinculosPorProfissional[prof.id] || [];
+                        const procsVinculados = servicos.filter(s => procIds.includes(s.id));
+
+                        return (
+                          <div className="mt-3 pt-2.5 border-t border-gray/10">
+                            <div className="flex items-center justify-between gap-1 mb-1.5">
+                              <span className="text-[11px] font-bold text-gray-700 flex items-center gap-1.5">
+                                <svg className="w-3.5 h-3.5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                </svg>
+                                Procedimentos ({procsVinculados.length})
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => abrirModalVincularProcedimentos(prof)}
+                                className="text-[11px] font-bold text-primary hover:text-primary-dark hover:underline flex items-center gap-1 cursor-pointer"
+                              >
+                                + Vincular
+                              </button>
+                            </div>
+
+                            {procsVinculados.length === 0 ? (
+                              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/60 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1">
+                                <span>⚠️ Nenhum procedimento</span>
+                                <button
+                                  type="button"
+                                  onClick={() => abrirModalVincularProcedimentos(prof)}
+                                  className="text-primary font-bold hover:underline"
+                                >
+                                  Vincular agora
+                                </button>
+                              </p>
+                            ) : (
+                              <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-0.5">
+                                {procsVinculados.map(p => (
+                                  <span
+                                    key={p.id}
+                                    className="inline-flex items-center gap-1 bg-white border border-gray-200 rounded-md px-2 py-0.5 text-[11px] text-dark font-medium shadow-2xs group/tag"
+                                    title={`${p.nome} (${p.duracao_minutos} min - R$ ${p.preco ? Number(p.preco).toFixed(2) : '0.00'})`}
+                                  >
+                                    <span className="truncate max-w-[130px]">{p.nome}</span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDesvincularRapido(prof, p.id);
+                                      }}
+                                      className="text-gray-400 hover:text-red-500 rounded-full cursor-pointer transition-colors"
+                                      title="Remover este vínculo (CA02)"
+                                    >
+                                      ×
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {/* Footer do Card com status (botão interativo) e botões de ação */}
                       <div className="mt-3 pt-3 border-t border-gray/10 flex items-center justify-between gap-2 flex-wrap">
                         {/* Botão de Status Interativo: Ativo / Inativo na Grade */}
@@ -1144,6 +1331,158 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
               >
                 Concluir
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IK-80: Modal de Vinculação de Procedimentos ao Profissional (CA01 & CA02) */}
+      {modalVinculosProf && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-premium max-w-xl w-full p-6 border border-gray/10 flex flex-col max-h-[85vh]">
+            {/* Cabeçalho */}
+            <div className="flex items-start justify-between pb-4 border-b border-gray/10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary-dark text-secondary flex items-center justify-center font-extrabold text-sm shadow-sm flex-shrink-0">
+                  {obterIniciais(modalVinculosProf.nome)}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-dark flex items-center gap-2">
+                    Vincular Procedimentos
+                  </h3>
+                  <p className="text-xs text-gray mt-0.5">
+                    Defina quais procedimentos <strong className="text-dark">{modalVinculosProf.nome}</strong> está habilitado a realizar.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={fecharModalVinculos}
+                className="text-gray hover:text-dark p-1.5 rounded-lg hover:bg-light-gray transition-colors cursor-pointer"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Barra de Filtro e Ações Rápidas */}
+            <div className="py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-b border-gray/10">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  placeholder="Buscar procedimento..."
+                  value={modalTermoBusca}
+                  onChange={e => setModalTermoBusca(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-primary focus:outline-none"
+                />
+                <svg className="w-4 h-4 text-gray-400 absolute left-2.5 top-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={handleSelecionarTodosProcedimentos}
+                  className="text-primary hover:underline font-semibold cursor-pointer"
+                >
+                  Selecionar todos
+                </button>
+                <span className="text-gray-300">|</span>
+                <button
+                  type="button"
+                  onClick={handleLimparTodosProcedimentos}
+                  className="text-gray-500 hover:text-red-500 hover:underline font-semibold cursor-pointer"
+                >
+                  Limpar todos
+                </button>
+              </div>
+            </div>
+
+            {/* Lista de Procedimentos com Checkboxes */}
+            <div className="flex-1 overflow-y-auto py-3 space-y-2 max-h-[380px] pr-1">
+              {(() => {
+                const procedimentosFiltrados = servicos.filter(s =>
+                  s.nome.toLowerCase().includes(modalTermoBusca.toLowerCase()) ||
+                  (s.categoria_nome && s.categoria_nome.toLowerCase().includes(modalTermoBusca.toLowerCase()))
+                );
+
+                if (procedimentosFiltrados.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-xs text-gray-500">
+                      Nenhum procedimento encontrado com o termo informado.
+                    </div>
+                  );
+                }
+
+                return procedimentosFiltrados.map(proc => {
+                  const isChecked = modalSelectedProcs.includes(proc.id);
+
+                  return (
+                    <label
+                      key={proc.id}
+                      className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${
+                        isChecked
+                          ? 'bg-primary/5 border-primary/40 ring-1 ring-primary/20'
+                          : 'bg-white hover:bg-gray-50 border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleProcInModal(proc.id)}
+                          className="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary cursor-pointer"
+                        />
+                        <div>
+                          <div className="text-xs font-bold text-dark flex items-center gap-2">
+                            <span>{proc.nome}</span>
+                            <span className="text-[10px] bg-secondary/20 text-primary-dark font-semibold px-1.5 py-0.2 rounded border border-secondary/30">
+                              {proc.categoria_nome}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-0.5">
+                            Duração: {proc.duracao_minutos} min • R$ {proc.preco ? Number(proc.preco).toFixed(2) : '0.00'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
+                        isChecked ? 'bg-emerald-100 text-emerald-800' : 'text-gray-400'
+                      }`}>
+                        {isChecked ? 'Vinculado' : 'Não vinculado'}
+                      </span>
+                    </label>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Rodapé do Modal com contador e botões */}
+            <div className="mt-3 pt-3 border-t border-gray/10 flex items-center justify-between gap-3">
+              <span className="text-xs text-gray-600 font-medium">
+                <strong className="text-dark">{modalSelectedProcs.length}</strong> de {servicos.length} procedimento(s) selecionado(s)
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fecharModalVinculos}
+                  disabled={salvandoVinculos}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-100 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSalvarVinculos}
+                  disabled={salvandoVinculos}
+                  className="px-5 py-2 bg-primary hover:bg-primary-dark text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {salvandoVinculos ? 'Salvando...' : 'Salvar Vínculos'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

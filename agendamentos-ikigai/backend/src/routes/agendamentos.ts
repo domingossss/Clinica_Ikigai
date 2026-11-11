@@ -563,6 +563,19 @@ router.post('/agendamentos', async (req: Request, res: Response): Promise<any> =
       return res.status(404).json({ sucesso: false, erro: 'Profissional nao cadastrado.' });
     }
 
+    // 4b. Verificar se o profissional está vinculado ao procedimento solicitado (IK-80 CA03)
+    const [vinculos]: any = await pool.query(
+      'SELECT 1 FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
+      [profissional_id, servico_id]
+    );
+    if (vinculos.length === 0) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Profissional não habilitado para realizar este procedimento.',
+        detalhes: 'O profissional selecionado não possui vínculo ativo com o procedimento solicitado.'
+      });
+    }
+
     // 5. Calcular horário de término (horario_inicio + duracao + 15 min buffer)
     const inicioMins = parseTimeToMins(horario_inicio);
     const fimMins = inicioMins + duracao + 15;
@@ -1019,9 +1032,24 @@ router.post('/pacientes/rapido', async (req: Request, res: Response): Promise<an
 
 // ============================================================================
 // ENDPOINT: GET /api/profissionais (Listar todos os profissionais/terapeutas)
+// Permite filtrar por procedimento_id ou servico_id (IK-80 CA03)
 // ============================================================================
 router.get('/profissionais', async (req: Request, res: Response): Promise<any> => {
   try {
+    const { procedimento_id, servico_id } = req.query;
+    const procId = procedimento_id || servico_id;
+
+    if (procId) {
+      const [rows] = await pool.query(`
+        SELECT p.id, p.nome, p.especialidade, p.ativo 
+        FROM profissionais p
+        INNER JOIN profissional_procedimento pp ON p.id = pp.id_profissional
+        WHERE pp.id_procedimento = ? AND p.ativo = 1
+        ORDER BY p.id ASC
+      `, [procId]);
+      return res.status(200).json({ sucesso: true, dados: rows });
+    }
+
     const [rows] = await pool.query('SELECT id, nome, especialidade, ativo FROM profissionais ORDER BY id ASC');
     return res.status(200).json({ sucesso: true, dados: rows });
   } catch (error: any) {
@@ -1179,6 +1207,233 @@ router.delete('/profissionais/:id', async (req: Request, res: Response): Promise
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao excluir profissional.' });
   }
 });
+
+// ============================================================================
+// ENDPOINTS: VINCULAÇÃO DE PROCEDIMENTOS AO PROFISSIONAL (IK-80)
+// ============================================================================
+
+/**
+ * GET /api/profissionais/:id/procedimentos
+ * CA01: Retorna todos os procedimentos cadastrados na clínica indicando quais estão vinculados ao profissional.
+ */
+router.get('/profissionais/:id/procedimentos', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+
+    // Verificar se o profissional existe
+    const [profs]: any = await pool.query('SELECT id, nome, especialidade FROM profissionais WHERE id = ?', [id]);
+    if (profs.length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Profissional não encontrado.' });
+    }
+
+    const [rows]: any = await pool.query(`
+      SELECT 
+        p.id_procedimento AS id,
+        p.nome,
+        p.duracao_minutos,
+        p.preco,
+        p.id_especialidade AS categoria_id,
+        COALESCE(e.nome, 'Geral') AS categoria_nome,
+        p.ativo,
+        CASE WHEN pp.id_profissional IS NOT NULL THEN 1 ELSE 0 END AS vinculado
+      FROM procedimento p
+      LEFT JOIN especialidade e ON p.id_especialidade = e.id_especialidade
+      LEFT JOIN profissional_procedimento pp 
+        ON p.id_procedimento = pp.id_procedimento AND pp.id_profissional = ?
+      WHERE p.ativo = 1
+      ORDER BY p.nome ASC
+    `, [id]);
+
+    const vinculados = rows.filter((r: any) => r.vinculado === 1);
+    const procedimento_ids = vinculados.map((r: any) => r.id);
+
+    return res.status(200).json({
+      sucesso: true,
+      profissional: profs[0],
+      dados: rows,
+      vinculados,
+      procedimento_ids
+    });
+  } catch (error: any) {
+    console.error('Erro ao buscar procedimentos do profissional:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao buscar procedimentos do profissional.' });
+  }
+});
+
+/**
+ * PUT /api/profissionais/:id/procedimentos
+ * CA01 & CA02: Atualiza a lista completa de procedimentos vinculados ao profissional.
+ * Permite selecionar um ou mais procedimentos ativos e salvar, ou remover vínculos.
+ */
+router.put('/profissionais/:id/procedimentos', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const { procedimentos, procedimento_ids } = req.body;
+
+    const lista = procedimentos !== undefined ? procedimentos : procedimento_ids;
+
+    if (!Array.isArray(lista)) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Informe uma lista (array) de IDs de procedimentos no corpo da requisição.'
+      });
+    }
+
+    // Verificar se o profissional existe
+    const [profs]: any = await pool.query('SELECT id, nome FROM profissionais WHERE id = ?', [id]);
+    if (profs.length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Profissional não encontrado.' });
+    }
+
+    const procIds = lista.map(Number).filter(n => !isNaN(n) && n > 0);
+
+    // Se informou procedimentos, verificar se todos existem e estão ativos
+    if (procIds.length > 0) {
+      const [procsValidos]: any = await pool.query(
+        'SELECT id_procedimento FROM procedimento WHERE id_procedimento IN (?) AND ativo = 1',
+        [procIds]
+      );
+      if (procsValidos.length !== procIds.length) {
+        return res.status(400).json({
+          sucesso: false,
+          erro: 'Um ou mais procedimentos informados são inválidos ou inativos.'
+        });
+      }
+    }
+
+    // Atualiza vínculos: remove os antigos e insere os novos
+    await pool.query('DELETE FROM profissional_procedimento WHERE id_profissional = ?', [id]);
+
+    if (procIds.length > 0) {
+      const valores = procIds.map((procId: number) => [Number(id), procId]);
+      await pool.query(
+        'INSERT INTO profissional_procedimento (id_profissional, id_procedimento) VALUES ?',
+        [valores]
+      );
+    }
+
+    console.log(`[MySQL] Vínculos atualizados para profissional #${id}: [${procIds.join(', ')}]`);
+
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: 'Vínculos de procedimentos salvos com sucesso!',
+      dados: {
+        id_profissional: Number(id),
+        procedimentos: procIds
+      }
+    });
+  } catch (error: any) {
+    console.error('Erro ao atualizar vínculos de procedimentos do profissional:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao salvar vínculos de procedimentos.' });
+  }
+});
+
+/**
+ * POST /api/profissionais/:id/procedimentos
+ * CA01: Adiciona vínculo pontual de um procedimento ao profissional.
+ */
+router.post('/profissionais/:id/procedimentos', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const { procedimento_id, servico_id } = req.body;
+    const procId = Number(procedimento_id || servico_id);
+
+    if (!procId || isNaN(procId)) {
+      return res.status(400).json({ sucesso: false, erro: 'Informe o ID do procedimento válido.' });
+    }
+
+    const [profs]: any = await pool.query('SELECT id FROM profissionais WHERE id = ?', [id]);
+    if (profs.length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Profissional não encontrado.' });
+    }
+
+    const [procs]: any = await pool.query('SELECT id_procedimento FROM procedimento WHERE id_procedimento = ? AND ativo = 1', [procId]);
+    if (procs.length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Procedimento não encontrado ou inativo.' });
+    }
+
+    await pool.query(
+      'INSERT IGNORE INTO profissional_procedimento (id_profissional, id_procedimento) VALUES (?, ?)',
+      [id, procId]
+    );
+
+    return res.status(201).json({
+      sucesso: true,
+      mensagem: 'Procedimento vinculado com sucesso ao profissional!',
+      dados: {
+        id_profissional: Number(id),
+        id_procedimento: procId
+      }
+    });
+  } catch (error: any) {
+    console.error('Erro ao vincular procedimento ao profissional:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao vincular procedimento.' });
+  }
+});
+
+/**
+ * DELETE /api/profissionais/:id/procedimentos/:procedimentoId
+ * CA02: Remove vínculo pontual de um procedimento do profissional.
+ */
+router.delete('/profissionais/:id/procedimentos/:procedimentoId', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id, procedimentoId } = req.params;
+
+    const [result]: any = await pool.query(
+      'DELETE FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
+      [id, procedimentoId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        sucesso: false,
+        erro: 'Vínculo não encontrado entre o profissional e o procedimento informados.'
+      });
+    }
+
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: 'Vínculo removido com sucesso!'
+    });
+  } catch (error: any) {
+    console.error('Erro ao remover vínculo do profissional:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao desvincular procedimento.' });
+  }
+});
+
+/**
+ * GET /api/servicos/:id/profissionais e GET /api/procedimentos/:id/profissionais
+ * CA03: Retorna somente profissionais habilitados para realizar o procedimento.
+ */
+const handleProfissionaisPorServico = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+
+    const [rows]: any = await pool.query(`
+      SELECT 
+        p.id, 
+        p.nome, 
+        p.especialidade, 
+        p.ativo 
+      FROM profissionais p
+      INNER JOIN profissional_procedimento pp ON p.id = pp.id_profissional
+      WHERE pp.id_procedimento = ? AND p.ativo = 1
+      ORDER BY p.nome ASC
+    `, [id]);
+
+    return res.status(200).json({
+      sucesso: true,
+      procedimento_id: Number(id),
+      dados: rows
+    });
+  } catch (error: any) {
+    console.error('Erro ao buscar profissionais vinculados ao procedimento:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao buscar profissionais do procedimento.' });
+  }
+};
+
+router.get('/servicos/:id/profissionais', handleProfissionaisPorServico);
+router.get('/procedimentos/:id/profissionais', handleProfissionaisPorServico);
 
 // ============================================================================
 // ENDPOINT: PUT /api/pacientes/:id (Editar paciente existente)
@@ -1823,6 +2078,42 @@ async function garantirTabelaBloqueios() {
   }
 }
 garantirTabelaBloqueios();
+
+// ============================================================================
+// AUTO-INICIALIZAÇÃO DA TABELA PROFISSIONAL X PROCEDIMENTO (IK-80)
+// ============================================================================
+async function garantirTabelaProfissionalProcedimento() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS profissional_procedimento (
+        id_profissional INT NOT NULL,
+        id_procedimento INT NOT NULL,
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id_profissional, id_procedimento),
+        INDEX idx_pp_procedimento (id_procedimento)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // Popular vínculos iniciais caso a tabela esteja vazia
+    const [countRows]: any = await pool.query('SELECT COUNT(*) as total FROM profissional_procedimento');
+    if (countRows[0]?.total === 0) {
+      await pool.query(`
+        INSERT IGNORE INTO profissional_procedimento (id_profissional, id_procedimento)
+        VALUES 
+          (1, 1), (1, 2),
+          (2, 1), (2, 2), (2, 4),
+          (3, 3),
+          (4, 4),
+          (5, 5),
+          (6, 6)
+      `);
+      console.log('[MySQL] Tabela profissional_procedimento inicializada com vínculos padrão.');
+    }
+  } catch (err) {
+    // Ignora se o banco não estiver disponível durante inicialização estática
+  }
+}
+garantirTabelaProfissionalProcedimento();
 
 export default router;
 

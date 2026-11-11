@@ -82,6 +82,52 @@ export default function ModalAgendamentoRapido({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // CA03: Profissionais elegíveis com base no procedimento selecionado
+  const [profissionaisElegiveis, setProfissionaisElegiveis] = useState<ProfissionalItem[]>(profissionais);
+  const [carregandoProfissionaisElegiveis, setCarregandoProfissionaisElegiveis] = useState<boolean>(false);
+
+  // Atualizar profissionais elegíveis sempre que o serviço for alterado (CA03)
+  useEffect(() => {
+    if (!servicoId) {
+      setProfissionaisElegiveis(profissionais);
+      return;
+    }
+
+    let cancelado = false;
+    setCarregandoProfissionaisElegiveis(true);
+
+    fetch(`${API_BASE_URL}/api/servicos/${servicoId}/profissionais`)
+      .then(res => res.json())
+      .then(data => {
+        if (cancelado) return;
+        if (data.sucesso && Array.isArray(data.dados)) {
+          setProfissionaisElegiveis(data.dados);
+          // Se o profissional selecionado atualmente não é elegível para este procedimento,
+          // seleciona automaticamente o primeiro profissional habilitado
+          setProfissionalId(prevId => {
+            const aindaValido = data.dados.some((p: any) => p.id === prevId);
+            if (aindaValido) return prevId;
+            return data.dados.length > 0 ? data.dados[0].id : 0;
+          });
+        } else {
+          setProfissionaisElegiveis([]);
+          setProfissionalId(0);
+        }
+      })
+      .catch(err => {
+        console.error('Erro ao buscar profissionais elegíveis:', err);
+        if (cancelado) return;
+        setProfissionaisElegiveis(profissionais);
+      })
+      .finally(() => {
+        if (!cancelado) setCarregandoProfissionaisElegiveis(false);
+      });
+
+    return () => {
+      cancelado = true;
+    };
+  }, [servicoId, profissionais]);
+
   // Atualizar quando props iniciais mudarem
   useEffect(() => {
     if (initialDate) setData(initialDate);
@@ -249,8 +295,12 @@ export default function ModalAgendamentoRapido({
       return;
     }
 
-    if (!profissionalId || !servicoId || !data || !horaInicio) {
-      setErrorMessage('Preencha todos os campos obrigatórios do agendamento.');
+    if (!profissionalId || profissionalId === 0 || !servicoId || !data || !horaInicio) {
+      if (profissionalId === 0) {
+        setErrorMessage('Selecione um profissional habilitado para realizar este procedimento.');
+      } else {
+        setErrorMessage('Preencha todos os campos obrigatórios do agendamento.');
+      }
       return;
     }
 
@@ -567,30 +617,12 @@ export default function ModalAgendamentoRapido({
             )}
           </div>
 
-          {/* SEÇÃO 2: PROFISSIONAL E SERVIÇO */}
+          {/* SEÇÃO 2: SERVIÇO E PROFISSIONAL (IK-80 CA03) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Profissional */}
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
-                Profissional / Terapeuta *
-              </label>
-              <select
-                value={profissionalId}
-                onChange={e => setProfissionalId(Number(e.target.value))}
-                className="w-full p-2.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900"
-              >
-                {profissionais.map(prof => (
-                  <option key={prof.id} value={prof.id}>
-                    {prof.nome} {prof.especialidade ? `(${prof.especialidade})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {/* Serviço */}
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
-                Serviço *
+                Serviço / Procedimento *
               </label>
               <select
                 value={servicoId}
@@ -604,6 +636,49 @@ export default function ModalAgendamentoRapido({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Profissional Elegível */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
+                  Profissional / Terapeuta *
+                </label>
+                {servicoId && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                    profissionaisElegiveis.length === 0
+                      ? 'text-red-700 bg-red-50 border-red-200'
+                      : 'text-blue-700 bg-blue-50 border-blue-200'
+                  }`}>
+                    {carregandoProfissionaisElegiveis
+                      ? 'Filtrando...'
+                      : `${profissionaisElegiveis.length} habilitado(s)`}
+                  </span>
+                )}
+              </div>
+              <select
+                value={profissionalId}
+                disabled={carregandoProfissionaisElegiveis || profissionaisElegiveis.length === 0}
+                onChange={e => setProfissionalId(Number(e.target.value))}
+                className={`w-full p-2.5 border rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900 ${
+                  profissionaisElegiveis.length === 0 ? 'border-amber-300 bg-amber-50/50 text-amber-800' : 'border-gray-300'
+                }`}
+              >
+                {profissionaisElegiveis.length === 0 ? (
+                  <option value="0">Nenhum profissional habilitado para este serviço</option>
+                ) : (
+                  profissionaisElegiveis.map(prof => (
+                    <option key={prof.id} value={prof.id}>
+                      {prof.nome} {prof.especialidade ? `(${prof.especialidade})` : ''}
+                    </option>
+                  ))
+                )}
+              </select>
+              {servicoId && profissionaisElegiveis.length === 0 && (
+                <p className="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
+                  <span>⚠️</span> Nenhum profissional habilitado para este procedimento.
+                </p>
+              )}
             </div>
           </div>
 

@@ -194,3 +194,64 @@ export function validarPeriodoBloqueio(horarioInicio: string, horarioFim: string
 
   return { valido: true };
 }
+
+/**
+ * ============================================================================
+ * REGRAS DE VINCULAÇÃO PROFISSIONAL X PROCEDIMENTO (IK-80)
+ * ============================================================================
+ */
+
+export interface VinculoProfissionalProcedimento {
+  id_profissional?: number;
+  profissional_id?: number;
+  id_procedimento?: number;
+  procedimento_id?: number;
+  servico_id?: number;
+}
+
+/**
+ * CA01 & CA02: Valida se um profissional possui vínculo ativo para realizar o procedimento informado.
+ */
+export function validarVinculoProfissionalProcedimento(
+  profissionalId: number,
+  procedimentoId: number,
+  vinculos: VinculoProfissionalProcedimento[]
+): boolean {
+  if (!profissionalId || !procedimentoId || !Array.isArray(vinculos)) {
+    return false;
+  }
+
+  return vinculos.some(v => {
+    const profId = v.id_profissional ?? v.profissional_id;
+    const procId = v.id_procedimento ?? v.procedimento_id ?? v.servico_id;
+    return Number(profId) === Number(profissionalId) && Number(procId) === Number(procedimentoId);
+  });
+}
+
+/**
+ * CA03: Filtra apenas profissionais elegíveis que realizam o procedimento selecionado.
+ */
+export function filtrarProfissionaisPorProcedimento<T extends { id: number }>(
+  profissionais: T[],
+  procedimentoId: number,
+  vinculos: VinculoProfissionalProcedimento[]
+): T[] {
+  if (!procedimentoId || !Array.isArray(profissionais)) return [];
+  return profissionais.filter(prof =>
+    validarVinculoProfissionalProcedimento(prof.id, procedimentoId, vinculos)
+  );
+}
+
+/**
+ * Filtra apenas procedimentos que um determinado profissional está habilitado a realizar.
+ */
+export function filtrarProcedimentosPorProfissional<T extends { id: number }>(
+  procedimentos: T[],
+  profissionalId: number,
+  vinculos: VinculoProfissionalProcedimento[]
+): T[] {
+  if (!profissionalId || !Array.isArray(procedimentos)) return [];
+  return procedimentos.filter(proc =>
+    validarVinculoProfissionalProcedimento(profissionalId, proc.id, vinculos)
+  );
+}

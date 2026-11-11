@@ -8,6 +8,7 @@ import {
   validarPeriodoBloqueio
 } from './validation.js';
 import { runHistoricoTests } from './test-historico.js';
+import { runProfissionalProcedimentoTests } from './test-profissional-procedimento.js';
 
 interface CasoTeste {
   descricao: string;
@@ -258,6 +259,11 @@ async function executarTestes() {
   const historicoResult = await runHistoricoTests();
   passados += historicoResult.pass;
   falhados += historicoResult.fail;
+
+  // SUÍTE 6: VINCULAÇÃO DE PROCEDIMENTOS AO PROFISSIONAL (IK-80)
+  const procedimentoResult = await runProfissionalProcedimentoTests();
+  passados += procedimentoResult.pass;
+  falhados += procedimentoResult.fail;
 
   console.log("\n================================================================");
   console.log("RESUMO DA EXECUÇÃO");

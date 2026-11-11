@@ -93,6 +93,12 @@ class InMemoryStore {
 
   agendamentos: MockAgendamento[] = [];
   bloqueios: MockBloqueio[] = [];
+  profissionalProcedimentos: Array<{ profissional_id: number; procedimento_id: number }> = [
+    { profissional_id: 1, procedimento_id: 1 },
+    { profissional_id: 1, procedimento_id: 2 },
+    { profissional_id: 2, procedimento_id: 1 },
+    { profissional_id: 2, procedimento_id: 4 }
+  ];
   nextAgendamentoId = 100;
   nextBloqueioId = 50;
 
@@ -282,6 +288,78 @@ class InMemoryStore {
     }
     this.bloqueios.splice(idx, 1);
     return true;
+  }
+
+  // ==========================================================================
+  // MÉTODOS DE VINCULAÇÃO PROFISSIONAL X PROCEDIMENTO (IK-80)
+  // ==========================================================================
+
+  vincularProcedimentosAoProfissional(profissionalId: number, procedimentoIds: number[]) {
+    const prof = this.profissionais.find(p => p.id === Number(profissionalId));
+    if (!prof) {
+      throw new Error('Profissional não cadastrado.');
+    }
+
+    // Validar procedimentos
+    for (const procId of procedimentoIds) {
+      const existe = this.servicos.some(s => s.id === Number(procId));
+      if (!existe) {
+        throw new Error(`Procedimento #${procId} não cadastrado.`);
+      }
+    }
+
+    // Remove vínculos anteriores
+    this.profissionalProcedimentos = this.profissionalProcedimentos.filter(
+      v => v.profissional_id !== Number(profissionalId)
+    );
+
+    // Insere novos vínculos
+    for (const procId of procedimentoIds) {
+      this.profissionalProcedimentos.push({
+        profissional_id: Number(profissionalId),
+        procedimento_id: Number(procId)
+      });
+    }
+
+    return this.obterProcedimentosDoProfissional(profissionalId);
+  }
+
+  obterProcedimentosDoProfissional(profissionalId: number) {
+    const prof = this.profissionais.find(p => p.id === Number(profissionalId));
+    if (!prof) {
+      throw new Error('Profissional não cadastrado.');
+    }
+
+    const vinculos = this.profissionalProcedimentos.filter(
+      v => v.profissional_id === Number(profissionalId)
+    );
+    const procIds = new Set(vinculos.map(v => v.procedimento_id));
+
+    return this.servicos.map(s => ({
+      ...s,
+      vinculado: procIds.has(s.id)
+    }));
+  }
+
+  obterProfissionaisPorProcedimento(procedimentoId: number) {
+    const proc = this.servicos.find(s => s.id === Number(procedimentoId));
+    if (!proc) {
+      throw new Error('Procedimento não cadastrado.');
+    }
+
+    const profIds = new Set(
+      this.profissionalProcedimentos
+        .filter(v => v.procedimento_id === Number(procedimentoId))
+        .map(v => v.profissional_id)
+    );
+
+    return this.profissionais.filter(p => p.ativo === 1 && profIds.has(p.id));
+  }
+
+  verificarVinculo(profissionalId: number, procedimentoId: number): boolean {
+    return this.profissionalProcedimentos.some(
+      v => v.profissional_id === Number(profissionalId) && v.procedimento_id === Number(procedimentoId)
+    );
   }
 }
 

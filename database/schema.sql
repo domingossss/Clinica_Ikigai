@@ -78,6 +78,23 @@ CREATE TABLE IF NOT EXISTS profissional_especialidade (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =====================================================================
+-- 4b. TABELA ASSOCIATIVA: profissional_procedimento (N:N) (IK-80)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS profissional_procedimento (
+    id_profissional INT NOT NULL,
+    id_procedimento INT NOT NULL,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_profissional, id_procedimento),
+    CONSTRAINT fk_pp_profissional
+        FOREIGN KEY (id_profissional) REFERENCES profissional (id_profissional)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_pp_procedimento
+        FOREIGN KEY (id_procedimento) REFERENCES procedimento (id_procedimento)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    INDEX idx_pp_procedimento (id_procedimento)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =====================================================================
 -- 5. TABELA: paciente (Cadastro Unificado com UUID, Demografia e Contato)
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS paciente (

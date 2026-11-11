@@ -20,6 +20,7 @@ TRUNCATE TABLE capacidade_diaria;
 TRUNCATE TABLE sessao_chatbot;
 TRUNCATE TABLE paciente;
 TRUNCATE TABLE profissional_especialidade;
+TRUNCATE TABLE profissional_procedimento;
 TRUNCATE TABLE profissional;
 TRUNCATE TABLE procedimento;
 TRUNCATE TABLE especialidade;
@@ -66,6 +67,15 @@ INSERT INTO profissional_especialidade (id_profissional, id_especialidade) VALUE
 (4, 4),         -- Marcelo -> Massoterapia
 (5, 5),         -- Juliana -> Fitoterapia
 (6, 6);         -- Rodrigo -> Naturopatia
+
+-- Vinculação N:N Profissional x Procedimento (IK-80)
+INSERT INTO profissional_procedimento (id_profissional, id_procedimento) VALUES
+(1, 1), (1, 2), -- Ulisses -> Sessão de Acupuntura Sistêmica, Consulta Nutricional Integrativa
+(2, 1), (2, 4), -- Samantha -> Sessão de Acupuntura Sistêmica, Massagem Miofascial
+(3, 3),         -- Beatriz -> Sessão de Psicoterapia Integrativa
+(4, 4),         -- Marcelo -> Massagem Miofascial
+(5, 5),         -- Juliana -> Consulta Fitoterápica
+(6, 6);         -- Rodrigo -> Avaliação Naturopática
 
 -- =====================================================================
 -- 5. CADASTRO DE PACIENTES (Integrado com UUID e Demografia)
