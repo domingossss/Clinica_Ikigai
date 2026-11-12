@@ -1803,7 +1803,7 @@ export default function ServicosAgendamentos({
                 {excecaoForm.tipo_excecao === 'Horario_Especial' && (
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-xs font-bold text-dark mb-1">Início</label>
+                      <label className="block text-xs font-bold text-dark mb-1 notranslate" translate="no">Inicio</label>
                       <input
                         type="time"
                         value={excecaoForm.horario_inicio}
@@ -1812,7 +1812,7 @@ export default function ServicosAgendamentos({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-dark mb-1">Término</label>
+                      <label className="block text-xs font-bold text-dark mb-1 notranslate" translate="no">Termino</label>
                       <input
                         type="time"
                         value={excecaoForm.horario_fim}
