@@ -1125,45 +1125,27 @@ export default function ServicosAgendamentos({
                   {servicos.map(s => (
                     <div
                       key={s.id}
-                      className={`p-4 rounded-xl border flex items-center justify-between transition-all group ${
+                      className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition-all group ${
                         s.ativo !== 0 && s.ativo !== false
                           ? 'bg-light-gray hover:bg-light-gray/80 border-gray/10'
                           : 'bg-gray/5 border-gray/20 opacity-75'
                       }`}
                     >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className={`text-xs font-bold ${s.ativo !== 0 && s.ativo !== false ? 'text-dark' : 'text-gray line-through'}`}>
+                      {/* Linha Superior: Nome/Categoria + Badge Ativo/Inativo */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h4 className={`text-xs font-bold leading-snug ${s.ativo !== 0 && s.ativo !== false ? 'text-dark' : 'text-gray line-through'}`}>
                             {s.nome}
                           </h4>
-                          {s.ativo === 0 && (
-                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300">
-                              Inativo
-                            </span>
-                          )}
+                          <p className="text-[10px] text-gray mt-0.5">{s.categoria_nome}</p>
                         </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] text-gray">{s.categoria_nome}</span>
-                          <span className="text-gray/30 text-[10px]">•</span>
-                          <span className="text-[11px] font-extrabold text-primary">
-                            {formatarPreco(s.preco)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2.5">
-                        <span className="inline-block text-[10px] font-extrabold text-primary-dark bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-lg">
-                          {formatarPreco(s.preco)}
-                        </span>
-                        <span className="inline-block text-[9px] font-bold text-dark bg-secondary/20 px-1.5 py-0.5 rounded">
-                          {formatarDuracao(s.duracao_minutos)}
-                        </span>
 
                         {/* Status Toggle Button (IK-95) */}
                         <button
                           type="button"
                           onClick={() => handleToggleStatusServico(s)}
                           title={s.ativo !== 0 && s.ativo !== false ? 'Clique para inativar procedimento' : 'Clique para reativar procedimento'}
-                          className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                          className={`flex-shrink-0 px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                             s.ativo !== 0 && s.ativo !== false
                               ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
                               : 'bg-gray/10 text-gray hover:text-dark hover:bg-gray/20 border border-gray/20'
@@ -1176,22 +1158,36 @@ export default function ServicosAgendamentos({
                           />
                           <span>{s.ativo !== 0 && s.ativo !== false ? 'Ativo' : 'Inativo'}</span>
                         </button>
+                      </div>
 
-                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* Linha Inferior: Valor + Duração na esquerda | Botões Editar e Inativar na direita */}
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray/10">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block text-[11px] font-extrabold text-primary-dark bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-lg">
+                            {formatarPreco(s.preco)}
+                          </span>
+                          <span className="inline-block text-[10px] font-bold text-dark bg-secondary/20 px-2 py-0.5 rounded-lg">
+                            {formatarDuracao(s.duracao_minutos)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1">
                           <button
+                            type="button"
                             onClick={() => startEditService(s)}
-                            title="Editar"
-                            className="px-2 py-0.5 hover:bg-primary/10 rounded text-primary text-[11px] font-bold transition-colors cursor-pointer"
+                            title="Editar procedimento"
+                            className="px-2 py-1 hover:bg-primary/10 rounded-lg text-primary text-[11px] font-bold transition-colors cursor-pointer"
                           >
                             Editar
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleToggleStatusServico(s)}
                             title={s.ativo !== 0 && s.ativo !== false ? 'Inativar procedimento' : 'Reativar procedimento'}
-                            className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors cursor-pointer ${
+                            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
                               s.ativo !== 0 && s.ativo !== false
-                                ? 'hover:bg-amber-500/10 text-amber-600'
-                                : 'hover:bg-emerald-500/10 text-emerald-600'
+                                ? 'hover:bg-amber-500/10 text-amber-700'
+                                : 'hover:bg-emerald-500/10 text-emerald-700'
                             }`}
                           >
                             {s.ativo !== 0 && s.ativo !== false ? 'Inativar' : 'Reativar'}
