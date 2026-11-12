@@ -10,6 +10,7 @@ import {
 import { runHistoricoTests } from './test-historico.js';
 import { runProfissionalProcedimentoTests } from './test-profissional-procedimento.js';
 import { runAgendaProfissionalTests } from './test-agenda-profissional.js';
+import { runInativarProcedimentoTests } from './test-inativar-procedimento.js';
 
 interface CasoTeste {
   descricao: string;
@@ -270,6 +271,11 @@ async function executarTestes() {
   const agendaResult = await runAgendaProfissionalTests();
   passados += agendaResult.pass;
   falhados += agendaResult.fail;
+
+  // SUÍTE 8: INATIVAÇÃO DE PROCEDIMENTO (IK-95)
+  const inativarResult = await runInativarProcedimentoTests();
+  passados += inativarResult.pass;
+  falhados += inativarResult.fail;
 
   console.log("\n================================================================");
   console.log("RESUMO DA EXECUÇÃO");

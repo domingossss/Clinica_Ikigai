@@ -373,7 +373,8 @@ SELECT
     p.id_especialidade AS categoria_id, 
     p.nome, 
     p.preco, 
-    p.duracao_minutos 
+    p.duracao_minutos,
+    p.ativo 
 FROM procedimento p;
 
 CREATE OR REPLACE VIEW profissionais AS 
