@@ -29,6 +29,27 @@ interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
+export interface DiaJornada {
+  dia_semana: number;
+  dia_nome: string;
+  ativo: number | boolean;
+  horario_inicio: string;
+  horario_fim: string;
+  intervalo_inicio: string | null;
+  intervalo_fim: string | null;
+}
+
+export interface ExcecaoItem {
+  id: number;
+  data: string;
+  id_profissional: number | null;
+  profissional_nome: string | null;
+  tipo_excecao: 'Fechado' | 'Horario_Especial';
+  horario_inicio: string | null;
+  horario_fim: string | null;
+  motivo: string;
+}
+
 interface ServicosAgendamentosProps {
   onProfissionaisAtualizados?: () => void;
   onAbrirAgendaProfissional?: (profissionalId: number) => void;
@@ -50,7 +71,7 @@ export default function ServicosAgendamentos({
   onAbrirAgendaProfissional
 }: ServicosAgendamentosProps) {
   // Controle de sub-aba ativa na tela
-  const [subAba, setSubAba] = useState<'servicos' | 'profissionais'>('servicos');
+  const [subAba, setSubAba] = useState<'servicos' | 'profissionais' | 'excecoes'>('servicos');
 
   // Estados de Serviços e Categorias
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -69,6 +90,26 @@ export default function ServicosAgendamentos({
 
   // Estados de Profissionais
   const [profissionais, setProfissionais] = useState<ProfissionalItem[]>([]);
+
+  // Estados para Jornada e Intervalos (IK-14)
+  const [modalJornadaProf, setModalJornadaProf] = useState<ProfissionalItem | null>(null);
+  const [jornadaDias, setJornadaDias] = useState<DiaJornada[]>([]);
+  const [carregandoJornada, setCarregandoJornada] = useState(false);
+  const [salvandoJornada, setSalvandoJornada] = useState(false);
+
+  // Estados para Exceções de Disponibilidade (IK-83)
+  const [excecoes, setExcecoes] = useState<ExcecaoItem[]>([]);
+  const [loadingExcecoes, setLoadingExcecoes] = useState(false);
+  const [submittingExcecao, setSubmittingExcecao] = useState(false);
+  const [excecaoForm, setExcecaoForm] = useState({
+    data: '',
+    tipo_excecao: 'Fechado' as 'Fechado' | 'Horario_Especial',
+    horario_inicio: '08:00',
+    horario_fim: '12:00',
+    motivo: '',
+    id_profissional: ''
+  });
+
   const [loadingProfissionais, setLoadingProfissionais] = useState(false);
   const [submittingProfissional, setSubmittingProfissional] = useState(false);
   const [editingProfissionalId, setEditingProfissionalId] = useState<number | null>(null);
@@ -567,6 +608,140 @@ export default function ServicosAgendamentos({
     }
   };
 
+
+  // ==========================================
+  // IK-14: JORNADA E INTERVALOS
+  // ==========================================
+  const abrirModalJornada = async (p: ProfissionalItem) => {
+    setModalJornadaProf(p);
+    setCarregandoJornada(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profissionais/${p.id}/jornada`);
+      const data = await res.json();
+      if (data.sucesso && Array.isArray(data.dados)) {
+        setJornadaDias(data.dados);
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao carregar jornada do profissional.', 'error');
+    } finally {
+      setCarregandoJornada(false);
+    }
+  };
+
+  const handleSalvarJornada = async () => {
+    if (!modalJornadaProf) return;
+    setSalvandoJornada(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profissionais/${modalJornadaProf.id}/jornada`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dias: jornadaDias })
+      });
+      const data = await res.json();
+      if (data.sucesso) {
+        showToast('Jornada e intervalos atualizados com sucesso!', 'success');
+        setModalJornadaProf(null);
+      } else {
+        showToast(data.erro || 'Erro ao salvar jornada.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Erro de rede ao salvar jornada.', 'error');
+    } finally {
+      setSalvandoJornada(false);
+    }
+  };
+
+  // ==========================================
+  // IK-83: EXCEÇÕES DE DISPONIBILIDADE
+  // ==========================================
+  const carregarExcecoes = async () => {
+    setLoadingExcecoes(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/excecoes`);
+      const data = await res.json();
+      if (data.sucesso && Array.isArray(data.dados)) {
+        setExcecoes(data.dados);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingExcecoes(false);
+    }
+  };
+
+  const handleCriarExcecao = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!excecaoForm.data || !excecaoForm.motivo.trim()) {
+      showToast('Preencha a data e o motivo da exceção.', 'error');
+      return;
+    }
+    setSubmittingExcecao(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/excecoes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: excecaoForm.data,
+          tipo_excecao: excecaoForm.tipo_excecao,
+          horario_inicio: excecaoForm.tipo_excecao === 'Horario_Especial' ? excecaoForm.horario_inicio : null,
+          horario_fim: excecaoForm.tipo_excecao === 'Horario_Especial' ? excecaoForm.horario_fim : null,
+          motivo: excecaoForm.motivo,
+          id_profissional: excecaoForm.id_profissional ? Number(excecaoForm.id_profissional) : null
+        })
+      });
+      const data = await res.json();
+      if (data.sucesso) {
+        showToast('Exceção cadastrada com sucesso!', 'success');
+        setExcecaoForm({
+          data: '',
+          tipo_excecao: 'Fechado',
+          horario_inicio: '08:00',
+          horario_fim: '12:00',
+          motivo: '',
+          id_profissional: ''
+        });
+        carregarExcecoes();
+      } else {
+        showToast(data.erro || 'Erro ao cadastrar exceção.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Erro de rede ao salvar exceção.', 'error');
+    } finally {
+      setSubmittingExcecao(false);
+    }
+  };
+
+  const handleExcluirExcecao = async (id: number) => {
+    const result = await Swal.fire({
+      title: 'Remover Exceção?',
+      text: 'A data voltará a seguir a grade de funcionamento padrão.',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#262B6B',
+      cancelButtonColor: '#6B7280',
+      confirmButtonText: 'Sim, remover',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/excecoes/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.sucesso) {
+        showToast('Exceção removida com sucesso!', 'success');
+        carregarExcecoes();
+      } else {
+        showToast(data.erro || 'Erro ao remover exceção.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Erro de rede ao remover exceção.', 'error');
+    }
+  };
+
   const fecharModalVinculos = () => {
     setModalVinculosProf(null);
     setModalSelectedProcs([]);
@@ -697,7 +872,7 @@ export default function ServicosAgendamentos({
               </span>
             </button>
 
-            <button
+                        <button
               type="button"
               onClick={() => setSubAba('profissionais')}
               className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
@@ -714,6 +889,29 @@ export default function ServicosAgendamentos({
                 subAba === 'profissionais' ? 'bg-primary/10 text-primary' : 'bg-gray/10 text-gray'
               }`}>
                 {profissionais.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSubAba('excecoes');
+                carregarExcecoes();
+              }}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
+                subAba === 'excecoes'
+                  ? 'bg-white text-primary shadow-xs font-extrabold'
+                  : 'text-gray hover:text-dark hover:bg-white/50'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Exceções & Feriados
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                subAba === 'excecoes' ? 'bg-primary/10 text-primary' : 'bg-gray/10 text-gray'
+              }`}>
+                {excecoes.length}
               </span>
             </button>
           </div>
@@ -1254,6 +1452,17 @@ export default function ServicosAgendamentos({
                           )}
                           <button
                             type="button"
+                            onClick={() => abrirModalJornada(prof)}
+                            title="Configurar expediente e intervalos (IK-14)"
+                            className="px-2 py-1 text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Horários
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => startEditProfissional(prof)}
                             title="Editar profissional"
                             className="px-2.5 py-1 text-xs font-bold text-primary hover:bg-primary/10 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
@@ -1546,6 +1755,299 @@ export default function ServicosAgendamentos({
           </div>
         </div>
       )}
+    
+      {/* ========================================================================= */}
+      {/* ABA: EXCEÇÕES DE DISPONIBILIDADE E FERIADOS (IK-83)                       */}
+      {/* ========================================================================= */}
+      {subAba === 'excecoes' && (
+        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-200">
+          {/* Formulário de Criação de Exceção (1/3) */}
+          <div className="lg:col-span-1">
+            <div className="bg-white p-6 rounded-2xl shadow-premium border border-gray/5">
+              <h2 className="text-lg font-bold text-dark mb-1 flex items-center gap-2">
+                <span className="p-1.5 bg-secondary/20 rounded-lg text-primary-dark text-xs font-bold">IK-83</span>
+                Nova Exceção
+              </h2>
+              <p className="text-xs text-gray mb-5">
+                Configure feriados, recessos ou datas pontuais com horário especial que prevalecem sobre a grade normal.
+              </p>
+
+              <form onSubmit={handleCriarExcecao} className="flex flex-col gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-dark mb-1">
+                    Data da Exceção <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={excecaoForm.data}
+                    onChange={e => setExcecaoForm(prev => ({ ...prev, data: e.target.value }))}
+                    className="w-full px-3.5 py-2 border border-gray/15 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-light-gray/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-dark mb-1">
+                    Tipo de Exceção
+                  </label>
+                  <select
+                    value={excecaoForm.tipo_excecao}
+                    onChange={e => setExcecaoForm(prev => ({ ...prev, tipo_excecao: e.target.value as any }))}
+                    className="w-full px-3.5 py-2 border border-gray/15 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-light-gray/50"
+                  >
+                    <option value="Fechado">Fechado (Sem Atendimento)</option>
+                    <option value="Horario_Especial">Horário Especial / Reduzido</option>
+                  </select>
+                </div>
+
+                {excecaoForm.tipo_excecao === 'Horario_Especial' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-bold text-dark mb-1">Início</label>
+                      <input
+                        type="time"
+                        value={excecaoForm.horario_inicio}
+                        onChange={e => setExcecaoForm(prev => ({ ...prev, horario_inicio: e.target.value }))}
+                        className="w-full px-3 py-1.5 border border-gray/15 rounded-xl text-xs bg-light-gray/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-dark mb-1">Término</label>
+                      <input
+                        type="time"
+                        value={excecaoForm.horario_fim}
+                        onChange={e => setExcecaoForm(prev => ({ ...prev, horario_fim: e.target.value }))}
+                        className="w-full px-3 py-1.5 border border-gray/15 rounded-xl text-xs bg-light-gray/50"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-dark mb-1">
+                    Profissional Específico (Opcional)
+                  </label>
+                  <select
+                    value={excecaoForm.id_profissional}
+                    onChange={e => setExcecaoForm(prev => ({ ...prev, id_profissional: e.target.value }))}
+                    className="w-full px-3.5 py-2 border border-gray/15 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-light-gray/50"
+                  >
+                    <option value="">Toda a Clínica (Geral)</option>
+                    {profissionais.map(p => (
+                      <option key={p.id} value={p.id}>{p.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-dark mb-1">
+                    Motivo / Descrição <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Feriado de Carnaval, Recesso de Fim de Ano..."
+                    value={excecaoForm.motivo}
+                    onChange={e => setExcecaoForm(prev => ({ ...prev, motivo: e.target.value }))}
+                    className="w-full px-3.5 py-2 border border-gray/15 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-light-gray/50"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={submittingExcecao}
+                  className="w-full py-2.5 px-4 bg-primary hover:bg-primary-dark text-white font-bold text-xs rounded-xl active:scale-95 transition-all shadow-md shadow-primary/10 cursor-pointer"
+                >
+                  {submittingExcecao ? 'Salvando...' : 'Cadastrar Exceção'}
+                </button>
+              </form>
+            </div>
+          </div>
+
+          {/* Lista de Exceções Cadastradas (2/3) */}
+          <div className="lg:col-span-2">
+            <div className="bg-white p-6 rounded-2xl shadow-premium border border-gray/5 flex flex-col h-full">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base font-bold text-dark">Exceções e Feriados Cadastrados</h3>
+                <span className="text-xs bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-full">
+                  {excecoes.length} cadastradas
+                </span>
+              </div>
+
+              {loadingExcecoes ? (
+                <div className="flex justify-center items-center py-12 text-gray">Carregando exceções...</div>
+              ) : excecoes.length === 0 ? (
+                <div className="text-center py-12 text-gray border border-dashed border-gray/20 rounded-2xl">
+                  <p className="text-xs font-medium">Nenhuma exceção ou feriado cadastrado.</p>
+                  <p className="text-[11px] text-gray/70 mt-1">A clínica segue a grade padrão de funcionamento.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray/10 overflow-y-auto max-h-[500px]">
+                  {excecoes.map(exc => (
+                    <div key={exc.id} className="py-3 flex items-center justify-between gap-3 hover:bg-light-gray/40 px-2 rounded-xl transition-colors">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-dark">{exc.data.split('-').reverse().join('/')}</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            exc.tipo_excecao === 'Fechado'
+                              ? 'bg-red-50 text-red-700 border border-red-200'
+                              : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          }`}>
+                            {exc.tipo_excecao === 'Fechado' ? 'Fechado' : `Especial: ${exc.horario_inicio} às ${exc.horario_fim}`}
+                          </span>
+                        </div>
+                        <p className="text-xs font-medium text-gray-700 mt-0.5">{exc.motivo}</p>
+                        <p className="text-[10px] text-gray">
+                          {exc.profissional_nome ? `Aplica-se a: ${exc.profissional_nome}` : 'Aplica-se a toda a clínica'}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleExcluirExcecao(exc.id)}
+                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer text-xs font-bold flex items-center gap-1"
+                        title="Remover exceção"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Remover
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: CONFIGURAR JORNADA E INTERVALOS DO PROFISSIONAL (IK-14)            */}
+      {/* ========================================================================= */}
+      {modalJornadaProf && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-dark/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray/10 max-w-2xl w-full p-6 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-gray/10 pb-4 mb-4">
+              <div>
+                <h3 className="text-base font-bold text-dark flex items-center gap-2">
+                  <span className="p-1 bg-primary/10 rounded-lg text-primary text-xs font-bold">IK-14</span>
+                  Expediente e Intervalos: {modalJornadaProf.nome}
+                </h3>
+                <p className="text-xs text-gray mt-0.5">
+                  Configure os horários de início, término e intervalo de almoço por dia da semana.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalJornadaProf(null)}
+                className="text-gray hover:text-dark p-1 text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {carregandoJornada ? (
+              <div className="py-12 text-center text-xs text-gray">Carregando jornada do profissional...</div>
+            ) : (
+              <div className="flex-1 overflow-y-auto divide-y divide-gray/10 pr-1 space-y-3">
+                {jornadaDias.map((d, idx) => (
+                  <div key={d.dia_semana} className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="w-36 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={`dia-${d.dia_semana}`}
+                        checked={d.ativo === 1 || d.ativo === true}
+                        onChange={e => {
+                          const novoAtivo = e.target.checked ? 1 : 0;
+                          setJornadaDias(prev => prev.map((item, i) => i === idx ? { ...item, ativo: novoAtivo } : item));
+                        }}
+                        className="rounded border-gray-300 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                      />
+                      <label htmlFor={`dia-${d.dia_semana}`} className={`text-xs font-bold cursor-pointer ${
+                        d.ativo === 1 || d.ativo === true ? 'text-dark' : 'text-gray line-through'
+                      }`}>
+                        {d.dia_nome}
+                      </label>
+                    </div>
+
+                    {(d.ativo === 1 || d.ativo === true) ? (
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] text-gray">Jornada:</span>
+                          <input
+                            type="time"
+                            value={d.horario_inicio || '08:00'}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setJornadaDias(prev => prev.map((item, i) => i === idx ? { ...item, horario_inicio: v } : item));
+                            }}
+                            className="px-2 py-1 border border-gray/20 rounded-lg text-xs"
+                          />
+                          <span className="text-gray">às</span>
+                          <input
+                            type="time"
+                            value={d.horario_fim || '18:00'}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setJornadaDias(prev => prev.map((item, i) => i === idx ? { ...item, horario_fim: v } : item));
+                            }}
+                            className="px-2 py-1 border border-gray/20 rounded-lg text-xs"
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-1 pl-2 border-l border-gray/15">
+                          <span className="text-[11px] text-amber-700 font-semibold">Almoço:</span>
+                          <input
+                            type="time"
+                            value={d.intervalo_inicio || '12:00'}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setJornadaDias(prev => prev.map((item, i) => i === idx ? { ...item, intervalo_inicio: v } : item));
+                            }}
+                            className="px-2 py-1 border border-gray/20 rounded-lg text-xs"
+                          />
+                          <span className="text-gray">às</span>
+                          <input
+                            type="time"
+                            value={d.intervalo_fim || '13:00'}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setJornadaDias(prev => prev.map((item, i) => i === idx ? { ...item, intervalo_fim: v } : item));
+                            }}
+                            className="px-2 py-1 border border-gray/20 rounded-lg text-xs"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray italic">Folga / Sem expediente</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 border-t border-gray/10 pt-4 mt-4">
+              <button
+                type="button"
+                onClick={() => setModalJornadaProf(null)}
+                className="px-4 py-2 text-xs font-bold text-gray-700 bg-gray/10 hover:bg-gray/20 rounded-xl"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={salvandoJornada}
+                onClick={handleSalvarJornada}
+                className="px-5 py-2 text-xs font-bold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/10 cursor-pointer"
+              >
+                {salvandoJornada ? 'Salvando...' : 'Salvar Grade do Profissional'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

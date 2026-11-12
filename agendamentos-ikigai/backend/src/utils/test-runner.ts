@@ -11,6 +11,7 @@ import { runHistoricoTests } from './test-historico.js';
 import { runProfissionalProcedimentoTests } from './test-profissional-procedimento.js';
 import { runAgendaProfissionalTests } from './test-agenda-profissional.js';
 import { runInativarProcedimentoTests } from './test-inativar-procedimento.js';
+import { runExpedienteExcecoesTests } from './test-expediente-excecoes.js';
 
 interface CasoTeste {
   descricao: string;
@@ -276,6 +277,11 @@ async function executarTestes() {
   const inativarResult = await runInativarProcedimentoTests();
   passados += inativarResult.pass;
   falhados += inativarResult.fail;
+
+  // SUÍTE 9 E 10: EXPEDIENTE, INTERVALOS E EXCEÇÕES (IK-14 E IK-83)
+  const expExcResult = await runExpedienteExcecoesTests();
+  passados += expExcResult.pass;
+  falhados += expExcResult.fail;
 
   console.log("\n================================================================");
   console.log("RESUMO DA EXECUÇÃO");

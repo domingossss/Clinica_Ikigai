@@ -6,7 +6,9 @@ import {
   validarHorarioExpediente,
   validarPeriodoAgenda,
   calcularIntervaloSemana,
-  calcularResumoAgenda
+  calcularResumoAgenda,
+  validarJornadaProfissional,
+  validarExcecaoDisponibilidade
 } from '../utils/validation.js';
 import { mockStore } from '../utils/mock-store.js';
 import pool from '../config/database.js';
@@ -454,9 +456,62 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
       });
     }
 
-    // Horário operacional fixo: 08:00 às 18:00
+    // 2a. Verificar se existe EXCEÇÃO DE DISPONIBILIDADE para esta data (IK-83 - CA01/CA02)
     let horaInicio = '08:00:00';
     let horaFim = '18:00:00';
+    let intervaloInicio: string | null = null;
+    let intervaloFim: string | null = null;
+
+    try {
+      const [excecoes]: any = await pool.query(
+        `SELECT id_excecao, tipo_excecao, TIME_FORMAT(horario_inicio, '%H:%i:%s') as horario_inicio, TIME_FORMAT(horario_fim, '%H:%i:%s') as horario_fim, motivo 
+         FROM excecao_disponibilidade 
+         WHERE data = ? AND (id_profissional IS NULL OR id_profissional = ?) 
+         ORDER BY id_profissional DESC LIMIT 1`,
+        [data, profId]
+      );
+
+      if (excecoes.length > 0) {
+        const exc = excecoes[0];
+        if (exc.tipo_excecao === 'Fechado') {
+          return res.status(200).json({
+            sucesso: true,
+            dados: [],
+            mensagem: `Não haverá expediente nesta data (${exc.motivo}).`
+          });
+        }
+        if (exc.tipo_excecao === 'Horario_Especial' && exc.horario_inicio && exc.horario_fim) {
+          horaInicio = exc.horario_inicio;
+          horaFim = exc.horario_fim;
+        }
+      } else {
+        // 2b. Buscar jornada e intervalo específico do profissional (IK-14 - CA02/CA03)
+        const [jornadas]: any = await pool.query(
+          `SELECT ativo, TIME_FORMAT(horario_inicio, '%H:%i:%s') as horario_inicio, TIME_FORMAT(horario_fim, '%H:%i:%s') as horario_fim, 
+                  TIME_FORMAT(intervalo_inicio, '%H:%i:%s') as intervalo_inicio, TIME_FORMAT(intervalo_fim, '%H:%i:%s') as intervalo_fim 
+           FROM jornada_profissional 
+           WHERE id_profissional = ? AND dia_semana = ?`,
+          [profId, diaSemana]
+        );
+
+        if (jornadas.length > 0) {
+          const j = jornadas[0];
+          if (j.ativo === 0) {
+            return res.status(200).json({
+              sucesso: true,
+              dados: [],
+              mensagem: `O profissional não atende neste dia da semana.`
+            });
+          }
+          if (j.horario_inicio) horaInicio = j.horario_inicio;
+          if (j.horario_fim) horaFim = j.horario_fim;
+          intervaloInicio = j.intervalo_inicio;
+          intervaloFim = j.intervalo_fim;
+        }
+      }
+    } catch (e) {
+      // Fallback gracioso
+    }
 
     // 3. Obter agendamentos existentes no dia com detalhes para o frontend
     const [agendamentos] = await pool.query(
@@ -517,6 +572,15 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
             overlap = true;
             break;
           }
+        }
+      }
+
+      // Verificar se o bloco conflita com o intervalo/almoço do profissional (IK-14 - CA03)
+      if (!overlap && intervaloInicio && intervaloFim) {
+        const intStart = parseTimeToMins(intervaloInicio);
+        const intEnd = parseTimeToMins(intervaloFim);
+        if (current < intEnd && intStart < currentEnd) {
+          overlap = true;
         }
       }
 
@@ -2347,6 +2411,208 @@ async function garantirTabelaProfissionalProcedimento() {
   }
 }
 garantirTabelaProfissionalProcedimento();
+
+
+// ============================================================================
+// ENDPOINTS IK-14: JORNADA E INTERVALOS DOS PROFISSIONAIS
+// ============================================================================
+router.get('/profissionais/:id/jornada', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    if (!validarIdNumerico(id)) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do profissional inválido.' });
+    }
+
+    const [rows]: any = await pool.query(
+      `SELECT id_jornada, id_profissional, dia_semana, ativo, 
+              TIME_FORMAT(horario_inicio, '%H:%i') as horario_inicio, 
+              TIME_FORMAT(horario_fim, '%H:%i') as horario_fim, 
+              TIME_FORMAT(intervalo_inicio, '%H:%i') as intervalo_inicio, 
+              TIME_FORMAT(intervalo_fim, '%H:%i') as intervalo_fim 
+       FROM jornada_profissional 
+       WHERE id_profissional = ? 
+       ORDER BY dia_semana`,
+      [id]
+    );
+
+    const diasNomes = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+    const resultado = [0, 1, 2, 3, 4, 5, 6].map(dia => {
+      const encontrada = rows.find((r: any) => r.dia_semana === dia);
+      if (encontrada) {
+        return { ...encontrada, dia_nome: diasNomes[dia] };
+      }
+      const ehDiaUtil = dia >= 1 && dia <= 5;
+      return {
+        id_profissional: Number(id),
+        dia_semana: dia,
+        dia_nome: diasNomes[dia],
+        ativo: ehDiaUtil ? 1 : 0,
+        horario_inicio: '08:00',
+        horario_fim: '18:00',
+        intervalo_inicio: ehDiaUtil ? '12:00' : null,
+        intervalo_fim: ehDiaUtil ? '13:00' : null
+      };
+    });
+
+    return res.status(200).json({ sucesso: true, dados: resultado });
+  } catch (error: any) {
+    console.error('Erro ao buscar jornada do profissional:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao consultar jornada do profissional.' });
+  }
+});
+
+router.put('/profissionais/:id/jornada', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    if (!validarIdNumerico(id)) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do profissional inválido.' });
+    }
+
+    const { dias } = req.body;
+    if (!Array.isArray(dias) || dias.length === 0) {
+      return res.status(400).json({ sucesso: false, erro: 'Array de dias da jornada é obrigatório.' });
+    }
+
+    // Validar cada dia (CA04)
+    for (const d of dias) {
+      if (d.ativo === 1 || d.ativo === true) {
+        const val = validarJornadaProfissional(d.horario_inicio, d.horario_fim, d.intervalo_inicio, d.intervalo_fim);
+        if (!val.valido) {
+          return res.status(400).json({
+            sucesso: false,
+            erro: `Erro no dia ${d.dia_semana}: ${val.motivo}`
+          });
+        }
+      }
+    }
+
+    for (const d of dias) {
+      const ativoVal = (d.ativo === 1 || d.ativo === true) ? 1 : 0;
+      await pool.query(
+        `INSERT INTO jornada_profissional (id_profissional, dia_semana, ativo, horario_inicio, horario_fim, intervalo_inicio, intervalo_fim)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE 
+            ativo = VALUES(ativo),
+            horario_inicio = VALUES(horario_inicio),
+            horario_fim = VALUES(horario_fim),
+            intervalo_inicio = VALUES(intervalo_inicio),
+            intervalo_fim = VALUES(intervalo_fim)`,
+        [
+          id,
+          d.dia_semana,
+          ativoVal,
+          d.horario_inicio || '08:00:00',
+          d.horario_fim || '18:00:00',
+          d.intervalo_inicio || null,
+          d.intervalo_fim || null
+        ]
+      );
+    }
+
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: 'Jornada e intervalos do profissional configurados com sucesso!'
+    });
+  } catch (error: any) {
+    console.error('Erro ao salvar jornada do profissional:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao salvar jornada do profissional.' });
+  }
+});
+
+// ============================================================================
+// ENDPOINTS IK-83: EXCEÇÕES DE DISPONIBILIDADE
+// ============================================================================
+router.get('/excecoes', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { profissional_id } = req.query;
+    let sql = `
+      SELECT e.id_excecao as id, DATE_FORMAT(e.data, '%Y-%m-%d') as data, e.id_profissional, 
+             p.nome as profissional_nome, e.tipo_excecao, 
+             TIME_FORMAT(e.horario_inicio, '%H:%i') as horario_inicio, 
+             TIME_FORMAT(e.horario_fim, '%H:%i') as horario_fim, 
+             e.motivo, e.criado_em 
+      FROM excecao_disponibilidade e 
+      LEFT JOIN profissional p ON e.id_profissional = p.id_profissional 
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+    if (profissional_id) {
+      sql += ' AND (e.id_profissional IS NULL OR e.id_profissional = ?)';
+      params.push(profissional_id);
+    }
+    sql += ' ORDER BY e.data ASC';
+
+    const [rows] = await pool.query(sql, params);
+    return res.status(200).json({ sucesso: true, dados: rows });
+  } catch (error: any) {
+    console.error('Erro ao buscar exceções:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao buscar exceções.' });
+  }
+});
+
+router.post('/excecoes', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { data, id_profissional, tipo_excecao, horario_inicio, horario_fim, motivo } = req.body;
+
+    const tipoVal = tipo_excecao === 'Horario_Especial' ? 'Horario_Especial' : 'Fechado';
+    const val = validarExcecaoDisponibilidade(data, tipoVal, horario_inicio, horario_fim);
+    if (!val.valido) {
+      return res.status(400).json({ sucesso: false, erro: val.motivo });
+    }
+
+    if (!motivo || !motivo.trim()) {
+      return res.status(400).json({ sucesso: false, erro: 'O motivo da exceção é obrigatório.' });
+    }
+
+    const motivoSanitizado = sanitizarTexto(motivo);
+    const profIdVal = id_profissional ? Number(id_profissional) : null;
+
+    const [result]: any = await pool.query(
+      `INSERT INTO excecao_disponibilidade (data, id_profissional, tipo_excecao, horario_inicio, horario_fim, motivo)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [data, profIdVal, tipoVal, horario_inicio || null, horario_fim || null, motivoSanitizado]
+    );
+
+    return res.status(201).json({
+      sucesso: true,
+      mensagem: 'Exceção de disponibilidade cadastrada com sucesso!',
+      dados: {
+        id: result.insertId,
+        data,
+        id_profissional: profIdVal,
+        tipo_excecao: tipoVal,
+        horario_inicio,
+        horario_fim,
+        motivo: motivoSanitizado
+      }
+    });
+  } catch (error: any) {
+    console.error('Erro ao criar exceção:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao criar exceção.' });
+  }
+});
+
+router.delete('/excecoes/:id', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    if (!validarIdNumerico(id)) {
+      return res.status(400).json({ sucesso: false, erro: 'ID da exceção inválido.' });
+    }
+
+    const [result]: any = await pool.query('DELETE FROM excecao_disponibilidade WHERE id_excecao = ?', [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Exceção não encontrada.' });
+    }
+
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: 'Exceção removida com sucesso! A data voltou a seguir a grade padrão.'
+    });
+  } catch (error: any) {
+    console.error('Erro ao remover exceção:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao remover exceção.' });
+  }
+});
 
 export default router;
 

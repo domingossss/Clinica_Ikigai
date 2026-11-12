@@ -354,3 +354,67 @@ export function calcularResumoAgenda(
   };
 }
 
+
+
+/**
+ * IK-14: Valida a configuração de jornada e intervalos do profissional (CA04)
+ */
+export function validarJornadaProfissional(
+  horarioInicio: string,
+  horarioFim: string,
+  intervaloInicio?: string | null,
+  intervaloFim?: string | null
+): { valido: boolean; motivo?: string } {
+  if (!horarioInicio || !horarioFim) {
+    return { valido: false, motivo: 'Horário de início e término são obrigatórios.' };
+  }
+
+  const ini = converterHorarioParaMinutos(horarioInicio);
+  const fim = converterHorarioParaMinutos(horarioFim);
+
+  if (ini >= fim) {
+    return { valido: false, motivo: 'O horário de início da jornada deve ser anterior ao horário de término.' };
+  }
+
+  if (intervaloInicio && intervaloFim) {
+    const intIni = converterHorarioParaMinutos(intervaloInicio);
+    const intFim = converterHorarioParaMinutos(intervaloFim);
+
+    if (intIni >= intFim) {
+      return { valido: false, motivo: 'O início do intervalo/almoço deve ser anterior ao término do intervalo.' };
+    }
+
+    if (intIni < ini || intFim > fim) {
+      return { valido: false, motivo: 'O intervalo deve estar contido dentro do horário de jornada do profissional.' };
+    }
+  }
+
+  return { valido: true };
+}
+
+/**
+ * IK-83: Valida configuração de exceção de disponibilidade (CA04)
+ */
+export function validarExcecaoDisponibilidade(
+  data: string,
+  tipo: string,
+  horarioInicio?: string | null,
+  horarioFim?: string | null
+): { valido: boolean; motivo?: string } {
+  if (!data || !/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+    return { valido: false, motivo: 'Formato de data inválido. Use YYYY-MM-DD.' };
+  }
+
+  if (tipo === 'Horario_Especial') {
+    if (!horarioInicio || !horarioFim) {
+      return { valido: false, motivo: 'Horários de início e término são obrigatórios para exceção de Horário Especial.' };
+    }
+    const ini = converterHorarioParaMinutos(horarioInicio);
+    const fim = converterHorarioParaMinutos(horarioFim);
+    if (ini >= fim) {
+      return { valido: false, motivo: 'O horário especial de início deve ser anterior ao término.' };
+    }
+  }
+
+  return { valido: true };
+}

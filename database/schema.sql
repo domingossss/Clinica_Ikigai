@@ -425,3 +425,36 @@ SELECT
 FROM bloqueio_agenda;
 
 SET FOREIGN_KEY_CHECKS = @OLD_FOREIGN_KEY_CHECKS;
+
+
+-- =====================================================================
+-- 13. TABELA: jornada_profissional (Expediente e Intervalos - IK-14)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS jornada_profissional (
+    id_jornada INT AUTO_INCREMENT PRIMARY KEY,
+    id_profissional INT NOT NULL,
+    dia_semana TINYINT NOT NULL COMMENT '0=Domingo, 1=Segunda, ..., 6=Sabado',
+    ativo TINYINT(1) NOT NULL DEFAULT 1,
+    horario_inicio TIME NOT NULL DEFAULT '08:00:00',
+    horario_fim TIME NOT NULL DEFAULT '18:00:00',
+    intervalo_inicio TIME NULL DEFAULT '12:00:00',
+    intervalo_fim TIME NULL DEFAULT '13:00:00',
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_jornada_prof_dia (id_profissional, dia_semana)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =====================================================================
+-- 14. TABELA: excecao_disponibilidade (Feriados e Horários Especiais - IK-83)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS excecao_disponibilidade (
+    id_excecao INT AUTO_INCREMENT PRIMARY KEY,
+    data DATE NOT NULL,
+    id_profissional INT NULL,
+    tipo_excecao ENUM('Fechado', 'Horario_Especial') NOT NULL DEFAULT 'Fechado',
+    horario_inicio TIME NULL,
+    horario_fim TIME NULL,
+    motivo VARCHAR(255) NOT NULL DEFAULT 'Feriado / Recesso',
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_excecao_data (data)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
