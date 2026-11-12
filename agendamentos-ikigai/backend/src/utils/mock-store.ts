@@ -68,7 +68,7 @@ export interface MockBloqueio {
 class InMemoryStore {
   profissionais: MockProfissional[] = [
     { id: 1, nome: 'Dr. Ulisses Higo', especialidade: 'Terapeuta Ortomolecular', ativo: 1 },
-    { id: 2, nome: 'Drª Samantha Ferreira', especialidade: 'Acupunturista e Massoterapeuta', ativo: 1 }
+    { id: 2, nome: 'Dra. Samantha Ferreira', especialidade: 'Acupunturista e Massoterapeuta', ativo: 1 }
   ];
 
   categorias = [
@@ -131,7 +131,7 @@ class InMemoryStore {
         paciente_nome: this.pacientes[1].nome_completo,
         paciente_whatsapp: this.pacientes[1].whatsapp,
         profissional_id: 2,
-        profissional_nome: 'Drª Samantha Ferreira',
+        profissional_nome: 'Dra. Samantha Ferreira',
         servico_id: 4,
         servico_nome: 'Massagem Miofascial / Terapêutica',
         duracao_minutos: 60

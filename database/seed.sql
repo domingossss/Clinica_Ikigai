@@ -53,7 +53,7 @@ INSERT INTO procedimento (id_procedimento, id_especialidade, nome, duracao_minut
 -- =====================================================================
 INSERT INTO profissional (id_profissional, nome, registro_profissional, especialidade_principal, email, telefone, ativo) VALUES
 (1, 'Dr. Ulisses Higo', 'CRM-SP 189204', 'Terapeuta Ortomolecular e Acupunturista', 'ulisses.higo@clinicaikigai.com.br', '(11) 98765-1001', 1),
-(2, 'Drª Samantha Ferreira', 'CRN-3 44521', 'Acupunturista e Massoterapeuta', 'samantha.ferreira@clinicaikigai.com.br', '(11) 98765-1002', 1),
+(2, 'Dra. Samantha Ferreira', 'CRN-3 44521', 'Acupunturista e Massoterapeuta', 'samantha.ferreira@clinicaikigai.com.br', '(11) 98765-1002', 1),
 (3, 'Dra. Beatriz Albuquerque', 'CRP-06 88319', 'Psicoterapeuta Integrativa', 'beatriz.albuquerque@clinicaikigai.com.br', '(11) 98765-1003', 1),
 (4, 'Terapeuta Marcelo Prado', 'ABRAMAT 1209', 'Massoterapeuta Especialista', 'marcelo.prado@clinicaikigai.com.br', '(11) 98765-1004', 1),
 (5, 'Dra. Juliana Mendes', 'CRF-SP 55214', 'Farmacêutica Fitoterapeuta', 'juliana.mendes@clinicaikigai.com.br', '(11) 98765-1005', 1),

@@ -32,7 +32,7 @@ interface Profissional {
 
 const PROFISSIONAIS: Profissional[] = [
   { id: 1, nome: 'Dr. Ulisses Higo', especialidade: 'Terapeuta Ortomolecular', ativo: 1 },
-  { id: 2, nome: 'Drª Samantha Ferreira', especialidade: 'Acupunturista e Massoterapeuta', ativo: 1 }
+  { id: 2, nome: 'Dra. Samantha Ferreira', especialidade: 'Acupunturista e Massoterapeuta', ativo: 1 }
 ];
 
 function dataHoje(): string {
