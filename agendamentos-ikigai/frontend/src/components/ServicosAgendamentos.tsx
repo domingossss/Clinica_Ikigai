@@ -1765,7 +1765,6 @@ export default function ServicosAgendamentos({
           <div className="lg:col-span-1">
             <div className="bg-white p-6 rounded-2xl shadow-premium border border-gray/5">
               <h2 className="text-lg font-bold text-dark mb-1 flex items-center gap-2">
-                <span className="p-1.5 bg-secondary/20 rounded-lg text-primary-dark text-xs font-bold">IK-83</span>
                 Nova Exceção
               </h2>
               <p className="text-xs text-gray mb-5">
