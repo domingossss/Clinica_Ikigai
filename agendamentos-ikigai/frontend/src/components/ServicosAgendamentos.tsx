@@ -80,7 +80,8 @@ export default function ServicosAgendamentos({
   const [servicoForm, setServicoForm] = useState({
     nome: '',
     categoria_id: '',
-    duracao_minutos: '60'
+    duracao_minutos: '60',
+    preco: ''
   });
   const [showNewCatInput, setShowNewCatInput] = useState(false);
   const [novaCategoriaNome, setNovaCategoriaNome] = useState('');
@@ -208,7 +209,8 @@ export default function ServicosAgendamentos({
     setServicoForm({
       nome: s.nome,
       categoria_id: s.categoria_id.toString(),
-      duracao_minutos: s.duracao_minutos.toString()
+      duracao_minutos: s.duracao_minutos.toString(),
+      preco: s.preco !== undefined && s.preco !== null ? Number(s.preco).toFixed(2) : ''
     });
     showToast(`Editando o serviço: ${s.nome}`, 'info');
   };
@@ -218,7 +220,8 @@ export default function ServicosAgendamentos({
     setServicoForm({
       nome: '',
       categoria_id: '',
-      duracao_minutos: '60'
+      duracao_minutos: '60',
+      preco: ''
     });
   };
 
@@ -371,10 +374,16 @@ export default function ServicosAgendamentos({
 
   const handleCriarServico = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { nome, categoria_id, duracao_minutos } = servicoForm;
+    const { nome, categoria_id, duracao_minutos, preco } = servicoForm;
 
-    if (!nome.trim() || !categoria_id || !duracao_minutos) {
-      showToast('Preencha todos os campos do serviço.', 'error');
+    if (!nome.trim() || !categoria_id || !duracao_minutos || preco === '') {
+      showToast('Preencha todos os campos do serviço, incluindo o valor da consulta.', 'error');
+      return;
+    }
+
+    const precoNumerico = parseFloat(String(preco).replace(',', '.'));
+    if (isNaN(precoNumerico) || precoNumerico < 0) {
+      showToast('Informe um valor válido para a consulta.', 'error');
       return;
     }
 
@@ -392,15 +401,17 @@ export default function ServicosAgendamentos({
         body: JSON.stringify({
           categoria_id: parseInt(categoria_id),
           nome: nome.trim(),
-          duracao_minutos: parseInt(duracao_minutos)
+          duracao_minutos: parseInt(duracao_minutos),
+          preco: precoNumerico
         })
       });
       const data = await res.json();
       if (data.sucesso) {
         showToast(isEditing ? 'Serviço atualizado com sucesso!' : 'Serviço criado com sucesso!', 'success');
-        setServicoForm({ nome: '', categoria_id: '', duracao_minutos: '60' });
+        setServicoForm({ nome: '', categoria_id: '', duracao_minutos: '60', preco: '' });
         setEditingServiceId(null);
         carregarDadosServicos();
+        onProfissionaisAtualizados?.();
       } else {
         showToast(data.erro || 'Erro ao processar serviço.', 'error');
       }
@@ -825,6 +836,11 @@ export default function ServicosAgendamentos({
     return `${horas}h ${minsRestantes}min`;
   };
 
+  const formatarPreco = (valor?: number | string) => {
+    const num = Number(valor || 0);
+    return num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
   return (
     <div className="min-h-screen bg-light-gray text-dark font-sans p-2 sm:p-6">
       {/* Toast Notifications */}
@@ -1029,6 +1045,7 @@ export default function ServicosAgendamentos({
                     <option value="15">15 minutos</option>
                     <option value="30">30 minutos</option>
                     <option value="45">45 minutos</option>
+                    <option value="50">50 minutos</option>
                     <option value="60">1 hora (60 min)</option>
                     <option value="75">1h 15min (75 min)</option>
                     <option value="90">1h 30min (90 min)</option>
@@ -1036,6 +1053,28 @@ export default function ServicosAgendamentos({
                     <option value="150">2h 30min (150 min)</option>
                     <option value="180">3 horas (180 min)</option>
                   </select>
+                </div>
+
+                {/* Valor da Consulta (R$) */}
+                <div>
+                  <label className="block text-xs font-bold text-dark mb-1">
+                    Valor da Consulta (R$) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-gray">
+                      R$
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      required
+                      placeholder="Ex: 220.00"
+                      value={servicoForm.preco}
+                      onChange={e => setServicoForm(prev => ({ ...prev, preco: e.target.value }))}
+                      className="w-full pl-9 pr-3.5 py-2 border border-gray/15 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-light-gray/50 text-dark"
+                    />
+                  </div>
                 </div>
 
                 {/* Botões do Formulário de Serviço */}
@@ -1103,9 +1142,18 @@ export default function ServicosAgendamentos({
                             </span>
                           )}
                         </div>
-                        <p className="text-[10px] text-gray mt-0.5">{s.categoria_nome}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] text-gray">{s.categoria_nome}</span>
+                          <span className="text-gray/30 text-[10px]">•</span>
+                          <span className="text-[11px] font-extrabold text-primary">
+                            {formatarPreco(s.preco)}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <span className="inline-block text-[10px] font-extrabold text-primary-dark bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-lg">
+                          {formatarPreco(s.preco)}
+                        </span>
                         <span className="inline-block text-[9px] font-bold text-dark bg-secondary/20 px-1.5 py-0.5 rounded">
                           {formatarDuracao(s.duracao_minutos)}
                         </span>

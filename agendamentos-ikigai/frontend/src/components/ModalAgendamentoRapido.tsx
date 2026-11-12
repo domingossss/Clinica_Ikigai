@@ -728,6 +728,11 @@ export default function ModalAgendamentoRapido({
               <p className="text-[11px] text-gray-600 mt-0.5">
                 Duração da consulta: {calculoHorario.duracao} min (reserva com intervalo até {calculoHorario.horaTerminoComBuffer})
               </p>
+              {servicoSelecionado.preco !== undefined && (
+                <p className="text-xs font-bold text-emerald-700 mt-1">
+                  Valor da consulta: {Number(servicoSelecionado.preco).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </p>
+              )}
             </div>
           )}
 

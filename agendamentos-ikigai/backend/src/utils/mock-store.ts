@@ -82,7 +82,9 @@ class InMemoryStore {
     { id: 1, categoria_id: 1, categoria_nome: 'Acupuntura', nome: 'Sessão de Acupuntura Sistêmica', preco: 220.00, duracao_minutos: 60 },
     { id: 2, categoria_id: 2, categoria_nome: 'Nutrição Integrativa', nome: 'Consulta Nutricional Integrativa Inicial', preco: 280.00, duracao_minutos: 60 },
     { id: 3, categoria_id: 3, categoria_nome: 'Psicoterapia Integrativa', nome: 'Sessão de Psicoterapia Integrativa', preco: 250.00, duracao_minutos: 50 },
-    { id: 4, categoria_id: 4, categoria_nome: 'Massoterapia', nome: 'Massagem Miofascial / Terapêutica', preco: 180.00, duracao_minutos: 60 }
+    { id: 4, categoria_id: 4, categoria_nome: 'Massoterapia', nome: 'Massagem Miofascial / Terapêutica', preco: 180.00, duracao_minutos: 60 },
+    { id: 5, categoria_id: 5, categoria_nome: 'Fitoterapia', nome: 'Consulta Fitoterápica com Prescrição', preco: 200.00, duracao_minutos: 45 },
+    { id: 6, categoria_id: 6, categoria_nome: 'Naturopatia', nome: 'Avaliação e Conduta Naturopática', preco: 300.00, duracao_minutos: 60 }
   ];
 
   pacientes: MockPaciente[] = [

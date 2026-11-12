@@ -189,10 +189,10 @@ router.post('/servicos', async (req: Request, res: Response): Promise<any> => {
     const nomeSanitizado = sanitizarTexto(nome);
 
     const duracaoVal = parseInt(duracao_minutos, 10);
-    if (isNaN(duracaoVal) || duracaoVal <= 0 || duracaoVal % 30 !== 0) {
+    if (isNaN(duracaoVal) || duracaoVal <= 0 || duracaoVal % 5 !== 0) {
       return res.status(400).json({
         sucesso: false,
-        erro: 'A duração do serviço deve ser um número inteiro positivo múltiplo de 30 minutos.'
+        erro: 'A duração do serviço deve ser um número inteiro positivo válido (múltiplo de 5 minutos).'
       });
     }
 
@@ -259,10 +259,10 @@ router.put('/servicos/:id', async (req: Request, res: Response): Promise<any> =>
     const nomeSanitizado = sanitizarTexto(nome);
 
     const duracaoVal = parseInt(duracao_minutos, 10);
-    if (isNaN(duracaoVal) || duracaoVal <= 0 || duracaoVal % 30 !== 0) {
+    if (isNaN(duracaoVal) || duracaoVal <= 0 || duracaoVal % 5 !== 0) {
       return res.status(400).json({
         sucesso: false,
-        erro: 'A duração do serviço deve ser um número inteiro positivo múltiplo de 30 minutos.'
+        erro: 'A duração do serviço deve ser um número inteiro positivo válido (múltiplo de 5 minutos).'
       });
     }
 
