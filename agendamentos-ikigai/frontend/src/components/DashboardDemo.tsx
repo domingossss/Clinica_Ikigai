@@ -309,7 +309,7 @@ export default function DashboardDemo() {
         initialTime={bookingInitialHorario}
         initialProfissionalId={bookingInitialProfissionalId}
         profissionais={profissionais.filter(p => p.ativo !== 0 && p.ativo !== false)}
-        servicos={servicos}
+        servicos={servicos.filter(s => s.ativo !== 0 && s.ativo !== false)}
         pacientesExistentes={pacientes}
         onPacienteCadastrado={(novoP) => {
           setPacientes(prev => [novoP, ...prev]);

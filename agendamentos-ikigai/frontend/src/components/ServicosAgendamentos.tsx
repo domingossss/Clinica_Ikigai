@@ -13,6 +13,7 @@ interface Servico {
   nome: string;
   preco?: number;
   duracao_minutos: number;
+  ativo?: number | boolean;
 }
 
 export interface ProfissionalItem {
@@ -146,45 +147,49 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
     });
   };
 
-  const handleExcluirServico = async (id: number) => {
-    const result = await Swal.fire({
-      title: 'Tem certeza?',
-      text: 'Tem certeza de que deseja excluir este serviço? Todos os agendamentos vinculados a ele também serão excluídos.',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#262B6B',
-      cancelButtonColor: '#ef4444',
-      confirmButtonText: 'Sim, excluir!',
-      cancelButtonText: 'Cancelar'
-    });
+  const handleToggleStatusServico = async (servico: Servico) => {
+    const isAtivo = servico.ativo !== 0 && servico.ativo !== false;
+    const novoStatus = isAtivo ? 0 : 1;
 
-    if (!result.isConfirmed) return;
-    
+    if (isAtivo) {
+      // CA01 (IK-95): Inativação mediante confirmação
+      const result = await Swal.fire({
+        title: 'Inativar Procedimento?',
+        text: `Deseja inativar o procedimento "${servico.nome}"? Ele não será mais oferecido para novos agendamentos, mas todo o histórico existente continuará preservado.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#262B6B',
+        cancelButtonColor: '#6B7280',
+        confirmButtonText: 'Sim, inativar!',
+        cancelButtonText: 'Cancelar'
+      });
+
+      if (!result.isConfirmed) return;
+    }
+
     try {
-      const res = await fetch(`${API_BASE_URL}/api/servicos/${id}`, {
-        method: 'DELETE'
+      const res = await fetch(`${API_BASE_URL}/api/servicos/${servico.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ativo: novoStatus })
       });
       const data = await res.json();
       if (data.sucesso) {
-        Swal.fire({
-          title: 'Excluído!',
-          text: 'Serviço excluído com sucesso.',
-          icon: 'success',
-          timer: 2000,
-          showConfirmButton: false
-        });
-        if (editingServiceId === id) {
-          cancelEditService();
-        }
+        showToast(
+          data.mensagem || (novoStatus === 1 ? 'Procedimento reativado com sucesso!' : 'Procedimento inativado com sucesso!'),
+          'success'
+        );
         carregarDadosServicos();
       } else {
-        Swal.fire('Erro!', data.erro || 'Erro ao excluir serviço.', 'error');
+        showToast(data.erro || 'Erro ao alterar status do procedimento.', 'error');
       }
     } catch (err) {
       console.error(err);
-      Swal.fire('Erro!', 'Erro de rede ao excluir serviço.', 'error');
+      showToast('Erro de rede ao alterar status do procedimento.', 'error');
     }
   };
+
+
 
   const handleCriarCategoria = async () => {
     if (!novaCategoriaNome.trim()) return;
@@ -754,16 +759,49 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
                   {servicos.map(s => (
                     <div
                       key={s.id}
-                      className="p-4 bg-light-gray hover:bg-light-gray/80 rounded-xl border border-gray/5 flex items-center justify-between transition-colors group"
+                      className={`p-4 rounded-xl border flex items-center justify-between transition-all group ${
+                        s.ativo !== 0 && s.ativo !== false
+                          ? 'bg-light-gray hover:bg-light-gray/80 border-gray/10'
+                          : 'bg-gray/5 border-gray/20 opacity-75'
+                      }`}
                     >
                       <div>
-                        <h4 className="text-xs font-bold text-dark">{s.nome}</h4>
+                        <div className="flex items-center gap-2">
+                          <h4 className={`text-xs font-bold ${s.ativo !== 0 && s.ativo !== false ? 'text-dark' : 'text-gray line-through'}`}>
+                            {s.nome}
+                          </h4>
+                          {s.ativo === 0 && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                              Inativo
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[10px] text-gray mt-0.5">{s.categoria_nome}</p>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="inline-block text-[9px] font-bold text-dark bg-secondary/20 px-1.5 py-0.5 rounded">
                           {formatarDuracao(s.duracao_minutos)}
                         </span>
+
+                        {/* Status Toggle Button (IK-95) */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStatusServico(s)}
+                          title={s.ativo !== 0 && s.ativo !== false ? 'Clique para inativar procedimento' : 'Clique para reativar procedimento'}
+                          className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                            s.ativo !== 0 && s.ativo !== false
+                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
+                              : 'bg-gray/10 text-gray hover:text-dark hover:bg-gray/20 border border-gray/20'
+                          }`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${
+                              s.ativo !== 0 && s.ativo !== false ? 'bg-emerald-500' : 'bg-gray/40'
+                            }`}
+                          />
+                          <span>{s.ativo !== 0 && s.ativo !== false ? 'Ativo' : 'Inativo'}</span>
+                        </button>
+
                         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
                             onClick={() => startEditService(s)}
@@ -773,11 +811,15 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
                             Editar
                           </button>
                           <button
-                            onClick={() => handleExcluirServico(s.id)}
-                            title="Excluir"
-                            className="px-2 py-0.5 hover:bg-red-500/10 rounded text-red-500 text-[11px] font-bold transition-colors cursor-pointer"
+                            onClick={() => handleToggleStatusServico(s)}
+                            title={s.ativo !== 0 && s.ativo !== false ? 'Inativar procedimento' : 'Reativar procedimento'}
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors cursor-pointer ${
+                              s.ativo !== 0 && s.ativo !== false
+                                ? 'hover:bg-amber-500/10 text-amber-600'
+                                : 'hover:bg-emerald-500/10 text-emerald-600'
+                            }`}
                           >
-                            Excluir
+                            {s.ativo !== 0 && s.ativo !== false ? 'Inativar' : 'Reativar'}
                           </button>
                         </div>
                       </div>

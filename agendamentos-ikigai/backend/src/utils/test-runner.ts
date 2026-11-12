@@ -8,6 +8,7 @@ import {
   validarPeriodoBloqueio
 } from './validation.js';
 import { runHistoricoTests } from './test-historico.js';
+import { runInativarProcedimentoTests } from './test-inativar-procedimento.js';
 
 interface CasoTeste {
   descricao: string;
@@ -258,6 +259,11 @@ async function executarTestes() {
   const historicoResult = await runHistoricoTests();
   passados += historicoResult.pass;
   falhados += historicoResult.fail;
+
+  // SUÍTE 6: INATIVAÇÃO DE PROCEDIMENTO (IK-95)
+  const inativarResult = await runInativarProcedimentoTests();
+  passados += inativarResult.pass;
+  falhados += inativarResult.fail;
 
   console.log("\n================================================================");
   console.log("RESUMO DA EXECUÇÃO");

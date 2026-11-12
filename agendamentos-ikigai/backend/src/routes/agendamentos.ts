@@ -137,16 +137,25 @@ router.delete('/categorias/:id', async (req: Request, res: Response): Promise<an
 });
 
 // ============================================================================
-// ENDPOINT: GET /api/servicos (Listar todos os serviços)
+// ============================================================================
+// ENDPOINT: GET /api/servicos (Listar todos os serviços - suporta filtro de ativos - IK-95)
 // ============================================================================
 router.get('/servicos', async (req: Request, res: Response): Promise<any> => {
   try {
-    const [rows] = await pool.query(`
-      SELECT s.id, s.nome, s.preco, s.duracao_minutos, c.id as categoria_id, c.nome as categoria_nome 
+    const { apenas_ativos, ativos } = req.query;
+    let sql = `
+      SELECT s.id, s.nome, s.preco, s.duracao_minutos, COALESCE(s.ativo, 1) as ativo, c.id as categoria_id, c.nome as categoria_nome 
       FROM servicos s 
       JOIN categorias c ON s.categoria_id = c.id 
-      ORDER BY s.nome
-    `);
+    `;
+
+    if (apenas_ativos === 'true' || ativos === '1') {
+      sql += ' WHERE (s.ativo = 1 OR s.ativo IS NULL)';
+    }
+
+    sql += ' ORDER BY s.nome';
+
+    const [rows] = await pool.query(sql);
     return res.status(200).json({ sucesso: true, dados: rows });
   } catch (error: any) {
     console.error('Erro ao buscar serviços:', error);
@@ -154,7 +163,6 @@ router.get('/servicos', async (req: Request, res: Response): Promise<any> => {
   }
 });
 
-// ============================================================================
 // ENDPOINT: POST /api/servicos (Criar um novo serviço)
 // ============================================================================
 router.post('/servicos', async (req: Request, res: Response): Promise<any> => {
@@ -295,36 +303,81 @@ router.put('/servicos/:id', async (req: Request, res: Response): Promise<any> =>
 });
 
 // ============================================================================
-// ENDPOINT: DELETE /api/servicos/:id (Excluir um serviço existente)
+// ============================================================================
+// ENDPOINT: PATCH & PUT /api/servicos/:id/status (Inativar ou reativar procedimento - IK-95)
+// ============================================================================
+const handleStatusServico = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    if (!validarIdNumerico(id)) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do serviço inválido.' });
+    }
+
+    const { ativo } = req.body;
+    const novoStatus = (ativo === 1 || ativo === true) ? 1 : 0;
+
+    const [result]: any = await pool.query(
+      'UPDATE procedimento SET ativo = ? WHERE id_procedimento = ?',
+      [novoStatus, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Procedimento não encontrado.' });
+    }
+
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: novoStatus === 1
+        ? 'Procedimento reativado com sucesso!'
+        : 'Procedimento inativado com sucesso! Não serão permitidos novos agendamentos e o histórico foi preservado.',
+      dados: {
+        id: Number(id),
+        ativo: novoStatus
+      }
+    });
+  } catch (error: any) {
+    console.error('Erro ao atualizar status do serviço:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao atualizar status do serviço.' });
+  }
+};
+router.patch('/servicos/:id/status', handleStatusServico);
+router.put('/servicos/:id/status', handleStatusServico);
+
+// ============================================================================
+// ENDPOINT: DELETE /api/servicos/:id (Inativar procedimento sem perder histórico - IK-95)
 // ============================================================================
 router.delete('/servicos/:id', async (req: Request, res: Response): Promise<any> => {
   try {
     const { id } = req.params;
 
     if (!validarIdNumerico(id)) {
-      return res.status(400).json({ sucesso: false, erro: 'ID do servico invalido.' });
+      return res.status(400).json({ sucesso: false, erro: 'ID do serviço inválido.' });
     }
 
     // Verificar se o serviço existe
-    const [servicos] = await pool.query('SELECT id FROM servicos WHERE id = ?', [id]);
-    if ((servicos as any[]).length === 0) {
-      return res.status(404).json({ sucesso: false, erro: 'Servico nao encontrado.' });
+    const [servicos]: any = await pool.query('SELECT id, nome, ativo FROM servicos WHERE id = ?', [id]);
+    if (servicos.length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Serviço não encontrado.' });
     }
 
-    await pool.query('DELETE FROM servicos WHERE id = ?', [id]);
+    // Inativação lógica (Soft-delete): preserva histórico de agendamentos e integridade referencial
+    await pool.query('UPDATE procedimento SET ativo = 0 WHERE id_procedimento = ?', [id]);
+
     return res.status(200).json({
       sucesso: true,
-      mensagem: 'Serviço excluído com sucesso!'
+      mensagem: 'Procedimento inativado com sucesso! Todos os registros e históricos antigos foram preservados, e ele não será mais oferecido para novos agendamentos.',
+      dados: {
+        id: Number(id),
+        ativo: 0
+      }
     });
 
   } catch (error: any) {
-    console.error('Erro ao excluir serviço:', error);
-    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao excluir serviço.' });
+    console.error('Erro ao inativar serviço:', error);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao inativar serviço.' });
   }
 });
 
-
-// ============================================================================
 // ENDPOINT: GET /api/disponibilidade (Buscar horários disponíveis - Matriz Dinâmica)
 // ============================================================================
 router.get('/disponibilidade', async (req: Request, res: Response): Promise<any> => {
@@ -353,6 +406,12 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
       return res.status(404).json({ sucesso: false, erro: 'Serviço não encontrado.' });
     }
     const servico = (servicos as any[])[0];
+    if (servico.ativo === 0 || servico.ativo === false) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Este procedimento está inativo e não pode ser selecionado para novos atendimentos.'
+      });
+    }
     const duracao = servico.duracao_minutos;
 
     // 2. Obter regras de funcionamento para o dia da semana
@@ -518,6 +577,12 @@ router.post('/agendamentos', async (req: Request, res: Response): Promise<any> =
       return res.status(404).json({ sucesso: false, erro: 'Servico nao cadastrado.' });
     }
     const servico = (servicos as any[])[0];
+    if (servico.ativo === 0 || servico.ativo === false) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Este procedimento está inativo e não pode ser selecionado para novos agendamentos.'
+      });
+    }
     const duracao = servico.duracao_minutos;
 
     // 3. Validar se o agendamento respeita o funcionamento da clínica (Segunda a Sexta)
