@@ -700,7 +700,7 @@ export default function GradeAgenda({
                 </>
               ) : (
                 <>
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-primary text-secondary">
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-primary text-secondary notranslate" translate="no">
                     {obterIniciais(profissionalAtivo?.nome || '')}
                   </span>
                   <span>{profissionalAtivo?.nome || 'Profissional Selecionado'}</span>
@@ -771,9 +771,10 @@ export default function GradeAgenda({
                       >
                         <div className="flex items-center gap-2.5 truncate">
                           <span
-                            className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold ${
+                            className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold notranslate ${
                               isAtivo ? 'bg-primary text-secondary' : 'bg-gray-200 text-gray-700'
                             }`}
+                            translate="no"
                           >
                             {obterIniciais(prof.nome)}
                           </span>
