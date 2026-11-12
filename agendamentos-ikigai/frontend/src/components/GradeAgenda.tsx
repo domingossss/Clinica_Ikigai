@@ -55,6 +55,8 @@ interface Props {
     profissional_id: number;
   }) => void;
   onRefresh?: () => void;
+  profissionalInicialId?: number | null;
+  onProfissionalChange?: (profissionalId: number | null) => void;
 }
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -91,6 +93,7 @@ function timeToMinutes(time: string): number {
 }
 
 function formatarDataBR(dateStr: string): string {
+  if (!dateStr) return '';
   const [y, m, d] = dateStr.split('-');
   return `${d}/${m}/${y}`;
 }
@@ -115,6 +118,41 @@ function somarDias(dateStr: string, dias: number): string {
   return d.toISOString().split('T')[0];
 }
 
+function obterIniciais(nome: string): string {
+  if (!nome) return 'PR';
+  const limpo = nome.trim();
+  const partes = limpo.split(/\s+/).filter(p => !['dr.', 'dra.', 'drª', 'dr', 'dra'].includes(p.toLowerCase()));
+  if (partes.length === 0) return limpo.substring(0, 2).toUpperCase();
+  if (partes.length === 1) return partes[0].substring(0, 2).toUpperCase();
+  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
+}
+
+function obterDiasDaSemana(dateStr: string): Array<{ data: string; nomeDia: string; formatada: string; isHoje: boolean }> {
+  const d = new Date(dateStr + 'T12:00:00');
+  const day = d.getDay();
+  const diffSegunda = day === 0 ? -6 : (day === 6 ? -5 : 1 - day);
+  const segunda = new Date(d);
+  segunda.setDate(d.getDate() + diffSegunda);
+
+  const hoje = dataHoje();
+  const dias = [];
+  const nomes = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+
+  for (let i = 0; i < 5; i++) {
+    const cur = new Date(segunda);
+    cur.setDate(segunda.getDate() + i);
+    const iso = cur.toISOString().split('T')[0];
+    const [, m, dia] = iso.split('-');
+    dias.push({
+      data: iso,
+      nomeDia: nomes[i],
+      formatada: `${dia}/${m}`,
+      isHoje: iso === hoje
+    });
+  }
+  return dias;
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function GradeAgenda({
@@ -123,9 +161,26 @@ export default function GradeAgenda({
   onDataChange,
   refreshTrigger,
   onAbrirNovoAgendamento,
-  onRefresh
+  onRefresh,
+  profissionalInicialId,
+  onProfissionalChange
 }: Props) {
   const [dataSelecionada, setDataSelecionada] = useState(dataProp || dataHoje());
+  const [profissionalSelecionadoId, setProfissionalSelecionadoId] = useState<number | null>(
+    profissionalInicialId !== undefined ? profissionalInicialId : null
+  );
+  const [modoVisualizacao, setModoVisualizacao] = useState<'dia' | 'semana'>('dia');
+  const [resumoProfissional, setResumoProfissional] = useState<{
+    total: number;
+    confirmados: number;
+    agendados: number;
+    concluidos: number;
+    em_atendimento: number;
+    recepcao: number;
+    reagendados: number;
+    bloqueios_total?: number;
+  } | null>(null);
+
   const [agendamentos, setAgendamentos] = useState<AgendamentoDia[]>([]);
   const [bloqueios, setBloqueios] = useState<BloqueioDia[]>([]);
   const [carregando, setCarregando] = useState(false);
@@ -166,20 +221,61 @@ export default function GradeAgenda({
     onDataChange?.(novaData);
   };
 
-  // ─── Busca agenda do dia (Agendamentos e Bloqueios) ─────────────────────────
+  const selecionarProfissional = (id: number | null) => {
+    setProfissionalSelecionadoId(id);
+    onProfissionalChange?.(id);
+    setAgendamentoSelecionado(null);
+    setBloqueioSelecionado(null);
+  };
 
-  const buscarAgenda = useCallback(async (data: string) => {
+  useEffect(() => {
+    if (profissionalInicialId !== undefined && profissionalInicialId !== profissionalSelecionadoId) {
+      setProfissionalSelecionadoId(profissionalInicialId);
+    }
+  }, [profissionalInicialId]);
+
+  // ─── Busca agenda (Agendamentos e Bloqueios) ───────────────────────────────
+
+  const buscarAgenda = useCallback(async (data: string, profId: number | null, modo: 'dia' | 'semana') => {
     setCarregando(true);
     setErro(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/agendamentos/dia?data=${data}`);
-      if (!res.ok) throw new Error('Falha ao buscar agenda.');
-      const json = await res.json();
-      if (json.sucesso) {
-        setAgendamentos(json.dados || []);
-        setBloqueios(json.bloqueios || []);
+      if (profId && modo === 'semana') {
+        // IK-81 CA02/CA03: Consulta agenda do profissional por semana
+        const res = await fetch(`${API_BASE_URL}/api/profissionais/${profId}/agenda?data=${data}&periodo=semana`);
+        if (!res.ok) throw new Error('Falha ao buscar agenda semanal do profissional.');
+        const json = await res.json();
+        if (json.sucesso) {
+          setAgendamentos(json.dados || []);
+          setBloqueios(json.bloqueios || []);
+          setResumoProfissional(json.resumo || null);
+        } else {
+          throw new Error(json.erro || 'Erro ao carregar agenda semanal.');
+        }
+      } else if (profId && modo === 'dia') {
+        // IK-81 CA01/CA02: Consulta agenda do profissional por dia
+        const res = await fetch(`${API_BASE_URL}/api/profissionais/${profId}/agenda?data=${data}`);
+        if (!res.ok) throw new Error('Falha ao buscar agenda diária do profissional.');
+        const json = await res.json();
+        if (json.sucesso) {
+          setAgendamentos(json.dados || []);
+          setBloqueios(json.bloqueios || []);
+          setResumoProfissional(json.resumo || null);
+        } else {
+          throw new Error(json.erro || 'Erro ao carregar agenda diária.');
+        }
       } else {
-        throw new Error(json.erro || 'Erro desconhecido.');
+        // Grade geral de todos os profissionais do dia
+        const res = await fetch(`${API_BASE_URL}/api/agendamentos/dia?data=${data}`);
+        if (!res.ok) throw new Error('Falha ao buscar agenda.');
+        const json = await res.json();
+        if (json.sucesso) {
+          setAgendamentos(json.dados || []);
+          setBloqueios(json.bloqueios || []);
+          setResumoProfissional(null);
+        } else {
+          throw new Error(json.erro || 'Erro desconhecido.');
+        }
       }
     } catch (e: any) {
       setErro(e.message || 'Erro ao carregar agenda.');
@@ -195,8 +291,8 @@ export default function GradeAgenda({
   }, [dataProp]);
 
   useEffect(() => {
-    buscarAgenda(dataSelecionada);
-  }, [dataSelecionada, refreshTrigger, buscarAgenda]);
+    buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
+  }, [dataSelecionada, profissionalSelecionadoId, modoVisualizacao, refreshTrigger, buscarAgenda]);
 
   // Atualiza default do profissional no modal de bloqueio se houver profissionais
   useEffect(() => {
@@ -272,7 +368,7 @@ export default function GradeAgenda({
       if (reagendarData !== dataSelecionada) {
         mudarData(reagendarData);
       } else {
-        buscarAgenda(dataSelecionada);
+        buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
       }
 
       onRefresh?.();
@@ -317,7 +413,7 @@ export default function GradeAgenda({
       if (bloqueioData !== dataSelecionada) {
         mudarData(bloqueioData);
       } else {
-        buscarAgenda(dataSelecionada);
+        buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
       }
 
       onRefresh?.();
@@ -350,7 +446,7 @@ export default function GradeAgenda({
       setTimeout(() => setMensagemSucesso(null), 3000);
 
       setBloqueioSelecionado(null);
-      buscarAgenda(dataSelecionada);
+      buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
       onRefresh?.();
     } catch (err: any) {
       alert('Erro ao remover bloqueio: ' + (err.message || 'Tente novamente.'));
@@ -386,31 +482,321 @@ export default function GradeAgenda({
     return Math.max(30, dur * ALTURA_POR_MINUTO);
   };
 
+  const profissionalAtivo = profissionais.find(p => p.id === profissionalSelecionadoId);
+  const diasSemana = obterDiasDaSemana(dataSelecionada);
+  const infoSemanaTexto = `Semana de ${formatarDataBR(diasSemana[0]?.data)} a ${formatarDataBR(diasSemana[4]?.data)} (Segunda a Sexta)`;
+
+  const renderColunaGrade = (
+    colKey: string | number,
+    titulo: string,
+    subtitulo: string | undefined,
+    dataDoSlot: string,
+    profIdDoSlot: number,
+    ags: AgendamentoDia[],
+    bls: BloqueioDia[],
+    isHojeBadge?: boolean
+  ) => {
+    return (
+      <div key={colKey} className="flex-1 min-w-52 border-r border-gray/10 last:border-r-0">
+        {/* Header do profissional / dia */}
+        <div className="h-12 px-3 flex flex-col justify-center border-b border-gray/10 bg-white sticky top-0 z-10">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-xs font-bold text-dark truncate">{titulo}</span>
+            {isHojeBadge && (
+              <span className="text-[9px] bg-primary text-white font-extrabold px-1.5 py-0.5 rounded-full">
+                Hoje
+              </span>
+            )}
+          </div>
+          {subtitulo && (
+            <span className="text-[9px] text-gray truncate">{subtitulo}</span>
+          )}
+        </div>
+
+        {/* Área de slots */}
+        <div className="relative bg-white" style={{ height: alturaTotal }}>
+          {/* Linhas de meia hora */}
+          {slots.map((slot, i) => (
+            <div
+              key={slot}
+              className={`absolute left-0 right-0 border-t ${
+                slot.endsWith(':00') ? 'border-gray/15' : 'border-gray/8 border-dashed'
+              }`}
+              style={{ top: i * 30 * ALTURA_POR_MINUTO }}
+            />
+          ))}
+
+          {/* Slots clicáveis para novo agendamento */}
+          {slots.map((slot) => {
+            const slotMin = timeToMinutes(slot);
+            const temAgendamento = ags.some(a => {
+              const ini = timeToMinutes(a.horario_inicio);
+              const fim = timeToMinutes(a.horario_fim);
+              return slotMin >= ini && slotMin < fim;
+            });
+            const temBloqueio = bls.some(b => {
+              const ini = timeToMinutes(b.horario_inicio);
+              const fim = timeToMinutes(b.horario_fim);
+              return slotMin >= ini && slotMin < fim;
+            });
+
+            return (!temAgendamento && !temBloqueio) ? (
+              <div
+                key={slot}
+                onClick={() =>
+                  onAbrirNovoAgendamento?.({
+                    data: dataDoSlot,
+                    horario_inicio: slot,
+                    profissional_id: profIdDoSlot,
+                  })
+                }
+                className="absolute left-0 right-0 hover:bg-primary/5 cursor-pointer transition-colors group"
+                style={{
+                  top: topParaHorario(slot),
+                  height: 30 * ALTURA_POR_MINUTO,
+                }}
+                title={`Agendar às ${slot} em ${formatarDataBR(dataDoSlot)}`}
+              >
+                <span className="absolute inset-0 flex items-center justify-center text-[9px] text-primary opacity-0 group-hover:opacity-100 font-semibold transition-opacity">
+                  + Agendar {slot}
+                </span>
+              </div>
+            ) : null;
+          })}
+
+          {/* Blocos de Bloqueio de Horário (IK-87) */}
+          {bls.map(bl => {
+            const top = topParaHorario(bl.horario_inicio);
+            const height = alturaParaDuracao(bl.horario_inicio, bl.horario_fim);
+            const isSelecionado = bloqueioSelecionado?.id === bl.id;
+
+            return (
+              <div
+                key={`bloqueio-${bl.id}`}
+                onClick={() => {
+                  setAgendamentoSelecionado(null);
+                  setBloqueioSelecionado(isSelecionado ? null : bl);
+                }}
+                className={`absolute left-1 right-1 rounded-xl border-l-4 border-gray-600 bg-gray-100/95 px-2 py-1.5 cursor-pointer transition-all hover:shadow-md ${isSelecionado ? 'ring-2 ring-gray-600 shadow-md' : ''}`}
+                style={{ top, height: height - 2, zIndex: isSelecionado ? 25 : 15 }}
+                title={`Horário Bloqueado: ${bl.motivo} (${bl.horario_inicio} - ${bl.horario_fim})`}
+              >
+                <div className="text-[10px] font-bold text-gray-800 flex items-center gap-1 truncate">
+                  <span>🔒</span>
+                  <span className="truncate">{bl.motivo || 'Horário Bloqueado'}</span>
+                </div>
+                <div className="text-[9px] font-mono text-gray-600 mt-0.5">
+                  {bl.horario_inicio} – {bl.horario_fim}
+                </div>
+                {height > 50 && (
+                  <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full text-[8px] font-semibold bg-gray-200 text-gray-700">
+                    Indisponível
+                  </span>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Blocos de agendamento */}
+          {carregando ? (
+            <div className="absolute inset-x-1 top-4 h-16 bg-gray/10 animate-pulse rounded-xl" />
+          ) : (
+            ags.map(ag => {
+              const cfg = STATUS_CONFIG[ag.status] || STATUS_CONFIG['Agendado'];
+              const top = topParaHorario(ag.horario_inicio);
+              const height = alturaParaDuracao(ag.horario_inicio, ag.horario_fim);
+              const isSelecionado = agendamentoSelecionado?.id === ag.id;
+
+              return (
+                <div
+                  key={ag.id}
+                  onClick={() => {
+                    setBloqueioSelecionado(null);
+                    setAgendamentoSelecionado(isSelecionado ? null : ag);
+                  }}
+                  className={`absolute left-1 right-1 rounded-xl border-l-4 px-2 py-1.5 cursor-pointer transition-all hover:shadow-md hover:-translate-y-px ${cfg.cor} ${cfg.corBorda} ${isSelecionado ? 'ring-2 ring-offset-1 ring-primary/50 shadow-md' : ''}`}
+                  style={{ top, height: height - 2, zIndex: isSelecionado ? 20 : 10 }}
+                  title={`${ag.paciente_nome} — ${ag.servico_nome}`}
+                >
+                  <div className={`text-[10px] font-bold truncate ${cfg.corTexto}`}>
+                    {ag.paciente_nome}
+                  </div>
+                  <div className={`text-[9px] truncate mt-0.5 ${cfg.corTexto} opacity-75`}>
+                    {ag.servico_nome}
+                  </div>
+                  {height > 40 && (
+                    <div className={`text-[9px] font-mono mt-0.5 ${cfg.corTexto} opacity-60`}>
+                      {ag.horario_inicio} – {ag.horario_fim}
+                    </div>
+                  )}
+                  {height > 55 && (
+                    <span className={`inline-block mt-1 px-1.5 py-0.5 rounded-full text-[8px] font-semibold border ${cfg.cor} ${cfg.corTexto} ${cfg.corBorda}`}>
+                      {cfg.label}
+                    </span>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="bg-white rounded-2xl shadow-premium border border-gray/5 overflow-hidden">
 
-      {/* Cabeçalho da grade */}
+      {/* Barra de Seleção de Profissional (IK-81 CA01) */}
+      <div className="px-6 py-3 border-b border-gray/10 bg-white flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+            <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            Filtrar Profissional:
+          </span>
+
+          <button
+            type="button"
+            onClick={() => selecionarProfissional(null)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+              profissionalSelecionadoId === null
+                ? 'bg-primary text-white shadow-sm font-bold'
+                : 'bg-light-gray hover:bg-gray-200 text-gray-700'
+            }`}
+          >
+            <span>👥 Todos da Clínica</span>
+          </button>
+
+          {profissionais.map(prof => {
+            const isAtivo = profissionalSelecionadoId === prof.id;
+            return (
+              <button
+                key={prof.id}
+                type="button"
+                onClick={() => selecionarProfissional(prof.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                  isAtivo
+                    ? 'bg-secondary/25 border-secondary text-primary-dark font-extrabold shadow-sm ring-1 ring-secondary'
+                    : 'bg-white border-gray/15 hover:bg-light-gray text-dark'
+                }`}
+              >
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                  isAtivo ? 'bg-primary text-secondary' : 'bg-gray-200 text-gray-700'
+                }`}>
+                  {obterIniciais(prof.nome)}
+                </span>
+                <span>{prof.nome}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Alternador de Modo de Visualização quando profissional específico está selecionado */}
+        {profissionalSelecionadoId && (
+          <div className="flex items-center gap-1 bg-light-gray p-1 rounded-xl border border-gray/10">
+            <button
+              type="button"
+              onClick={() => setModoVisualizacao('dia')}
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                modoVisualizacao === 'dia'
+                  ? 'bg-white text-primary shadow-xs'
+                  : 'text-gray hover:text-dark'
+              }`}
+            >
+              <span>📅 Visão Diária</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setModoVisualizacao('semana')}
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                modoVisualizacao === 'semana'
+                  ? 'bg-white text-primary shadow-xs'
+                  : 'text-gray hover:text-dark'
+              }`}
+            >
+              <span>📆 Visão Semanal</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Destaque da Agenda do Profissional Selecionado (IK-81 CA01 & CA02) */}
+      {profissionalAtivo && (
+        <div className="px-6 py-3.5 bg-gradient-to-r from-primary/5 via-secondary/10 to-transparent border-b border-primary/10 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary-dark text-secondary font-extrabold flex items-center justify-center text-sm shadow-sm">
+              {obterIniciais(profissionalAtivo.nome)}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-extrabold text-dark">{profissionalAtivo.nome}</h4>
+                <span className="text-[10px] bg-secondary/30 text-primary-dark font-bold px-2 py-0.5 rounded-full border border-secondary/40">
+                  Agenda Individual
+                </span>
+              </div>
+              <p className="text-xs text-gray mt-0.5 font-medium">
+                {profissionalAtivo.especialidade || 'Especialista'} • {modoVisualizacao === 'semana' ? infoSemanaTexto : `${diaSemana(dataSelecionada)}, ${formatarDataBR(dataSelecionada)}`}
+              </p>
+            </div>
+          </div>
+
+          {/* Resumo consolidado do período (CA02) */}
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <div className="bg-white/80 border border-gray/15 rounded-xl px-3 py-1.5 shadow-xs">
+              <span className="text-gray text-[10px] uppercase font-bold block">Compromissos</span>
+              <span className="font-extrabold text-dark text-sm">{resumoProfissional?.total ?? agendamentos.length}</span>
+            </div>
+            <div className="bg-white/80 border border-blue-200 rounded-xl px-3 py-1.5 shadow-xs">
+              <span className="text-blue-700 text-[10px] uppercase font-bold block">Confirmados</span>
+              <span className="font-extrabold text-blue-800 text-sm">
+                {resumoProfissional?.confirmados ?? agendamentos.filter(a => a.status === 'Confirmado').length}
+              </span>
+            </div>
+            <div className="bg-white/80 border border-gray-300 rounded-xl px-3 py-1.5 shadow-xs">
+              <span className="text-gray-600 text-[10px] uppercase font-bold block">Bloqueios</span>
+              <span className="font-extrabold text-gray-800 text-sm">{resumoProfissional?.bloqueios_total ?? bloqueios.length}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => selecionarProfissional(null)}
+              className="text-xs text-gray hover:text-dark px-2.5 py-1.5 rounded-lg hover:bg-white/60 transition-colors border border-dashed border-gray/30 cursor-pointer"
+              title="Voltar para a visão geral de todos os profissionais"
+            >
+              ✕ Fechar filtro
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Cabeçalho da grade e Navegação de Período (IK-81 CA03) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-6 py-4 border-b border-gray/10 bg-light-gray/30">
         <div>
-          <h3 className="text-base font-bold text-dark">Grade de Horários</h3>
+          <h3 className="text-base font-bold text-dark">
+            {profissionalAtivo
+              ? `Agenda: ${profissionalAtivo.nome}`
+              : 'Grade Geral de Horários'}
+          </h3>
           <p className="text-xs text-gray mt-0.5">
-            {diaSemana(dataSelecionada)}, {formatarDataBR(dataSelecionada)}
+            {profissionalAtivo && modoVisualizacao === 'semana'
+              ? infoSemanaTexto
+              : `${diaSemana(dataSelecionada)}, ${formatarDataBR(dataSelecionada)}`}
           </p>
         </div>
 
-        {/* Ações e Navegação de datas */}
+        {/* Ações e Navegação de datas (CA03) */}
         <div className="flex items-center flex-wrap gap-2">
           {/* Botão Bloquear Horário (IK-87) */}
           <button
             onClick={() => {
               setBloqueioData(dataSelecionada);
-              setBloqueioProfissionalId(profissionais[0]?.id || 1);
+              setBloqueioProfissionalId(profissionalAtivo?.id || profissionais[0]?.id || 1);
               setBloqueioErro(null);
               setIsBloquearModalOpen(true);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-800 text-white hover:bg-gray-700 active:scale-95 transition-all shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-800 text-white hover:bg-gray-700 active:scale-95 transition-all shadow-sm cursor-pointer"
             title="Bloquear Horário na Grade"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -419,10 +805,11 @@ export default function GradeAgenda({
             <span>Bloquear Horário</span>
           </button>
 
+          {/* Navegação anterior (Dia ou Semana) */}
           <button
-            onClick={() => mudarData(somarDias(dataSelecionada, -1))}
-            className="p-2 rounded-lg border border-gray/15 hover:bg-light-gray active:scale-95 transition-all text-gray hover:text-dark"
-            title="Dia anterior"
+            onClick={() => mudarData(somarDias(dataSelecionada, modoVisualizacao === 'semana' && profissionalAtivo ? -7 : -1))}
+            className="p-2 rounded-lg border border-gray/15 hover:bg-light-gray active:scale-95 transition-all text-gray hover:text-dark cursor-pointer"
+            title={modoVisualizacao === 'semana' && profissionalAtivo ? 'Semana anterior' : 'Dia anterior'}
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -431,26 +818,27 @@ export default function GradeAgenda({
 
           <button
             onClick={() => mudarData(dataHoje())}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
               dataSelecionada === dataHoje()
                 ? 'bg-primary text-white border-primary'
                 : 'border-gray/15 hover:bg-light-gray text-dark'
             }`}
           >
-            Hoje
+            {modoVisualizacao === 'semana' && profissionalAtivo ? 'Semana Atual' : 'Hoje'}
           </button>
 
           <input
             type="date"
             value={dataSelecionada}
             onChange={e => mudarData(e.target.value)}
-            className="text-xs border border-gray/15 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 bg-white text-dark"
+            className="text-xs border border-gray/15 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 bg-white text-dark cursor-pointer"
           />
 
+          {/* Navegação próximo (Dia ou Semana) */}
           <button
-            onClick={() => mudarData(somarDias(dataSelecionada, 1))}
-            className="p-2 rounded-lg border border-gray/15 hover:bg-light-gray active:scale-95 transition-all text-gray hover:text-dark"
-            title="Próximo dia"
+            onClick={() => mudarData(somarDias(dataSelecionada, modoVisualizacao === 'semana' && profissionalAtivo ? 7 : 1))}
+            className="p-2 rounded-lg border border-gray/15 hover:bg-light-gray active:scale-95 transition-all text-gray hover:text-dark cursor-pointer"
+            title={modoVisualizacao === 'semana' && profissionalAtivo ? 'Próxima semana' : 'Próximo dia'}
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -458,9 +846,9 @@ export default function GradeAgenda({
           </button>
 
           <button
-            onClick={() => buscarAgenda(dataSelecionada)}
-            className="p-2 rounded-lg border border-gray/15 hover:bg-light-gray active:scale-95 transition-all text-gray hover:text-dark"
-            title="Atualizar"
+            onClick={() => buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao)}
+            className="p-2 rounded-lg border border-gray/15 hover:bg-light-gray active:scale-95 transition-all text-gray hover:text-dark cursor-pointer"
+            title="Atualizar agenda"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 6H16" />
@@ -491,7 +879,7 @@ export default function GradeAgenda({
       {erro && (
         <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center justify-between">
           <span>{erro}</span>
-          <button onClick={() => buscarAgenda(dataSelecionada)} className="font-bold underline">
+          <button onClick={() => buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao)} className="font-bold underline cursor-pointer">
             Tentar novamente
           </button>
         </div>
@@ -524,7 +912,7 @@ export default function GradeAgenda({
             </div>
           </div>
 
-          {/* Colunas por profissional */}
+          {/* Renderização condicional por Modo de Visualização */}
           {profissionais.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white min-h-[350px]">
               <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-3">
@@ -537,156 +925,54 @@ export default function GradeAgenda({
                 Cadastre profissionais na aba <strong>Serviços e Configurações</strong> para exibir as colunas de atendimento aqui na grade.
               </p>
             </div>
+          ) : profissionalAtivo && modoVisualizacao === 'semana' ? (
+            // Visão Semanal do Profissional Selecionado (IK-81 CA02 & CA03)
+            diasSemana.map(diaInfo => {
+              const agsDia = agendamentos.filter(a => Number(a.profissional_id) === Number(profissionalAtivo.id) && a.data === diaInfo.data);
+              const blsDia = bloqueios.filter(b => Number(b.profissional_id) === Number(profissionalAtivo.id) && b.data === diaInfo.data);
+              return renderColunaGrade(
+                `semana-${diaInfo.data}`,
+                diaInfo.nomeDia,
+                diaInfo.formatada,
+                diaInfo.data,
+                profissionalAtivo.id,
+                agsDia,
+                blsDia,
+                diaInfo.isHoje
+              );
+            })
+          ) : profissionalAtivo && modoVisualizacao === 'dia' ? (
+            // Visão Diária do Profissional Selecionado (IK-81 CA01 & CA02)
+            (() => {
+              const agsProf = agendamentosParaProfissional(profissionalAtivo.id);
+              const blsProf = bloqueiosParaProfissional(profissionalAtivo.id);
+              return renderColunaGrade(
+                `prof-dia-${profissionalAtivo.id}`,
+                profissionalAtivo.nome,
+                profissionalAtivo.especialidade || 'Agenda Individual',
+                dataSelecionada,
+                profissionalAtivo.id,
+                agsProf,
+                blsProf,
+                dataSelecionada === dataHoje()
+              );
+            })()
           ) : (
+            // Visão Geral de Todos os Profissionais da Clínica (Modo Padrão)
             profissionais.map(prof => {
               const ags = agendamentosParaProfissional(prof.id);
               const bls = bloqueiosParaProfissional(prof.id);
-
-              return (
-              <div key={prof.id} className="flex-1 min-w-52 border-r border-gray/10 last:border-r-0">
-
-                {/* Header do profissional */}
-                <div className="h-12 px-3 flex flex-col justify-center border-b border-gray/10 bg-white sticky top-0 z-10">
-                  <span className="text-xs font-bold text-dark truncate">{prof.nome}</span>
-                  {prof.especialidade && (
-                    <span className="text-[9px] text-gray truncate">{prof.especialidade}</span>
-                  )}
-                </div>
-
-                {/* Área de slots */}
-                <div
-                  className="relative bg-white"
-                  style={{ height: alturaTotal }}
-                >
-                  {/* Linhas de meia hora */}
-                  {slots.map((slot, i) => (
-                    <div
-                      key={slot}
-                      className={`absolute left-0 right-0 border-t ${
-                        slot.endsWith(':00') ? 'border-gray/15' : 'border-gray/8 border-dashed'
-                      }`}
-                      style={{ top: i * 30 * ALTURA_POR_MINUTO }}
-                    />
-                  ))}
-
-                  {/* Slots clicáveis para novo agendamento (apenas se livres de agendamentos e bloqueios) */}
-                  {slots.map((slot) => {
-                    const slotMin = timeToMinutes(slot);
-                    const temAgendamento = ags.some(a => {
-                      const ini = timeToMinutes(a.horario_inicio);
-                      const fim = timeToMinutes(a.horario_fim);
-                      return slotMin >= ini && slotMin < fim;
-                    });
-                    const temBloqueio = bls.some(b => {
-                      const ini = timeToMinutes(b.horario_inicio);
-                      const fim = timeToMinutes(b.horario_fim);
-                      return slotMin >= ini && slotMin < fim;
-                    });
-
-                    return (!temAgendamento && !temBloqueio) ? (
-                      <div
-                        key={slot}
-                        onClick={() =>
-                          onAbrirNovoAgendamento?.({
-                            data: dataSelecionada,
-                            horario_inicio: slot,
-                            profissional_id: prof.id,
-                          })
-                        }
-                        className="absolute left-0 right-0 hover:bg-primary/5 cursor-pointer transition-colors group"
-                        style={{
-                          top: topParaHorario(slot),
-                          height: 30 * ALTURA_POR_MINUTO,
-                        }}
-                        title={`Agendar às ${slot} com ${prof.nome}`}
-                      >
-                        <span className="absolute inset-0 flex items-center justify-center text-[9px] text-primary opacity-0 group-hover:opacity-100 font-semibold transition-opacity">
-                          + Agendar {slot}
-                        </span>
-                      </div>
-                    ) : null;
-                  })}
-
-                  {/* Blocos de Bloqueio de Horário (IK-87) */}
-                  {bls.map(bl => {
-                    const top = topParaHorario(bl.horario_inicio);
-                    const height = alturaParaDuracao(bl.horario_inicio, bl.horario_fim);
-                    const isSelecionado = bloqueioSelecionado?.id === bl.id;
-
-                    return (
-                      <div
-                        key={`bloqueio-${bl.id}`}
-                        onClick={() => {
-                          setAgendamentoSelecionado(null);
-                          setBloqueioSelecionado(isSelecionado ? null : bl);
-                        }}
-                        className={`absolute left-1 right-1 rounded-xl border-l-4 border-gray-600 bg-gray-100/95 px-2 py-1.5 cursor-pointer transition-all hover:shadow-md ${isSelecionado ? 'ring-2 ring-gray-600 shadow-md' : ''}`}
-                        style={{ top, height: height - 2, zIndex: isSelecionado ? 25 : 15 }}
-                        title={`Horário Bloqueado: ${bl.motivo} (${bl.horario_inicio} - ${bl.horario_fim})`}
-                      >
-                        <div className="text-[10px] font-bold text-gray-800 flex items-center gap-1 truncate">
-                          <span>🔒</span>
-                          <span className="truncate">{bl.motivo || 'Horário Bloqueado'}</span>
-                        </div>
-                        <div className="text-[9px] font-mono text-gray-600 mt-0.5">
-                          {bl.horario_inicio} – {bl.horario_fim}
-                        </div>
-                        {height > 50 && (
-                          <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full text-[8px] font-semibold bg-gray-200 text-gray-700">
-                            Indisponível
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {/* Blocos de agendamento */}
-                  {carregando ? (
-                    // Skeleton durante carregamento
-                    <div className="absolute inset-x-1 top-4 h-16 bg-gray/10 animate-pulse rounded-xl" />
-                  ) : (
-                    ags.map(ag => {
-                      const cfg = STATUS_CONFIG[ag.status] || STATUS_CONFIG['Agendado'];
-                      const top = topParaHorario(ag.horario_inicio);
-                      const height = alturaParaDuracao(ag.horario_inicio, ag.horario_fim);
-                      const isSelecionado = agendamentoSelecionado?.id === ag.id;
-
-                      return (
-                        <div
-                          key={ag.id}
-                          onClick={() => {
-                            setBloqueioSelecionado(null);
-                            setAgendamentoSelecionado(isSelecionado ? null : ag);
-                          }}
-                          className={`absolute left-1 right-1 rounded-xl border-l-4 px-2 py-1.5 cursor-pointer transition-all hover:shadow-md hover:-translate-y-px ${cfg.cor} ${cfg.corBorda} ${isSelecionado ? 'ring-2 ring-offset-1 ring-primary/50 shadow-md' : ''}`}
-                          style={{ top, height: height - 2, zIndex: isSelecionado ? 20 : 10 }}
-                          title={`${ag.paciente_nome} — ${ag.servico_nome}`}
-                        >
-                          <div className={`text-[10px] font-bold truncate ${cfg.corTexto}`}>
-                            {ag.paciente_nome}
-                          </div>
-                          <div className={`text-[9px] truncate mt-0.5 ${cfg.corTexto} opacity-75`}>
-                            {ag.servico_nome}
-                          </div>
-                          {height > 40 && (
-                            <div className={`text-[9px] font-mono mt-0.5 ${cfg.corTexto} opacity-60`}>
-                              {ag.horario_inicio} – {ag.horario_fim}
-                            </div>
-                          )}
-                          {height > 55 && (
-                            <span className={`inline-block mt-1 px-1.5 py-0.5 rounded-full text-[8px] font-semibold border ${cfg.cor} ${cfg.corTexto} ${cfg.corBorda}`}>
-                              {cfg.label}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            );
-          })
-        )}
+              return renderColunaGrade(
+                prof.id,
+                prof.nome,
+                prof.especialidade,
+                dataSelecionada,
+                prof.id,
+                ags,
+                bls
+              );
+            })
+          )}
         </div>
       </div>
 

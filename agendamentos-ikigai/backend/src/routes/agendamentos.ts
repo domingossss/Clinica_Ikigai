@@ -1,6 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
-import { validarRegraAgendamento, REGRAS_DIA_SEMANA, validarHorarioExpediente } from '../utils/validation.js';
+import {
+  validarRegraAgendamento,
+  REGRAS_DIA_SEMANA,
+  validarHorarioExpediente,
+  validarPeriodoAgenda,
+  calcularIntervaloSemana,
+  calcularResumoAgenda
+} from '../utils/validation.js';
+import { mockStore } from '../utils/mock-store.js';
 import pool from '../config/database.js';
 import {
   sanitizarTexto,
@@ -1567,11 +1575,153 @@ router.delete('/pacientes/:id', async (req: Request, res: Response): Promise<any
 });
 
 // ============================================================================
+// ENDPOINT: GET /api/profissionais/:id/agenda (IK-81: Consultar agenda do profissional)
+// CA01: Seleção do profissional e abertura de sua agenda
+// CA02: Exibição dos compromissos e bloqueios do profissional no período
+// CA03: Navegação entre períodos (dia, semana, mês ou intervalo personalizado)
+// ============================================================================
+router.get('/profissionais/:id/agenda', async (req: Request, res: Response): Promise<any> => {
+  const { id } = req.params;
+  const { data, data_inicio, data_fim, periodo } = req.query;
+
+  if (!validarIdNumerico(id)) {
+    return res.status(400).json({ sucesso: false, erro: 'ID do profissional inválido.' });
+  }
+
+  const profId = Number(id);
+
+  // Determinar período de consulta (CA03)
+  let dtInicio: string;
+  let dtFim: string;
+  let tipoPeriodo: string = (periodo as string) || 'dia';
+
+  if (tipoPeriodo === 'semana') {
+    const ref = (data as string) || (data_inicio as string) || new Date().toISOString().split('T')[0];
+    if (!validarFormatoData(ref)) {
+      return res.status(400).json({ sucesso: false, erro: 'Formato de data de referência inválido. Use YYYY-MM-DD.' });
+    }
+    const intervalo = calcularIntervaloSemana(ref);
+    dtInicio = intervalo.dataInicio;
+    dtFim = intervalo.dataFim;
+  } else if (data_inicio && data_fim) {
+    dtInicio = data_inicio as string;
+    dtFim = data_fim as string;
+    tipoPeriodo = 'personalizado';
+  } else {
+    const dataRef = (data as string) || (data_inicio as string) || new Date().toISOString().split('T')[0];
+    dtInicio = dataRef;
+    dtFim = dataRef;
+    tipoPeriodo = 'dia';
+  }
+
+  // Validar intervalo de datas
+  const validacao = validarPeriodoAgenda(dtInicio, dtFim);
+  if (!validacao.valido) {
+    return res.status(400).json({ sucesso: false, erro: validacao.motivo });
+  }
+
+  try {
+    // 1. Verificar se o profissional existe (CA01)
+    const [profs]: any = await pool.query(
+      'SELECT id, nome, especialidade, ativo FROM profissionais WHERE id = ?',
+      [profId]
+    );
+
+    if (profs.length === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Profissional não encontrado.' });
+    }
+
+    const profissional = profs[0];
+
+    // 2. Buscar agendamentos do profissional no período (CA02)
+    const [agendamentos]: any = await pool.query(
+      `SELECT 
+         a.id,
+         DATE_FORMAT(a.data, '%Y-%m-%d') as data,
+         TIME_FORMAT(a.horario_inicio, '%H:%i') as horario_inicio,
+         TIME_FORMAT(a.horario_fim, '%H:%i') as horario_fim,
+         a.status,
+         p.id as paciente_id,
+         p.nome_completo as paciente_nome,
+         p.whatsapp as paciente_whatsapp,
+         pr.id as profissional_id,
+         pr.nome as profissional_nome,
+         s.id as servico_id,
+         s.nome as servico_nome,
+         s.duracao_minutos,
+         s.preco
+       FROM agendamentos a
+       JOIN pacientes p ON a.paciente_id = p.id
+       JOIN profissionais pr ON a.profissional_id = pr.id
+       JOIN servicos s ON a.servico_id = s.id
+       WHERE a.profissional_id = ?
+         AND a.data >= ?
+         AND a.data <= ?
+         AND a.status != 'Cancelado'
+       ORDER BY a.data ASC, a.horario_inicio ASC`,
+      [profId, dtInicio, dtFim]
+    );
+
+    // 3. Buscar bloqueios do profissional no período (IK-87 & IK-81)
+    let bloqueios: any[] = [];
+    try {
+      const [blRows]: any = await pool.query(
+        `SELECT 
+           id,
+           profissional_id,
+           DATE_FORMAT(data, '%Y-%m-%d') as data,
+           TIME_FORMAT(horario_inicio, '%H:%i') as horario_inicio,
+           TIME_FORMAT(horario_fim, '%H:%i') as horario_fim,
+           motivo
+         FROM bloqueios
+         WHERE profissional_id = ?
+           AND data >= ?
+           AND data <= ?
+         ORDER BY data ASC, horario_inicio ASC`,
+        [profId, dtInicio, dtFim]
+      );
+      bloqueios = blRows;
+    } catch {
+      bloqueios = [];
+    }
+
+    const resumo = calcularResumoAgenda(agendamentos, bloqueios.length);
+
+    return res.status(200).json({
+      sucesso: true,
+      profissional,
+      periodo: {
+        data_inicio: dtInicio,
+        data_fim: dtFim,
+        tipo: tipoPeriodo
+      },
+      dados: agendamentos,
+      bloqueios,
+      resumo
+    });
+
+  } catch (error: any) {
+    console.error('Erro ao consultar agenda do profissional:', error);
+    try {
+      // Contingência para ambiente mock/desconectado
+      const mockResult = mockStore.getAgendaProfissional(profId, dtInicio, dtFim);
+      return res.status(200).json({ sucesso: true, ...mockResult });
+    } catch (mockErr: any) {
+      if (mockErr.message === 'Profissional não cadastrado.') {
+        return res.status(404).json({ sucesso: false, erro: 'Profissional não encontrado.' });
+      }
+      return res.status(500).json({ sucesso: false, erro: 'Erro interno ao consultar agenda do profissional.' });
+    }
+  }
+});
+
+// ============================================================================
 // ENDPOINT: GET /api/agendamentos/dia?data=YYYY-MM-DD (Grade de Agenda do Dia)
+// Suporta filtro opcional por profissional_id (IK-81)
 // ============================================================================
 router.get('/agendamentos/dia', async (req: Request, res: Response): Promise<any> => {
   try {
-    const { data } = req.query;
+    const { data, profissional_id } = req.query;
 
     if (!data) {
       return res.status(400).json({
@@ -1584,8 +1734,12 @@ router.get('/agendamentos/dia', async (req: Request, res: Response): Promise<any
       return res.status(400).json({ sucesso: false, erro: 'Formato de data inválido. Use YYYY-MM-DD.' });
     }
 
-    const [rows] = await pool.query(
-      `SELECT 
+    if (profissional_id && !validarIdNumerico(profissional_id as string)) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do profissional inválido.' });
+    }
+
+    let queryAg = `
+      SELECT 
          a.id,
          DATE_FORMAT(a.data, '%Y-%m-%d') as data,
          TIME_FORMAT(a.horario_inicio, '%H:%i') as horario_inicio,
@@ -1603,15 +1757,23 @@ router.get('/agendamentos/dia', async (req: Request, res: Response): Promise<any
        JOIN profissionais pr ON a.profissional_id = pr.id
        JOIN servicos s ON a.servico_id = s.id
        WHERE a.data = ? AND a.status != 'Cancelado'
-       ORDER BY pr.id, a.horario_inicio`,
-      [data as string]
-    );
+    `;
+    const paramsAg: any[] = [data as string];
+
+    if (profissional_id) {
+      queryAg += ` AND a.profissional_id = ?`;
+      paramsAg.push(Number(profissional_id));
+    }
+
+    queryAg += ` ORDER BY pr.id, a.horario_inicio`;
+
+    const [rows] = await pool.query(queryAg, paramsAg);
 
     // Buscar bloqueios de horários do dia (IK-87)
     let bloqueios: any[] = [];
     try {
-      const [blRows] = await pool.query(
-        `SELECT 
+      let queryBl = `
+        SELECT 
            id,
            profissional_id,
            DATE_FORMAT(data, '%Y-%m-%d') as data,
@@ -1620,9 +1782,15 @@ router.get('/agendamentos/dia', async (req: Request, res: Response): Promise<any
            motivo
          FROM bloqueios
          WHERE data = ?
-         ORDER BY profissional_id, horario_inicio`,
-        [data as string]
-      );
+      `;
+      const paramsBl: any[] = [data as string];
+      if (profissional_id) {
+        queryBl += ` AND profissional_id = ?`;
+        paramsBl.push(Number(profissional_id));
+      }
+      queryBl += ` ORDER BY profissional_id, horario_inicio`;
+
+      const [blRows] = await pool.query(queryBl, paramsBl);
       bloqueios = blRows as any[];
     } catch {
       bloqueios = [];

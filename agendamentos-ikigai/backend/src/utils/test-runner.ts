@@ -9,6 +9,7 @@ import {
 } from './validation.js';
 import { runHistoricoTests } from './test-historico.js';
 import { runProfissionalProcedimentoTests } from './test-profissional-procedimento.js';
+import { runAgendaProfissionalTests } from './test-agenda-profissional.js';
 
 interface CasoTeste {
   descricao: string;
@@ -264,6 +265,11 @@ async function executarTestes() {
   const procedimentoResult = await runProfissionalProcedimentoTests();
   passados += procedimentoResult.pass;
   falhados += procedimentoResult.fail;
+
+  // SUÍTE 7: CONSULTA DA AGENDA DO PROFISSIONAL (IK-81)
+  const agendaResult = await runAgendaProfissionalTests();
+  passados += agendaResult.pass;
+  falhados += agendaResult.fail;
 
   console.log("\n================================================================");
   console.log("RESUMO DA EXECUÇÃO");

@@ -255,3 +255,102 @@ export function filtrarProcedimentosPorProfissional<T extends { id: number }>(
     validarVinculoProfissionalProcedimento(profissionalId, proc.id, vinculos)
   );
 }
+
+/**
+ * ============================================================================
+ * CONSULTA DE AGENDA DO PROFISSIONAL (IK-81)
+ * ============================================================================
+ */
+
+export interface PeriodoAgenda {
+  dataInicio: string;
+  dataFim: string;
+}
+
+export interface ResumoAgendaProfissional {
+  total: number;
+  confirmados: number;
+  agendados: number;
+  concluidos: number;
+  em_atendimento: number;
+  recepcao: number;
+  reagendados: number;
+  bloqueios_total?: number;
+}
+
+/**
+ * CA01 & CA03: Valida se um período de datas para consulta de agenda é válido.
+ */
+export function validarPeriodoAgenda(dataInicio: string, dataFim: string): { valido: boolean; motivo?: string } {
+  if (!dataInicio || !dataFim) {
+    return { valido: false, motivo: 'Data de início e data de fim são obrigatórias.' };
+  }
+
+  const regexData = /^\d{4}-\d{2}-\d{2}$/;
+  if (!regexData.test(dataInicio) || !regexData.test(dataFim)) {
+    return { valido: false, motivo: 'Formato de data inválido. Use YYYY-MM-DD.' };
+  }
+
+  const dInicio = new Date(dataInicio + 'T00:00:00');
+  const dFim = new Date(dataFim + 'T00:00:00');
+
+  if (isNaN(dInicio.getTime()) || isNaN(dFim.getTime())) {
+    return { valido: false, motivo: 'Data inválida.' };
+  }
+
+  if (dInicio > dFim) {
+    return { valido: false, motivo: 'A data inicial não pode ser posterior à data final.' };
+  }
+
+  return { valido: true };
+}
+
+/**
+ * CA03: Calcula o intervalo da semana operacional (Segunda a Sexta) para uma data de referência.
+ */
+export function calcularIntervaloSemana(dataReferencia: string): PeriodoAgenda {
+  const d = new Date(dataReferencia + 'T12:00:00');
+  const day = d.getDay(); // 0: Dom, 1: Seg, ..., 5: Sex, 6: Sab
+
+  // Distância até a segunda-feira
+  // Se for domingo (0), segunda anterior é -6 dias; se sábado (6), -5 dias; caso contrário, 1 - day
+  const diffSegunda = day === 0 ? -6 : (day === 6 ? -5 : 1 - day);
+  const segunda = new Date(d);
+  segunda.setDate(d.getDate() + diffSegunda);
+
+  // Sexta-feira = segunda + 4 dias
+  const sexta = new Date(segunda);
+  sexta.setDate(segunda.getDate() + 4);
+
+  const formatar = (dt: Date) => {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const dia = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dia}`;
+  };
+
+  return {
+    dataInicio: formatar(segunda),
+    dataFim: formatar(sexta)
+  };
+}
+
+/**
+ * CA02: Calcula o resumo numérico de compromissos por status.
+ */
+export function calcularResumoAgenda(
+  agendamentos: Array<{ status: string }>,
+  bloqueiosTotal: number = 0
+): ResumoAgendaProfissional {
+  return {
+    total: agendamentos.length,
+    confirmados: agendamentos.filter(a => a.status === 'Confirmado').length,
+    agendados: agendamentos.filter(a => a.status === 'Agendado').length,
+    concluidos: agendamentos.filter(a => a.status === 'Concluído' || a.status === 'Realizado').length,
+    em_atendimento: agendamentos.filter(a => a.status === 'Em Atendimento').length,
+    recepcao: agendamentos.filter(a => a.status === 'Na Recepção').length,
+    reagendados: agendamentos.filter(a => a.status === 'Reagendado').length,
+    bloqueios_total: bloqueiosTotal
+  };
+}
+

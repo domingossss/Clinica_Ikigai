@@ -30,6 +30,7 @@ interface Toast {
 
 interface ServicosAgendamentosProps {
   onProfissionaisAtualizados?: () => void;
+  onAbrirAgendaProfissional?: (profissionalId: number) => void;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
@@ -43,7 +44,10 @@ function obterIniciais(nome: string): string {
   return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
 }
 
-export default function ServicosAgendamentos({ onProfissionaisAtualizados }: ServicosAgendamentosProps) {
+export default function ServicosAgendamentos({
+  onProfissionaisAtualizados,
+  onAbrirAgendaProfissional
+}: ServicosAgendamentosProps) {
   // Controle de sub-aba ativa na tela
   const [subAba, setSubAba] = useState<'servicos' | 'profissionais'>('servicos');
 
@@ -1193,6 +1197,19 @@ export default function ServicosAgendamentos({ onProfissionaisAtualizados }: Ser
                         </button>
 
                         <div className="flex items-center gap-1">
+                          {onAbrirAgendaProfissional && (
+                            <button
+                              type="button"
+                              onClick={() => onAbrirAgendaProfissional(prof.id)}
+                              title={`Abrir agenda de ${prof.nome} (IK-81)`}
+                              className="px-2.5 py-1 text-xs font-bold text-primary-dark bg-secondary/30 hover:bg-secondary/50 border border-secondary/40 rounded-lg transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              <span>Ver Agenda</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => startEditProfissional(prof)}

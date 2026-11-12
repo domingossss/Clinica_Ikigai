@@ -49,6 +49,7 @@ export default function DashboardDemo() {
   // Controle de data e atualização da Grade
   const [gradeData, setGradeData] = useState<string>(dataHoje());
   const [gradeRefreshKey, setGradeRefreshKey] = useState<number>(0);
+  const [gradeProfissionalSelecionadoId, setGradeProfissionalSelecionadoId] = useState<number | null>(null);
 
   // Estados dinâmicos conectados à API
   const [pacientes, setPacientes] = useState<PacienteItem[]>([]);
@@ -149,6 +150,13 @@ export default function DashboardDemo() {
     setBookingInitialHorario(undefined);
     setBookingInitialProfissionalId(undefined);
     setIsBookingModalOpen(true);
+  };
+
+  // Abrir agenda específica do profissional vindo da aba Serviços/Profissionais
+  const handleAbrirAgendaDoProfissional = (profId: number) => {
+    setGradeProfissionalSelecionadoId(profId);
+    setCurrentTab('grade');
+    showToast('Agenda do profissional aberta com sucesso!', 'info');
   };
 
   return (
@@ -268,6 +276,8 @@ export default function DashboardDemo() {
             dataSelecionada={gradeData}
             onDataChange={setGradeData}
             refreshTrigger={gradeRefreshKey}
+            profissionalInicialId={gradeProfissionalSelecionadoId}
+            onProfissionalChange={setGradeProfissionalSelecionadoId}
             onAbrirNovoAgendamento={handleAbrirAgendamentoDaGrade}
             onRefresh={() => {
               fetchDashboardData();
@@ -281,7 +291,10 @@ export default function DashboardDemo() {
         )}
 
         {currentTab === 'servicos' && (
-          <ServicosAgendamentos onProfissionaisAtualizados={fetchDashboardData} />
+          <ServicosAgendamentos
+            onProfissionaisAtualizados={fetchDashboardData}
+            onAbrirAgendaProfissional={handleAbrirAgendaDoProfissional}
+          />
         )}
       </main>
 

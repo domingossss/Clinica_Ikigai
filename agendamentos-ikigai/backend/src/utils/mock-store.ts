@@ -361,6 +361,57 @@ class InMemoryStore {
       v => v.profissional_id === Number(profissionalId) && v.procedimento_id === Number(procedimentoId)
     );
   }
+
+  // ==========================================================================
+  // CONSULTA DE AGENDA DO PROFISSIONAL (IK-81)
+  // ==========================================================================
+
+  getAgendaProfissional(profissionalId: number, dataInicio: string, dataFim?: string) {
+    const prof = this.profissionais.find(p => p.id === Number(profissionalId));
+    if (!prof) {
+      throw new Error('Profissional não cadastrado.');
+    }
+
+    const fim = dataFim || dataInicio;
+
+    const ags = this.agendamentos
+      .filter(a =>
+        a.profissional_id === Number(profissionalId) &&
+        a.data >= dataInicio &&
+        a.data <= fim &&
+        a.status !== 'Cancelado'
+      )
+      .sort((a, b) => `${a.data} ${a.horario_inicio}`.localeCompare(`${b.data} ${b.horario_inicio}`));
+
+    const bls = this.bloqueios
+      .filter(b =>
+        b.profissional_id === Number(profissionalId) &&
+        b.data >= dataInicio &&
+        b.data <= fim
+      )
+      .sort((a, b) => `${a.data} ${a.horario_inicio}`.localeCompare(`${b.data} ${b.horario_inicio}`));
+
+    return {
+      profissional: prof,
+      periodo: {
+        data_inicio: dataInicio,
+        data_fim: fim,
+        tipo: dataInicio === fim ? 'dia' : 'periodo'
+      },
+      dados: ags,
+      bloqueios: bls,
+      resumo: {
+        total: ags.length,
+        confirmados: ags.filter(a => a.status === 'Confirmado').length,
+        agendados: ags.filter(a => a.status === 'Agendado').length,
+        concluidos: ags.filter(a => a.status === 'Concluído' || a.status === 'Realizado').length,
+        em_atendimento: ags.filter(a => a.status === 'Em Atendimento').length,
+        recepcao: ags.filter(a => a.status === 'Na Recepção').length,
+        reagendados: ags.filter(a => a.status === 'Reagendado').length,
+        bloqueios_total: bls.length
+      }
+    };
+  }
 }
 
 export const mockStore = new InMemoryStore();
