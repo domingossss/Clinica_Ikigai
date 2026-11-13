@@ -1,4 +1,12 @@
-# Antigravity / AI agents configuration
-.agents/
-.agentes/
-iniciar-mysql.bat
+
+
+# Aplicação integrada
+node_modules/
+frontend/dist/
+backend/dist/
+.env
+.env.local
+*.tsbuildinfo
+
+# Backups locais contêm dados sensíveis
+backend/backups/

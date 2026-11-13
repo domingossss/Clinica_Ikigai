@@ -1,0 +1,600 @@
+/* =====================================================================
+ * CLÍNICA IKIGAI - COMPONENTES VISUAIS E ELEMENTOS DE DASHBOARD
+ * Arquivo: frontend/src/styles/components.css
+ * ===================================================================== */
+
+/* Cards de KPIs */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.k {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+button.k {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  display: block;
+  transition: border-color 0.15s;
+}
+
+button.k:hover {
+  border-color: var(--acc);
+}
+
+.k .t {
+  font-size: 13px;
+  color: var(--mute);
+}
+
+.k .v {
+  font: 700 1.65rem/1.15 "Bricolage Grotesque", Figtree, sans-serif;
+  margin: 4px 0 2px;
+  overflow-wrap: anywhere;
+}
+
+.k .s {
+  font-size: 12px;
+  color: var(--mute);
+}
+
+.k .go {
+  font-size: 12px;
+  color: var(--acc);
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+/* Indicadores de Variação (Deltas vs Período Anterior) */
+.d {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.d.up { color: var(--ok); }
+.d.dn { color: var(--bad); }
+.d.flat { color: var(--mute); }
+
+/* Containers de Gráficos (Canvas) */
+.cv {
+  position: relative;
+  height: 250px;
+}
+
+.cv.tall {
+  height: 310px;
+}
+
+@media (max-width: 520px) {
+  .cv {
+    height: 220px;
+  }
+}
+
+/* Heatmap e Matrizes de Demanda */
+.hm {
+  display: grid;
+  grid-template-columns: 42px repeat(6, 1fr);
+  gap: 3px;
+  font-size: 12px;
+  overflow-x: auto;
+  min-width: 0;
+}
+
+.hm div {
+  padding: 6px 2px;
+  text-align: center;
+  border-radius: 4px;
+}
+
+.hm .l {
+  color: var(--mute);
+  background: none;
+}
+
+.hm b {
+  font-weight: 700;
+}
+
+/* Tabelas e Detalhes Expansíveis */
+details {
+  margin-top: 26px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.tb {
+  overflow-x: auto;
+  margin-top: 10px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 560px;
+  font-size: 13px;
+}
+
+th, td {
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+th {
+  color: var(--mute);
+  font-weight: 600;
+}
+
+/* Botão Voltar */
+.bk {
+  font: inherit;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  margin: 4px 0 16px;
+  min-height: 40px;
+}
+
+/* Header de Detalhe do KPI */
+.dh {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  align-items: flex-end;
+}
+
+.dh .big {
+  font: 700 clamp(2rem, 6vw, 2.8rem)/1.1 "Bricolage Grotesque", Figtree, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.dd {
+  color: var(--mute);
+  margin: 8px 0 0;
+  max-width: 70ch;
+}
+
+/* Chips de Estatísticas de Apoio */
+.chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.chips div {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.chips b {
+  display: block;
+  font: 700 1.1rem/1.25 "Bricolage Grotesque", Figtree, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.chips span {
+  font-size: 12px;
+  color: var(--mute);
+}
+
+/* Funil do Chatbot */
+.fun {
+  display: grid;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.fun b {
+  font-weight: 600;
+}
+
+.fun .bar {
+  height: 12px;
+  background: var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.fun .bar i {
+  display: block;
+  height: 100%;
+  background: var(--acc);
+}
+
+/* Calendário Operacional */
+.cal {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.mc {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+}
+
+.mc:hover {
+  border-color: var(--acc);
+}
+
+.mc.on {
+  border-color: var(--acc);
+  box-shadow: inset 0 0 0 2px var(--acc);
+}
+
+.mc:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mc b {
+  display: block;
+  font-family: "Bricolage Grotesque", Figtree, sans-serif;
+}
+
+.mc span {
+  font-size: 12px;
+  color: var(--mute);
+}
+
+.mg {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-top: 8px;
+  font-size: 10px;
+  text-align: center;
+}
+
+.mg i {
+  font-style: normal;
+  border-radius: 3px;
+  padding: 3px 0;
+  min-height: 18px;
+}
+
+.mg .l {
+  color: var(--mute);
+}
+
+.mg .off, .cg .off {
+  color: var(--mute);
+  opacity: 0.45;
+}
+
+.cg {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.cg i {
+  font-style: normal;
+  border-radius: 6px;
+  min-height: 62px;
+  padding: 4px 6px;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.cg i small {
+  font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+.cg i b {
+  font: 700 1.05rem "Bricolage Grotesque", Figtree, sans-serif;
+  text-align: right;
+}
+
+.cg .l {
+  min-height: 0;
+  display: block;
+  color: var(--mute);
+  text-align: center;
+  padding: 2px;
+}
+
+.cs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin: 6px 0 4px;
+}
+
+@media (max-width: 520px) {
+  .cg i {
+    min-height: 40px;
+    padding: 3px 4px;
+  }
+}
+
+/* Classes do Semáforo (Farol) */
+.s0 { --c: var(--sr); }
+.s1 { --c: var(--sy); }
+.s2 { --c: var(--sg); }
+
+.f0 { background: color-mix(in srgb, var(--sr) 42%, var(--card)); }
+.f1 { background: color-mix(in srgb, var(--sy) 45%, var(--card)); }
+.f2 { background: color-mix(in srgb, var(--sg) 38%, var(--card)); }
+
+.mc.s0, .mc.s1, .mc.s2 {
+  border-left: 8px solid var(--c);
+}
+
+.dot, .badge i {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--c);
+  color: var(--onf);
+  font: 800 15px/1 Figtree, system-ui, sans-serif;
+  font-style: normal;
+  flex: none;
+}
+
+.s1 .dot, .s1.dot, .badge.s1 i {
+  color: #2a1d00;
+}
+
+.badge {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 3px 12px 3px 4px;
+  border-radius: 999px;
+  border: 2px solid var(--c);
+  background: color-mix(in srgb, var(--c) 20%, var(--card));
+  color: var(--ink);
+}
+
+.badge i {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+}
+
+/* Banner de Alerta Dinâmico */
+.alerta {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 2px solid var(--c);
+  background: color-mix(in srgb, var(--c) 16%, var(--card));
+  margin-top: 6px;
+}
+
+.alerta .dot {
+  width: 42px;
+  height: 42px;
+  font-size: 22px;
+}
+
+.alerta > div {
+  flex: 1;
+  min-width: 200px;
+}
+
+.alerta b {
+  display: block;
+  font: 700 clamp(1.25rem, 3.6vw, 1.8rem)/1.2 "Bricolage Grotesque", Figtree, sans-serif;
+}
+
+.alerta em {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--mute);
+  font-size: 0.75em;
+}
+
+.alerta small {
+  display: block;
+  color: var(--mute);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.alerta .bk {
+  margin: 0;
+}
+
+/* Botões de Foco Secundário do Alerta */
+.rk {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--mute);
+}
+
+.rk button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--c);
+  border-radius: 999px;
+  padding: 4px 12px 4px 5px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+}
+
+.rk .dot {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+}
+
+.leg {
+  font-size: 13px;
+  color: var(--mute);
+  max-width: 95ch;
+  margin: 0 0 12px;
+}
+
+/* Cartões da Visão Macro */
+.macros {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr));
+  gap: 14px;
+}
+
+.mac {
+  border: 1px solid var(--line);
+  border-left: 10px solid var(--c);
+  background: color-mix(in srgb, var(--c) 11%, var(--card));
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.mac header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mac h3 {
+  font-size: 1.3rem;
+}
+
+.sc {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.sc b {
+  font: 700 3.4rem/1 "Bricolage Grotesque", Figtree, sans-serif;
+}
+
+.sc span {
+  color: var(--mute);
+}
+
+.mac > p {
+  margin: 2px 0 12px;
+  color: var(--mute);
+  font-size: 13px;
+}
+
+.subs {
+  display: grid;
+  gap: 8px;
+}
+
+.sub {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 2px 12px;
+  align-items: center;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--c);
+  border-radius: 10px;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.sub:hover {
+  border-color: var(--c);
+}
+
+.sub .sn {
+  display: block;
+  font-weight: 600;
+}
+
+.sub em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--mute);
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.sub small {
+  display: block;
+  color: var(--mute);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.sub b {
+  font: 700 1.8rem/1 "Bricolage Grotesque", Figtree, sans-serif;
+  text-align: right;
+}
+
+.sub .d {
+  grid-column: 2 / -1;
+  margin: 0;
+}
+
+.ins {
+  background: color-mix(in srgb, var(--acc2) 20%, var(--card));
+  border-left: 4px solid var(--acc2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0 12px;
+}
+
+.s3 { color: var(--mute); border-color: var(--line); }
+.s3 .dot, .s3 i { background: var(--line); color: var(--mute); }

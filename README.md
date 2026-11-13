@@ -1,441 +1,272 @@
 # Clínica Ikigai
-Repositório contém a arquitetura com duas aplicações relacionadas à operação da Clínica Ikigai:
 
-1. **Agendamentos Ikigai** — interface React para agenda, pacientes e serviços, com API própria e integração prevista/implementada para fluxos de atendimento e WhatsApp.
-2. **Dashboard Clínica Ikigai** — painel para análise de indicadores (KPIs), calendário operacional, visão macro e detalhamento, alimentado por uma API que consulta o MySQL.
+## 1. Sobre o Projeto
 
-> **Importante:** as duas aplicações são projetos independentes dentro do mesmo repositório. Cada uma possui seu próprio frontend, backend, dependências e configuração. Não existe, na raiz do repositório, um `package.json` único que inicialize tudo.
+A Clínica Ikigai é um sistema web de gestão clínica que reúne agendamento de consultas, cadastro de pacientes, configuração de serviços e profissionais e acompanhamento de indicadores. A operação da recepção e o dashboard gerencial têm páginas independentes e compartilham a mesma API e o mesmo banco de dados.
 
----
+## 2. Tecnologias e Estrutura
 
-## 1. Visão geral da arquitetura
+| Camada | Tecnologias |
+| --- | --- |
+| Interface | React, TypeScript, Vite, Tailwind CSS e SweetAlert2 |
+| Indicadores | TypeScript e Chart.js |
+| API | Node.js, Express e TypeScript |
+| Banco de dados | MySQL 8.0+, InnoDB e mysql2 |
+| Proteções da API | Helmet, CORS, limite de requisições e validação de entradas |
+| Organização e qualidade | npm workspaces, ESLint e verificações de tipos do TypeScript |
 
 ```text
 Clinica_Ikigai/
-├── README.md
-├── LICENSE
-│
-├── agendamentos-ikigai/
-│   ├── backend/                    # API REST: Node.js + Express + TypeScript
-│   │   ├── src/
-│   │   │   ├── config/             # Conexão com MySQL
-│   │   │   ├── middleware/         # Segurança, CORS e limitação de requisições
-│   │   │   ├── routes/             # Rotas de agendamentos
-│   │   │   ├── services/           # Agente/fluxo de atendimento via WhatsApp
-│   │   │   ├── utils/              # Validação e scripts auxiliares de teste
-│   │   │   └── server.ts           # Inicialização da API
-│   │   ├── update_profissionais.cjs
-│   │   ├── .env.example
-│   │   ├── package.json
-│   │   └── tsconfig.json
-│   │
-│   └── frontend/                   # SPA: React + TypeScript + Vite
-│       ├── public/                 # Logos, ícones e favicon
-│       ├── src/
-│       │   ├── assets/             # Imagens e recursos estáticos
-│       │   ├── components/         # Agenda, cadastro, serviços e modais
-│       │   ├── App.tsx
-│       │   ├── App.css
-│       │   ├── index.css
-│       │   └── main.tsx
-│       ├── index.html
-│       ├── package.json
-│       └── vite.config.ts
-│
-└── dashboard-clinica_ikigai/
-    ├── backend/                    # API REST: Node.js + Express + TypeScript
-    │   ├── src/
-    │   │   ├── config/             # Pool de conexões MySQL
-    │   │   ├── controllers/        # Consultas e transformação dos dados
-    │   │   ├── routes/             # Endpoints do dashboard
-    │   │   ├── types/              # Tipos das linhas do banco
-    │   │   └── server.ts           # Inicialização da API
-    │   ├── .env.example
-    │   ├── package.json
-    │   └── tsconfig.json
-    │
-    ├── frontend/                   # SPA: TypeScript + Vite (sem React)
-    │   ├── src/
-    │   │   ├── components/         # Alertas, cartões, calendário e drill-down
-    │   │   ├── core/               # Cálculo de métricas, KPIs e semáforo
-    │   │   ├── services/           # Cliente HTTP da API
-    │   │   ├── styles/             # Tokens, layout e componentes CSS
-    │   │   ├── types/              # Contratos e interfaces
-    │   │   ├── utils/              # Datas e formatação
-    │   │   └── main.ts             # Orquestração da interface
-    │   ├── index.html
-    │   ├── package.json
-    │   └── vite.config.ts
-    │
-    └── package.json                # Scripts auxiliares do dashboard
+├── frontend/
+│   └── src/
+│       ├── components/       # Agenda, cadastros e formulários
+│       ├── indicadores/      # Dashboard, gráficos e cálculos
+│       └── services/         # Comunicação compartilhada de atualizações
+├── backend/
+│   ├── .env.example          # Modelo de configuração local
+│   └── src/
+│       ├── config/           # Conexões, transações e eventos
+│       ├── controllers/      # Consultas do dashboard
+│       ├── middleware/       # Validações e tratamento seguro de erros
+│       ├── routes/           # Endpoints da operação e dos indicadores
+│       ├── scripts/          # Migração e backup
+│       ├── services/         # Serviços de negócio
+│       ├── types/            # Tipos compartilhados do backend
+│       └── utils/            # Regras auxiliares e testes existentes
+├── database/
+│   ├── schema.sql            # Estrutura, relacionamentos, views e gatilhos
+│   ├── seed.sql              # Dados fictícios de demonstração
+│   └── queries_kpis.sql      # Consultas SQL de referência
+├── package.json              # Workspaces e comandos integrados
+├── package-lock.json         # Versões resolvidas das dependências
+└── README.md
 ```
 
----
+O projeto utiliza uma instalação de dependências na raiz. As pastas `frontend/dist/`, `backend/dist/` e os arquivos `*.tsbuildinfo` são gerados automaticamente e não são versionados. Credenciais e backups também ficam fora do Git.
 
-## 2. Arquitetura e responsabilidades
+## 3. Banco de Dados
 
-### 2.1 Agendamentos Ikigai
+O banco padrão é `clinica_ikigai_db`, com codificação `utf8mb4`. O modelo concentra os dados operacionais e os registros utilizados pelos indicadores.
 
-**Frontend**
+| Tabelas principais | Responsabilidade |
+| --- | --- |
+| `paciente` | Identificação, contato, informações clínicas e versão do cadastro para controle de edições concorrentes. |
+| `especialidade` e `procedimento` | Categorias de atendimento, serviços, duração, preço e situação de atividade. |
+| `profissional`, `profissional_especialidade` e `profissional_procedimento` | Profissionais e vínculos com especialidades e procedimentos habilitados. |
+| `agendamento` | Consulta vinculada a paciente, profissional e procedimento, com horários, status, tipo de atendimento e observações. |
+| `historico_status_agendamento` | Histórico das mudanças de situação de cada agendamento. |
+| `jornada_profissional`, `excecao_disponibilidade` e `bloqueio_agenda` | Expediente semanal, intervalos, feriados, horários especiais e períodos indisponíveis. |
+| `agenda_capacidade_snapshot` | Capacidade diária registrada para cálculo histórico da ocupação. |
+| `avaliacao_atendimento`, `pagamento` e `sessao_chatbot` | Registros de avaliação, pagamento e sessões de conversa previstos no modelo. |
 
-Aplicação React 19 com TypeScript e Vite. O componente `App.tsx` monta o `DashboardDemo`, que organiza a experiência principal. Os componentes identificados incluem:
+As views `pacientes`, `profissionais`, `servicos`, `categorias`, `agendamentos` e `bloqueios` adaptam os nomes utilizados pela API às tabelas do modelo. A tabela legada `capacidade_diaria` permanece no schema; o cálculo atual da ocupação utiliza `agenda_capacidade_snapshot`. O script de migração registra sua execução em `schema_migrations`.
 
-- `GradeAgenda.tsx`: consulta e apresenta a agenda diária, permite navegar por datas e acompanhar a evolução do status dos agendamentos.
-- `CadastroPacientes.tsx`: interface de cadastro de pacientes.
-- `ModalAgendamentoRapido.tsx`: fluxo de criação rápida de agendamentos.
-- `ServicosAgendamentos.tsx`: interface relacionada aos serviços.
-- `DashboardDemo.tsx`: composição da tela principal.
+### Regras de integridade
 
-A URL base da API no componente de agenda pode ser configurada pela variável `VITE_API_URL`. O valor padrão no código é `http://localhost:3000`.
+- Reservas e reagendamentos respeitam a habilitação do profissional, a jornada, os intervalos, as exceções e os bloqueios.
+- A reserva inclui a duração do procedimento e 15 minutos de intervalo adicional.
+- Transações impedem reservas simultâneas conflitantes para o profissional ou para o paciente.
+- Alterações de jornada e exceções são rejeitadas quando invalidam atendimentos pendentes. Profissionais com reservas pendentes a partir da data atual não podem ser inativados.
+- Serviços inativados deixam de aparecer nas opções de novos agendamentos, preservando os vínculos históricos.
+- Pacientes com agendamentos vinculados não podem ser excluídos. A edição cadastral preserva informações clínicas não enviadas e rejeita versões desatualizadas.
+- O pré-cadastro aceita CPF ausente. Quando informado, o CPF deve ser válido e não pode estar duplicado. Telefones compartilhados não identificam automaticamente uma mesma pessoa.
+- Novos cadastros sem data de nascimento mantêm o campo nulo. Datas legadas exigem conferência antes de qualquer correção.
 
-**Backend**
+## 4. Funcionamento
 
-API Express em TypeScript. A estrutura separa configuração de banco, middleware de segurança, rotas, serviços e utilitários.
+### Páginas e fluxos
 
-- `src/server.ts`: inicializa o servidor HTTP e registra middlewares/rotas.
-- `src/config/database.ts`: configuração de acesso ao MySQL.
-- `src/routes/agendamentos.ts`: endpoints relacionados a agendamentos.
-- `src/middleware/security.ts`: configurações de segurança da API.
-- `src/services/whatsappAgent.ts`: lógica do agente de atendimento, incluindo identificação de intenção e encaminhamento para atendimento humano.
-- `src/utils/validation.ts`: validações reutilizáveis.
-- `src/utils/test-*.ts`: rotinas auxiliares de teste.
+- **`/agendamentos`:** grade diária e semanal por profissional, criação e reagendamento de consultas, alteração de status e bloqueio de horários.
+- **Pacientes:** cadastro completo ou rápido, busca com paginação, edição e consulta ao histórico de atendimentos.
+- **Serviços e configurações:** categorias, procedimentos, profissionais, vínculos de habilitação, jornadas e exceções de disponibilidade.
+- **`/dashboard`:** indicadores por período e especialidade, análises detalhadas e calendário de atendimentos.
+- **`/`:** redirecionamento para a agenda.
 
-O backend usa Express, `mysql2`, `dotenv`, `cors`, `helmet` e `express-rate-limit`.
+Agenda e dashboard não possuem botões de navegação entre si. Login e controle de acesso por usuário ainda não estão implementados; a configuração padrão mantém os servidores acessíveis apenas na máquina local.
 
-### 2.2 Dashboard Clínica Ikigai
+### Atualização automática
 
-**Frontend**
+A API publica avisos por Server-Sent Events (SSE). As páginas consultam novamente os recursos afetados após alterações concluídas, inclusive entre abas conectadas à mesma instância da API, sem recarregar a página. Os avisos não transportam dados de pacientes.
 
-Aplicação TypeScript sem framework de componentes, compilada e servida pelo Vite. O ponto de entrada é `src/main.ts`.
+A reconexão e o retorno à aba recuperam os dados atuais. Alterações realizadas diretamente no MySQL não emitem eventos. O mecanismo atual atende uma única instância da API.
 
-- `core/metricsEngine.ts`: filtra os agendamentos e calcula métricas do período, especialidades, ocupação, atrasos, satisfação e indicadores do chatbot.
-- `core/kpiDefinitions.ts`: catálogo dos 11 indicadores e suas regras de apresentação.
-- `core/trafficLight.ts`: metas, classificação verde/amarelo/vermelho, pontuação das quatro macroáreas e regra de veto.
-- `components/alertBanner.ts`: banner de alerta.
-- `components/macroCards.ts`: cartões das macroáreas.
-- `components/informativeCards.ts`: indicadores informativos e tabela de regras.
-- `components/calendarComponent.ts`: calendário operacional.
-- `components/drilldownView.ts`: detalhamento de indicadores.
-- `services/apiService.ts`: comunicação HTTP e conversão do contrato da API para os tipos internos.
-- `styles/`: folhas CSS separadas para variáveis, layout e componentes.
+### Indicadores
 
-As quatro macroáreas são **Perdas de agenda**, **Uso da agenda**, **Paciente e financeiro** e **Chatbot de IA**. O semáforo utiliza metas configuradas no código e impede que uma macroárea fique verde quando algum de seus indicadores estiver vermelho.
+O dashboard acompanha não comparecimento, reagendamento, ocupação, atraso, retorno, ticket médio, satisfação e métricas de sessões do chatbot, conforme os registros disponíveis. A existência de tabelas de apoio não representa uma integração externa ativa de WhatsApp ou chatbot.
 
-**Backend**
+A capacidade diária é registrada enquanto a API está em execução. Períodos sem cobertura completa não exibem taxa de ocupação; dados anteriores não são recalculados com jornadas novas. Atraso não registrado e ausência de amostra são apresentados separadamente de valores iguais a zero. Indicadores do chatbot são globais e não seguem o filtro de especialidade.
 
-API Express que consulta o MySQL e disponibiliza dados agregados/normalizados para o painel.
+### Endpoints principais
 
-- `src/server.ts`: middlewares, health check, registro das rotas e tratamento de erros.
-- `src/routes/dashboardRoutes.ts`: rotas do dashboard.
-- `src/controllers/dashboardController.ts`: consultas de especialidades, agendamentos e sessões abandonadas; converte os registros para o formato compacto consumido pelo frontend.
-- `src/config/database.ts`: pool de conexões MySQL.
-- `src/types/index.ts`: tipos relacionados aos registros do banco.
+| Endpoint | Finalidade |
+| --- | --- |
+| `GET /api/health` e `GET /health` | Verificar a disponibilidade da API e do banco. |
+| `/api/pacientes` | Cadastros, busca e histórico dos pacientes. |
+| `/api/agendamentos` | Reservas, consultas da agenda e mudanças de situação. |
+| `/api/servicos`, `/api/categorias` e `/api/profissionais` | Configuração de atendimentos e profissionais. |
+| `/api/bloqueios`, `/api/excecoes` e `/api/janelas` | Disponibilidade da agenda. |
+| `GET /api/eventos` | Fluxo de avisos de atualização. |
+| `GET /api/dashboard/dados-painel` e `GET /api/dashboard/especialidades` | Dados dos indicadores e filtros. |
 
-Endpoints:
+## 5. Instalação e Execução
 
-| Método | Endpoint | Finalidade |
-|---|---|---|
-| `GET` | `/api/health` | Verifica se a API está ativa. |
-| `GET` | `/api/dashboard/dados-painel` | Retorna especialidades, agendamentos e abandonos do chatbot. |
-| `GET` | `/api/dashboard/especialidades` | Lista especialidades ativas. |
+### Pré-requisitos
 
-O endpoint `dados-painel` retorna um objeto com três propriedades: `SP` (especialidades), `D` (agendamentos em formato compacto) e `AB` (contagem diária de sessões abandonadas).
+- Git.
+- Node.js 24 LTS e npm.
+- MySQL 8.0 ou superior em execução.
+- Cliente `mysql` disponível no terminal; `mysqldump` é necessário para backups.
 
----
+Os comandos abaixo são executados a partir da raiz do repositório. Os exemplos de configuração de arquivos utilizam PowerShell.
 
-## 3. Tecnologias utilizadas
+### 1. Clonar e instalar
 
-| Camada | Agendamentos | Dashboard |
-|---|---|---|
-| Linguagem | TypeScript | TypeScript |
-| Frontend | React 19 + Vite 8 | TypeScript + Vite 8 |
-| Estilos | CSS, Tailwind/PostCSS configurados | CSS modular próprio |
-| Backend | Node.js + Express 4 | Node.js + Express 4 |
-| Banco | MySQL (`mysql2`) | MySQL (`mysql2`) |
-| Segurança | Helmet, CORS e rate limit (dependências/configuração no backend) | CORS e tratamento centralizado de erros |
-| Execução TS | `tsc` | `tsx watch` no desenvolvimento |
-
-As versões exatas e scripts disponíveis devem ser conferidos nos `package.json` de cada aplicação.
-
----
-
-## 4. Pré-requisitos
-
-- Node.js e npm instalados.
-- MySQL Server.
-- Git (para clonar/versionar o projeto).
-- Um banco `clinica_ikigai_db` com as tabelas esperadas pelas consultas.
-
----
-
-## 5. Configuração e execução
-
-### 5.1 Agendamentos Ikigai
-
-Abra dois terminais.
-
-**Backend**
-
-```bash
-cd agendamentos-ikigai/backend
+```powershell
+git clone https://github.com/domingossss/Clinica_Ikigai.git
+cd Clinica_Ikigai
 npm install
 ```
 
-Crie o arquivo `.env` a partir do exemplo:
+O `npm install` instala os dois workspaces e executa `npm run build` por meio do `postinstall`, gerando as duas pastas `dist`. A compilação não precisa de conexão com o banco. Dependências de desenvolvimento são necessárias nessa etapa; `--ignore-scripts` desativa a compilação automática.
 
-```bash
-# macOS/Linux
-cp .env.example .env
+### 2. Configurar o ambiente
 
-# Windows PowerShell
-Copy-Item .env.example .env
+Na primeira configuração, copie o modelo sem substituir um arquivo local existente:
+
+```powershell
+if (-not (Test-Path backend/.env)) {
+    Copy-Item backend/.env.example backend/.env
+}
 ```
 
-Configure as variáveis conforme o ambiente local:
+Edite `backend/.env` com as credenciais da máquina:
 
-```env
+```dotenv
+HOST=127.0.0.1
 PORT=3000
 DB_HOST=localhost
 DB_PORT=3306
-DB_USER=root
-DB_PASS=sua_senha
 DB_NAME=clinica_ikigai_db
+DB_USER=ikigai_app
+DB_PASS=SUBSTITUA_PELA_SENHA_DA_APLICACAO
+DB_ADMIN_USER=root
+DB_ADMIN_PASS=SUBSTITUA_PELA_SENHA_ADMINISTRATIVA
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=100
 ```
 
-Inicie a API:
+`DB_USER` e `DB_PASS` são usados pela API. Migração, backup e testes utilizam `DB_ADMIN_USER` e `DB_ADMIN_PASS` quando configurados; caso contrário, utilizam as credenciais da aplicação. `DB_PASSWORD` é aceito como alternativa a `DB_PASS`.
 
-```bash
+O frontend utiliza a API no mesmo endereço do site. Em desenvolvimento, o Vite encaminha `/api` para `http://127.0.0.1:3000`. Se a porta da API mudar, ajuste também o destino em `frontend/vite.config.ts`. `VITE_API_URL` é opcional para configurações com API externa e exige alinhamento das origens permitidas e da política de conteúdo.
+
+### 3. Criar o banco em uma instalação nova
+
+Execute com uma conta administrativa do MySQL. A senha será solicitada pelo cliente:
+
+```powershell
+mysql --default-character-set=utf8mb4 -h localhost -P 3306 -u root -p --execute="SOURCE database/schema.sql"
+```
+
+O script cria o banco `clinica_ikigai_db`, suas tabelas, views e gatilhos. Para utilizar outro nome, ajuste o `CREATE DATABASE`, o `USE` do script e `DB_NAME` antes da criação.
+
+Crie a conta de operação pelo cliente MySQL:
+
+```powershell
+mysql -h localhost -P 3306 -u root -p
+```
+
+No console SQL, substitua a senha abaixo pela mesma definida em `DB_PASS`. Os comandos pressupõem uma conta ainda inexistente:
+
+```sql
+CREATE USER 'ikigai_app'@'localhost'
+IDENTIFIED BY 'SUBSTITUA_PELA_SENHA_DA_APLICACAO';
+
+GRANT SELECT, INSERT, UPDATE, DELETE
+ON clinica_ikigai_db.* TO 'ikigai_app'@'localhost';
+
+EXIT;
+```
+
+A instalação inicial não exige dados fictícios. Cadastre categorias, serviços e profissionais pela aplicação e configure os vínculos e jornadas antes de agendar.
+
+**Dados de demonstração:** `database/seed.sql` contém operações `TRUNCATE` que apagam registros existentes. Seu uso é exclusivo de bancos descartáveis de desenvolvimento. Ele não faz parte da instalação operacional.
+
+### 4. Atualizar um banco existente
+
+Para um banco criado por uma versão anterior, configure as credenciais administrativas, interrompa a API e execute:
+
+```powershell
+npm run db:backup
+npm run db:migrate
+```
+
+Prossiga com a migração somente após a conclusão do backup. O comando `db:migrate` atualiza um banco já existente; não substitui a criação inicial com `schema.sql`. A instalação de dependências não executa migrações nem cargas de dados.
+
+### 5. Iniciar em desenvolvimento
+
+```powershell
 npm run dev
 ```
 
-**Frontend**
+O comando inicia a API e o frontend com acompanhamento das alterações no código.
 
-```bash
-cd agendamentos-ikigai/frontend
-npm install
-```
+| Serviço | Endereço |
+| --- | --- |
+| Agenda | http://127.0.0.1:5173/agendamentos |
+| Dashboard | http://127.0.0.1:5173/dashboard |
+| Saúde da API | http://127.0.0.1:3000/api/health |
 
-Opcionalmente, crie `.env` para apontar para outra URL:
+Para iniciar cada parte separadamente, use terminais distintos:
 
-```env
-VITE_API_URL=http://localhost:3000
-```
-
-Inicie o Vite:
-
-```bash
-npm run dev
-```
-
-O Vite normalmente informa no terminal a URL local, frequentemente `http://localhost:5173`.
-
-### 5.2 Dashboard Clínica Ikigai
-
-**Backend**
-
-```bash
-cd dashboard-clinica_ikigai/backend
-npm install
-```
-
-Crie o `.env`:
-
-```bash
-# macOS/Linux
-cp .env.example .env
-
-# Windows PowerShell
-Copy-Item .env.example .env
-```
-
-Exemplo de configuração:
-
-```env
-PORT=3001
-NODE_ENV=development
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=sua_senha
-DB_NAME=clinica_ikigai_db
-DB_CONNECTION_LIMIT=10
-```
-
-Compile e inicie a API:
-
-```bash
-npm run dev
-```
-
-O script `dev` do backend do dashboard usa `tsx watch` para executar `src/server.ts`. A API fica, por padrão, na porta `3001`.
-
-Teste o health check:
-
-```text
-http://localhost:3001/api/health
-```
-
-**Frontend**
-
-```bash
-cd dashboard-clinica_ikigai/frontend
-npm install
-npm run dev
-```
-
-O Vite exibirá o endereço local no terminal. O cliente HTTP do dashboard usa, por padrão, `http://localhost:3001/api`.
-
-### 5.3 Scripts do pacote do dashboard
-
-Na pasta `dashboard-clinica_ikigai/` há scripts auxiliares para instalar dependências e executar/buildar os dois módulos:
-
-```bash
-npm run install:all
+```powershell
 npm run dev:backend
+```
+
+```powershell
 npm run dev:frontend
+```
+
+### 6. Executar a versão compilada
+
+A primeira compilação já ocorre durante `npm install`:
+
+```powershell
+npm start
+```
+
+O Express entrega o site e a API na porta 3000:
+
+- Agenda: http://127.0.0.1:3000/agendamentos
+- Dashboard: http://127.0.0.1:3000/dashboard
+
+Após modificar o código, atualize a versão compilada antes de iniciá-la novamente:
+
+```powershell
 npm run build
+npm start
 ```
 
-**Observação de compatibilidade:** esses scripts usam `npm.cmd`, formato voltado ao Windows. Em macOS/Linux, execute `npm install`, `npm run dev` e `npm run build` diretamente dentro das pastas de backend e frontend.
+### Verificações do projeto
 
----
-
-## 6. Fluxo de dados do Dashboard
-
-```text
-MySQL
-  │
-  ├── especialidade / procedimento
-  ├── agendamento / paciente
-  ├── avaliacao_atendimento
-  └── sessao_chatbot
-        │
-        ▼
-API Dashboard (Express)
-  │  GET /api/dashboard/dados-painel
-  │  Consulta, relaciona e normaliza os registros
-  ▼
-ApiService (frontend)
-  │  Converte o formato compacto para interfaces TypeScript
-  ▼
-ClinicDashboardApp
-  │
-  ├── filtros de período, especialidade e calendário
-  ├── metricsEngine
-  ├── kpiDefinitions
-  ├── trafficLight
-  └── componentes visuais e drill-down
-        │
-        ▼
-Painel de indicadores operacionais
-```
-
-O backend do dashboard realiza consultas SQL para obter especialidades, agendamentos e sessões de chatbot abandonadas. O frontend recebe os dados por HTTP e calcula/organiza os indicadores para exibição.
-
----
-
-## 7. Modelo de dados esperado pelo Dashboard
-
-Pelo controller, o banco precisa disponibilizar pelo menos as seguintes tabelas e campos utilizados:
-
-- `especialidade`: `id_especialidade`, `nome`, `ativo`.
-- `procedimento`: `id_procedimento`, `id_especialidade`, `preco_base`.
-- `agendamento`: `id_agendamento`, `data_hora_agendamento`, `id_procedimento`, `id_paciente`, `status`, `minutos_atraso`, `valor_cobrado`, `modalidade_pagamento`, `tipo_atendimento`, `origem`, `escalonado_humano`.
-- `paciente`: `id_paciente`, `data_nascimento`, `sexo`.
-- `avaliacao_atendimento`: `id_agendamento`, `nota_nps`.
-- `sessao_chatbot`: `data_hora_inicio`, `status_sessao`.
-
-Esses campos foram identificados nas queries existentes; não substituem um script oficial de criação do banco. Confira se os nomes, tipos e valores de status correspondem ao banco utilizado no ambiente.
-
----
-
-## 8. Configuração, portas e integração
-
-| Serviço | Porta padrão | Configuração |
-|---|---:|---|
-| Frontend de agendamentos (Vite) | `5173` | `VITE_API_URL` |
-| Backend de agendamentos | `3000` | `PORT`, `DB_*`, CORS e rate limit |
-| Frontend do dashboard (Vite) | `5173` (se executado separadamente) | Vite |
-| Backend do dashboard | `3001` | `PORT`, `DB_*` |
-
-Os dois frontends usam a porta padrão do Vite e não devem ser iniciados simultaneamente no mesmo endereço/porta sem alterar a configuração de um deles. Se o Vite detectar uma porta ocupada, poderá sugerir outra.
-
-**Não confunda as variáveis de senha:** no exemplo do backend de agendamentos está `DB_PASS`; no backend do dashboard está `DB_PASSWORD`. Use o nome esperado pelo arquivo `config/database.ts` de cada aplicação.
-
----
-
-## 9. Testes e qualidade
-
-No backend de agendamentos existe um script:
-
-```bash
-cd agendamentos-ikigai/backend
+```powershell
+npm run lint
+npm run build
 npm test
 ```
 
-Ele compila o TypeScript e executa `src/utils/test-runner.ts`. Também há scripts auxiliares individuais de teste para disponibilidade e pacientes.
+Os testes criam um banco temporário isolado, aplicam o schema e dados fictícios e removem esse banco ao terminar. A conta utilizada precisa de permissões para criar e remover bancos, tabelas e gatilhos de teste. A suíte principal não usa o banco operacional para gravar seus cenários.
 
-No frontend de agendamentos:
+### Backup e recuperação
 
-```bash
-cd agendamentos-ikigai/frontend
-npm run lint
-npm run build
+```powershell
+npm run db:backup
 ```
 
-No backend do dashboard:
+O backup utiliza `mysqldump`, inclui gatilhos e rotinas e grava arquivos em `backend/backups/`. Somente arquivos concluídos recebem a extensão `.sql`; arquivos `.partial` não são backups válidos. Caso o executável não esteja no `PATH`, configure `MYSQLDUMP_PATH` no `.env`:
 
-```bash
-cd dashboard-clinica_ikigai/backend
-npm run build
+```dotenv
+MYSQLDUMP_PATH="C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
 ```
 
-No frontend do dashboard:
-
-```bash
-cd dashboard-clinica_ikigai/frontend
-npm run build
-```
-
----
-
-## 10. Segurança e boas práticas
-
-- Não versione arquivos `.env`, credenciais, tokens ou dados reais de pacientes.
-- Use `.env.example` apenas como modelo, sem senhas reais.
-- Restrinja CORS às origens efetivamente utilizadas no ambiente.
-- Mantenha Helmet e rate limiting habilitados no backend de agendamentos.
-- Não utilize dados pessoais reais em testes ou demonstrações sem autorização e controles adequados.
-- Em produção, configure HTTPS, logs sem dados sensíveis, backups e gestão segura de credenciais.
-- Valide os dados recebidos pela API no servidor; validações do frontend não substituem validações do backend.
-
----
-
-## 11. Pontos de atenção identificados na análise
-
-1. **São dois sistemas separados:** `agendamentos-ikigai` e `dashboard-clinica_ikigai` têm dependências, APIs e frontends próprios.
-2. **Portas diferentes:** agendamentos usa `3000` por padrão; dashboard usa `3001`. O `ApiService` do dashboard já aponta para `http://localhost:3001/api`.
-3. **Variável de senha divergente:** os exemplos usam `DB_PASS` e `DB_PASSWORD` em aplicações diferentes. Verifique a leitura correspondente em cada `config/database.ts`.
-4. **Banco não incluído:** não foram encontrados scripts SQL no pacote enviado. O banco precisa ser providenciado separadamente.
-5. **Mensagem de erro desatualizada no dashboard:** o `main.ts` menciona backend na porta `3000`, mas o backend e o `ApiService` estão configurados por padrão para `3001`. Se a mensagem continuar assim no código, atualize-a para evitar diagnóstico incorreto.
-6. **Scripts raiz do dashboard são Windows-específicos:** usam `npm.cmd`; em outros sistemas operacionais, execute os comandos nas pastas de cada módulo.
-7. **Configuração CORS do dashboard:** o servidor atual chama `cors()` sem restringir origens. Antes de publicar, configure uma lista explícita de origens permitidas.
-8. **Contrato e schema precisam ser alinhados:** o dashboard depende de nomes específicos de tabelas, colunas e valores de status descritos acima. Confirme-os com o banco real.
-
----
-
-## 12. Fluxo Git sugerido
-
-```bash
-git checkout -b feature/nome-da-funcionalidade
-git add .
-git commit -m "feat: descreve a alteração"
-git push origin feature/nome-da-funcionalidade
-```
-
-Use commits pequenos e mensagens que indiquem claramente o objetivo da mudança.
-
----
+Mantenha uma cópia protegida fora da máquina. Para recuperar dados, interrompa a API, importe o backup em um banco de recuperação e confira registros e vínculos antes de alterar `DB_NAME`. Não valide restaurações sobrescrevendo o banco operacional. Backups e arquivos `.env` contêm informações privadas e não devem ser enviados ao repositório.

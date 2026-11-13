@@ -100,9 +100,10 @@ CREATE TABLE IF NOT EXISTS profissional_procedimento (
 CREATE TABLE IF NOT EXISTS paciente (
     id_paciente INT AUTO_INCREMENT PRIMARY KEY,
     uuid VARCHAR(36) NOT NULL UNIQUE,
+    versao INT NOT NULL DEFAULT 0,
     nome VARCHAR(150) NOT NULL,
     cpf VARCHAR(14) NULL UNIQUE,
-    data_nascimento DATE NOT NULL DEFAULT '1990-01-01',
+    data_nascimento DATE NULL DEFAULT NULL,
     sexo ENUM('Feminino', 'Masculino', 'Outro') NOT NULL DEFAULT 'Outro',
     telefone VARCHAR(20) NULL,
     whatsapp VARCHAR(20) NULL,
@@ -156,7 +157,7 @@ CREATE TABLE IF NOT EXISTS capacidade_diaria (
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS agendamento (
     id_agendamento INT AUTO_INCREMENT PRIMARY KEY,
-    id_paciente INT NOT NULL DEFAULT 1,
+    id_paciente INT NOT NULL DEFAULT 0,
     paciente_uuid VARCHAR(36) NOT NULL DEFAULT '',
     id_profissional INT NOT NULL,
     id_procedimento INT NOT NULL,
@@ -176,6 +177,7 @@ CREATE TABLE IF NOT EXISTS agendamento (
     valor_cobrado DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     escalonado_humano TINYINT(1) NOT NULL DEFAULT 0,
     motivo_cancelamento VARCHAR(255) NULL,
+    observacoes TEXT NULL,
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_agendamento_paciente
@@ -283,14 +285,18 @@ BEFORE INSERT ON agendamento
 FOR EACH ROW
 BEGIN
     -- 1. Resolver paciente_id / id_paciente caso apenas um venha informado
-    IF (NEW.id_paciente IS NULL OR NEW.id_paciente = 0) AND NEW.paciente_uuid IS NOT NULL THEN
+    IF (NEW.id_paciente IS NULL OR NEW.id_paciente = 0) AND COALESCE(NEW.paciente_uuid, '') <> '' THEN
         SET NEW.id_paciente = (SELECT id_paciente FROM paciente WHERE uuid = NEW.paciente_uuid LIMIT 1);
-    ELSEIF NEW.paciente_uuid IS NULL AND NEW.id_paciente IS NOT NULL THEN
+    ELSEIF COALESCE(NEW.paciente_uuid, '') = '' AND NEW.id_paciente IS NOT NULL THEN
         SET NEW.paciente_uuid = (SELECT uuid FROM paciente WHERE id_paciente = NEW.id_paciente LIMIT 1);
     END IF;
 
+    IF NOT EXISTS (SELECT 1 FROM paciente WHERE id_paciente = NEW.id_paciente AND uuid = NEW.paciente_uuid) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Identificadores do paciente inconsistentes';
+    END IF;
+
     -- 2. Resolver data_hora_agendamento ou data + horario_inicio
-    IF NEW.data_hora_agendamento IS NULL AND NEW.data IS NOT NULL AND NEW.horario_inicio IS NOT NULL THEN
+    IF NEW.data IS NOT NULL AND NEW.horario_inicio IS NOT NULL THEN
         SET NEW.data_hora_agendamento = TIMESTAMP(NEW.data, NEW.horario_inicio);
     ELSEIF NEW.data IS NULL AND NEW.data_hora_agendamento IS NOT NULL THEN
         SET NEW.data = DATE(NEW.data_hora_agendamento);
@@ -312,6 +318,9 @@ BEGIN
             200.00
         );
     END IF;
+    IF NEW.horario_fim <= NEW.horario_inicio THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Intervalo de agendamento invalido';
+    END IF;
 END //
 DELIMITER ;
 
@@ -322,11 +331,20 @@ CREATE TRIGGER trg_agendamento_bu
 BEFORE UPDATE ON agendamento
 FOR EACH ROW
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM paciente WHERE id_paciente = NEW.id_paciente AND uuid = NEW.paciente_uuid) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Identificadores do paciente inconsistentes';
+    END IF;
+    IF NEW.horario_fim <= NEW.horario_inicio THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Intervalo de agendamento invalido';
+    END IF;
     IF NEW.data != OLD.data OR NEW.horario_inicio != OLD.horario_inicio THEN
         SET NEW.data_hora_agendamento = TIMESTAMP(NEW.data, NEW.horario_inicio);
     ELSEIF NEW.data_hora_agendamento != OLD.data_hora_agendamento THEN
         SET NEW.data = DATE(NEW.data_hora_agendamento);
         SET NEW.horario_inicio = TIME(NEW.data_hora_agendamento);
+    END IF;
+    IF NEW.horario_fim <= NEW.horario_inicio THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Intervalo de agendamento invalido';
     END IF;
 END //
 DELIMITER ;
@@ -387,7 +405,8 @@ FROM profissional;
 
 CREATE OR REPLACE VIEW pacientes AS 
 SELECT 
-    uuid AS id, 
+    uuid AS id,
+    versao,
     nome AS nome_completo, 
     cpf, 
     telefone, 
@@ -441,6 +460,8 @@ CREATE TABLE IF NOT EXISTS jornada_profissional (
     intervalo_fim TIME NULL DEFAULT '13:00:00',
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_jornada_profissional FOREIGN KEY (id_profissional) REFERENCES profissional (id_profissional) ON DELETE CASCADE,
+    CONSTRAINT chk_jornada_dia CHECK (dia_semana BETWEEN 0 AND 6),
     UNIQUE KEY uq_jornada_prof_dia (id_profissional, dia_semana)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -456,5 +477,28 @@ CREATE TABLE IF NOT EXISTS excecao_disponibilidade (
     horario_fim TIME NULL,
     motivo VARCHAR(255) NOT NULL DEFAULT 'Feriado / Recesso',
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_excecao_profissional FOREIGN KEY (id_profissional) REFERENCES profissional (id_profissional) ON DELETE CASCADE,
     INDEX idx_excecao_data (data)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Alinhamento idempotente para bancos existentes criados por versões antigas da API.
+ALTER TABLE agendamento ALTER COLUMN id_paciente SET DEFAULT 0;
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE bloqueio_agenda ADD CONSTRAINT fk_bloqueio_profissional FOREIGN KEY (id_profissional) REFERENCES profissional (id_profissional) ON DELETE CASCADE ON UPDATE CASCADE') FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bloqueio_agenda' AND COLUMN_NAME = 'id_profissional' AND REFERENCED_TABLE_NAME = 'profissional');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE profissional_procedimento ADD CONSTRAINT fk_pp_profissional FOREIGN KEY (id_profissional) REFERENCES profissional (id_profissional) ON DELETE CASCADE ON UPDATE CASCADE') FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'profissional_procedimento' AND COLUMN_NAME = 'id_profissional' AND REFERENCED_TABLE_NAME = 'profissional');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE profissional_procedimento ADD CONSTRAINT fk_pp_procedimento FOREIGN KEY (id_procedimento) REFERENCES procedimento (id_procedimento) ON DELETE CASCADE ON UPDATE CASCADE') FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'profissional_procedimento' AND COLUMN_NAME = 'id_procedimento' AND REFERENCED_TABLE_NAME = 'procedimento');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;
+
+-- Fotografias diárias: capacidade passada não muda com novas jornadas.
+CREATE TABLE IF NOT EXISTS agenda_capacidade_snapshot (
+ data DATE NOT NULL, especialidade INT NOT NULL, minutos INT NOT NULL,
+ atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ PRIMARY KEY(data, especialidade)
+) ENGINE=InnoDB;
