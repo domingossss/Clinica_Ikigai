@@ -10,3 +10,4 @@ backend/dist/
 
 # Backups locais contêm dados sensíveis
 backend/backups/
+frontend/src/indicadores_backup/
