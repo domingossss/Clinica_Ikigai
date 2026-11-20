@@ -4,6 +4,8 @@ import ServicosAgendamentos from './ServicosAgendamentos';
 import CadastroPacientes from './CadastroPacientes';
 import ModalAgendamentoRapido, { type PacienteItem } from './ModalAgendamentoRapido';
 import GradeAgenda from './GradeAgenda';
+import GestaoUsuarios from './GestaoUsuarios';
+import { PERFIL_LABELS, type UsuarioSessao } from '../services/auth';
 
 // Tipagem de dados para o frontend
 interface Servico {
@@ -40,9 +42,9 @@ function dataHoje(): string {
   return `${y}-${m}-${d}`;
 }
 
-export default function DashboardDemo() {
+export default function DashboardDemo({ usuario, onLogout }: { usuario?: UsuarioSessao; onLogout?: () => void }) {
   // Estados de controle geral das abas: Grade de Horários, Pacientes ou Serviços e Configurações
-  const [currentTab, setCurrentTab] = useState<'grade' | 'cadastro' | 'servicos'>('grade');
+  const [currentTab, setCurrentTab] = useState<'grade' | 'cadastro' | 'servicos' | 'usuarios'>('grade');
 
   // Controle de data e atualização da Grade
   const [gradeData, setGradeData] = useState<string>(dataHoje());
@@ -175,7 +177,7 @@ export default function DashboardDemo() {
               <h1 className="text-lg font-bold tracking-tight text-dark flex items-center gap-2">
                 Clínica Ikigai
                 <span className="text-[11px] bg-secondary/15 text-primary-dark font-semibold px-2 py-0.5 rounded-full border border-secondary/30">
-                  Recepção
+                  {usuario ? PERFIL_LABELS[usuario.perfil] : 'Recepção'}
                 </span>
               </h1>
               <p className="text-xs text-gray">Sistema de Gestão da Clínica</p>
@@ -204,29 +206,55 @@ export default function DashboardDemo() {
             >
               Pacientes
             </button>
-            <button
-              onClick={() => setCurrentTab('servicos')}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                currentTab === 'servicos'
-                  ? 'bg-white text-primary font-extrabold shadow-sm'
-                  : 'text-gray hover:text-dark hover:bg-white/50'
-              }`}
-            >
-              Serviços e Configurações
-            </button>
+            {(usuario?.perfil === 'ADMIN' || usuario?.perfil === 'PROFISSIONAL') && (
+              <button
+                onClick={() => setCurrentTab('servicos')}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  currentTab === 'servicos'
+                    ? 'bg-white text-primary font-extrabold shadow-sm'
+                    : 'text-gray hover:text-dark hover:bg-white/50'
+                }`}
+              >
+                Serviços e Configurações
+              </button>
+            )}
+            {usuario?.perfil === 'ADMIN' && (
+              <button
+                onClick={() => setCurrentTab('usuarios')}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  currentTab === 'usuarios'
+                    ? 'bg-white text-primary font-extrabold shadow-sm'
+                    : 'text-gray hover:text-dark hover:bg-white/50'
+                }`}
+              >
+                Usuários
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              disabled={Boolean(apiError)}
-              onClick={() => setIsBookingModalOpen(true)}
-              className="bg-primary hover:bg-primary-dark text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-md shadow-primary/10 hover:shadow-primary/25 active:scale-95 transition-all duration-150 flex items-center gap-1.5"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-              </svg>
-              Novo Agendamento
-            </button>
+            {usuario?.perfil !== 'PROFISSIONAL' && (
+              <button
+                disabled={Boolean(apiError)}
+                onClick={() => setIsBookingModalOpen(true)}
+                className="bg-primary hover:bg-primary-dark text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-md shadow-primary/10 hover:shadow-primary/25 active:scale-95 transition-all duration-150 flex items-center gap-1.5 cursor-pointer"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                </svg>
+                Novo Agendamento
+              </button>
+            )}
+            {usuario && onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                title={usuario.email}
+                className="px-3 py-2 rounded-xl border border-gray/25 text-xs font-bold text-dark hover:bg-light-gray transition-colors cursor-pointer"
+              >
+                Sair
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -270,13 +298,18 @@ export default function DashboardDemo() {
           <CadastroPacientes onNovoAgendamento={handleAbrirAgendamentoParaPaciente} />
         )}
 
-        {currentTab === 'servicos' && (
+        {currentTab === 'usuarios' && usuario?.perfil === 'ADMIN' && (
+          <GestaoUsuarios usuarioLogadoId={usuario.id} onNotify={showToast} />
+        )}
+
+        {currentTab === 'servicos' && (usuario?.perfil === 'ADMIN' || usuario?.perfil === 'PROFISSIONAL') && (
           <ServicosAgendamentos
             onProfissionaisAtualizados={fetchDashboardData}
             onStatusServicoAlterado={atualizado => {
               setServicos(prev => prev.map(servico => servico.id === atualizado.id ? { ...servico, ativo: atualizado.ativo } : servico));
             }}
             onAbrirAgendaProfissional={handleAbrirAgendaDoProfissional}
+            isAdmin={usuario?.perfil === 'ADMIN'}
           />
         )}
       </main>

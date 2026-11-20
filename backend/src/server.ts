@@ -8,6 +8,9 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import agendamentosRouter from './routes/agendamentos.js';
+import authRouter from './routes/auth.js';
+import usuariosRouter from './routes/usuarios.js';
+import { exigirAutenticacao, exigirPerfil, garantirAdminInicial } from './middleware/auth.js';
 import pool, { testarConexao, acompanharAlteracoes, notificarAlteracoes } from './config/database.js';
 
 // Carregar variáveis de ambiente do .env
@@ -86,10 +89,32 @@ app.disable('x-powered-by');
 // ============================================================================
 
 // Registro de rotas da API
-app.get('/api/eventos', acompanharAlteracoes);
-app.use('/api', notificarAlteracoes);
-app.use('/api', agendamentosRouter);
-app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/auth', authRouter);
+
+function controlarPermissoesApi(req: express.Request, res: express.Response, next: express.NextFunction): any {
+  const perfil = req.usuario?.perfil;
+  if (!perfil) return res.status(401).json({ sucesso: false, erro: 'Autenticação necessária.' });
+  if (perfil === 'ADMIN' || req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next();
+  }
+  const ehConfiguracao = /^\/(servicos|categorias|profissionais|excecoes)(\/|$)/.test(req.path);
+  if (ehConfiguracao) {
+    if (perfil !== 'PROFISSIONAL') {
+      return res.status(403).json({ sucesso: false, erro: 'Apenas administradores e profissionais podem alterar serviços, categorias, profissionais e jornadas.' });
+    }
+    return next();
+  }
+  if (perfil === 'PROFISSIONAL' && !/^\/agendamentos\/\d+\/status$/.test(req.path)) {
+    return res.status(403).json({ sucesso: false, erro: 'Perfil profissional permite apenas configurações, consulta e atualização de status do atendimento.' });
+  }
+  return next();
+}
+
+app.use('/api/usuarios', usuariosRouter);
+app.use('/api/dashboard', exigirAutenticacao, exigirPerfil('ADMIN'), dashboardRoutes);
+app.get('/api/eventos', exigirAutenticacao, acompanharAlteracoes);
+app.use('/api', exigirAutenticacao, controlarPermissoesApi, notificarAlteracoes);
+app.use('/api', exigirAutenticacao, controlarPermissoesApi, agendamentosRouter);
 
 async function verificarSaude(_req: express.Request, res: express.Response) {
   try {
@@ -131,7 +156,9 @@ async function bootstrap() {
   const dbConnected = await testarConexao();
   
   if (!dbConnected) {
-    console.warn('[Server] Banco indisponível. As operações retornarão erro até a conexão ser restabelecida.');
+  console.warn('[Server] Banco indisponível. As operações retornarão erro até a conexão ser restabelecida.');
+  } else {
+    await garantirAdminInicial().catch(() => console.error('[Auth] Não foi possível verificar o administrador inicial.'));
   }
 
   await registrarCapacidadeHoje().catch(() => console.error('[Capacidade] Não foi possível registrar a capacidade diária.'));

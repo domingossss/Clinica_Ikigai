@@ -55,6 +55,7 @@ interface ServicosAgendamentosProps {
   onProfissionaisAtualizados?: () => void;
   onStatusServicoAlterado?: (servico: { id: number; ativo: number }) => void;
   onAbrirAgendaProfissional?: (profissionalId: number) => void;
+  isAdmin?: boolean;
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -71,7 +72,8 @@ function obterIniciais(nome: string): string {
 export default function ServicosAgendamentos({
   onProfissionaisAtualizados,
   onStatusServicoAlterado,
-  onAbrirAgendaProfissional
+  onAbrirAgendaProfissional,
+  isAdmin = false
 }: ServicosAgendamentosProps) {
   // Controle de sub-aba ativa na tela
   const [subAba, setSubAba] = useState<'servicos' | 'profissionais' | 'excecoes'>('servicos');
@@ -943,7 +945,18 @@ export default function ServicosAgendamentos({
             </button>
           </div>
 
-          <div className="flex items-center gap-2 px-3 text-xs text-gray font-medium">
+          <div className="flex items-center gap-3 px-3 text-xs text-gray font-medium flex-wrap">
+            {isAdmin && (
+              <a
+                href="/dashboard"
+                className="px-3.5 py-2 rounded-xl bg-dark text-white text-xs font-bold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-xs"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                Dashboard de Indicadores
+              </a>
+            )}
             <span className="flex h-2 w-2 relative">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
