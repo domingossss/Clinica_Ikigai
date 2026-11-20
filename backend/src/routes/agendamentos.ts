@@ -815,6 +815,55 @@ router.put('/agendamentos/:id/reagendar', async (req: Request, res: Response): P
   } catch (erro) { return responderFalha(res, erro); }
 });
 // ============================================================================
+// ENDPOINT: GET /api/agendamentos/:id/historico (Histórico de alterações - IK-97)
+// ============================================================================
+router.get('/agendamentos/:id/historico', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = idPositivo(req.params.id);
+    const [agendamentoRows] = await pool.query<any[]>(
+      `SELECT a.id_agendamento AS id,
+              DATE_FORMAT(a.data, '%Y-%m-%d') AS data,
+              TIME_FORMAT(a.horario_inicio, '%H:%i') AS horario_inicio,
+              TIME_FORMAT(a.horario_fim, '%H:%i') AS horario_fim,
+              a.status,
+              a.origem,
+              DATE_FORMAT(a.data_hora_criacao, '%Y-%m-%dT%H:%i:%s') AS criado_em,
+              p.nome AS paciente_nome,
+              pr.nome AS profissional_nome,
+              s.nome AS servico_nome
+       FROM agendamento a
+       JOIN paciente p ON p.uuid = a.paciente_uuid
+       JOIN profissional pr ON pr.id_profissional = a.id_profissional
+       JOIN procedimento s ON s.id_procedimento = a.id_procedimento
+       WHERE a.id_agendamento = ?`,
+      [id]
+    );
+    if (!agendamentoRows.length) throw new ErroOperacao(404, 'Agendamento não encontrado.');
+
+    const [historico] = await pool.query<any[]>(
+      `SELECT id_historico AS id,
+              id_agendamento,
+              status_anterior,
+              status_novo,
+              motivo,
+              alterado_por,
+              DATE_FORMAT(data_alteracao, '%Y-%m-%dT%H:%i:%s') AS data_alteracao
+       FROM historico_status_agendamento
+       WHERE id_agendamento = ?
+       ORDER BY data_alteracao DESC, id_historico DESC`,
+      [id]
+    );
+
+    return res.json({
+      sucesso: true,
+      dados: {
+        agendamento: agendamentoRows[0],
+        historico
+      }
+    });
+  } catch (erro) { return responderFalha(res, erro); }
+});
+// ============================================================================
 // ENDPOINT: POST /api/bloqueios (Criar bloqueio de horário na agenda - IK-87)
 // ============================================================================
 router.post('/bloqueios', async (req: Request, res: Response): Promise<any> => {

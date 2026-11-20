@@ -1,6 +1,7 @@
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import ModalHistoricoPaciente from './ModalHistoricoPaciente';
+import ModalHistoricoAgendamento from './ModalHistoricoAgendamento';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
@@ -250,6 +251,7 @@ export default function GradeAgenda({
 
   // Modal de Histórico do Paciente (IK-77)
   const [isHistoricoModalOpen, setIsHistoricoModalOpen] = useState(false);
+  const [isHistoricoAgendamentoOpen, setIsHistoricoAgendamentoOpen] = useState(false);
 
   const mudarData = (novaData: string) => {
     setDataSelecionada(novaData);
@@ -1158,6 +1160,17 @@ export default function GradeAgenda({
             </button>
 
             {/* Ações de status */}
+            {/* Botão Visualizar Histórico de Alterações do Agendamento (IK-97) */}
+            <button
+              onClick={() => setIsHistoricoAgendamentoOpen(true)}
+              className="w-full py-2 px-3 rounded-xl text-xs font-bold border border-gray/25 bg-light-gray text-dark hover:bg-gray/15 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <svg className="w-4 h-4 text-gray" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span>Ver Histórico do Agendamento</span>
+            </button>
+
             {FLUXO_STATUS[agendamentoSelecionado.status].length > 0 && (
               <div>
                 <p className="text-[10px] uppercase font-bold text-gray mb-2">Avançar status para:</p>
@@ -1464,6 +1477,14 @@ export default function GradeAgenda({
           onClose={() => setIsHistoricoModalOpen(false)}
           pacienteId={agendamentoSelecionado.paciente_id}
           pacienteNome={agendamentoSelecionado.paciente_nome}
+        />
+      )}
+
+      {agendamentoSelecionado && (
+        <ModalHistoricoAgendamento
+          isOpen={isHistoricoAgendamentoOpen}
+          onClose={() => setIsHistoricoAgendamentoOpen(false)}
+          agendamentoId={agendamentoSelecionado.id}
         />
       )}
 
