@@ -16,6 +16,7 @@
     "start": "npm run start --workspace backend",
     "test": "npm run test --workspace backend",
     "lint": "npm run lint --workspace frontend",
+    "admin:provisionar": "npm run admin:provisionar --workspace backend",
     "db:migrate": "npm run db:migrate --workspace backend",
     "db:backup": "npm run db:backup --workspace backend"
   },

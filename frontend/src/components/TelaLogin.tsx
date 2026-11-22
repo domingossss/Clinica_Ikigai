@@ -19,8 +19,8 @@ export default function TelaLogin({ onLoginSuccess }: TelaLoginProps) {
     try {
       const usuario = await efetuarLogin(email.trim(), senha);
       onLoginSuccess(usuario);
-    } catch (err: any) {
-      setErro(err.message || 'Falha ao autenticar.');
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : 'Não foi possível conectar ao servidor.');
     } finally {
       setCarregando(false);
     }

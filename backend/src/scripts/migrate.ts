@@ -28,6 +28,20 @@ try {
     }
   }
   if (buffer.replace(/--[^\n]*/g,'').trim()) await db.query(buffer);
+  const [historico] = await db.query<mysql.RowDataPacket[]>(
+    "SELECT COLUMN_NAME AS nome, CHARACTER_MAXIMUM_LENGTH AS tamanho FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'historico_status_agendamento'", [name]);
+  if (!historico.some(c => c.nome === 'tipo_evento')) {
+    await db.query("ALTER TABLE historico_status_agendamento ADD COLUMN tipo_evento ENUM('CRIACAO','REAGENDAMENTO','CANCELAMENTO','STATUS') NULL");
+  }
+  if (!historico.some(c => c.nome === 'id_usuario')) {
+    await db.query("ALTER TABLE historico_status_agendamento ADD COLUMN id_usuario INT NULL");
+  }
+  if (Number(historico.find(c => c.nome === 'alterado_por')?.tamanho) < 150) {
+    await db.query("ALTER TABLE historico_status_agendamento MODIFY alterado_por VARCHAR(150) NOT NULL DEFAULT 'Sistema'");
+  }
+  await db.query("INSERT IGNORE INTO schema_migrations(version) VALUES ('2026-11-22-historico-agendamento')");
   await db.query("INSERT IGNORE INTO schema_migrations(version) VALUES ('2026-11-13-integridade')");
+  await db.query("INSERT IGNORE INTO schema_migrations(version) VALUES ('2026-11-22-usuarios-sessoes')");
+  await db.query("INSERT IGNORE INTO schema_migrations(version) VALUES ('2026-11-22-comunicacoes')");
   console.log('Estrutura atualizada. Dados existentes preservados.');
 } finally { await db.end(); }

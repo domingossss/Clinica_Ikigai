@@ -1,3 +1,4 @@
+import type { ResultSetHeader } from 'mysql2/promise';
 import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import pool, { ErroOperacao } from '../config/database.js';
@@ -385,6 +386,7 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
       return res.status(404).json({ sucesso: false, erro: 'Paciente nao cadastrado.' });
     }
     const pacienteAtual = existing[0];
+    if (!Number.isSafeInteger(req.body.versao) || req.body.versao < 0) return res.status(428).json({ sucesso:false, erro:'Atualize o cadastro antes de editar.' });
 
     // Se for PROFISSIONAL, permite editar apenas a evolução clínica (etapa_tratamento, historico_clinico, observacoes)
     if (req.usuario?.perfil === 'PROFISSIONAL') {
@@ -392,21 +394,23 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
       const histFinal = historico_clinico !== undefined ? sanitizarTexto(String(historico_clinico)) : pacienteAtual.historico_clinico;
       const obsFinal = observacoes !== undefined ? sanitizarTexto(String(observacoes)) : pacienteAtual.observacoes;
 
-      await pool.query(
+      const [resultado] = await pool.query<ResultSetHeader>(
         `UPDATE pacientes
          SET versao = versao + 1,
              etapa_tratamento = ?,
              historico_clinico = ?,
              observacoes = ?
-         WHERE id = ?`,
-        [etapaFinal || 'Avaliação', histFinal || null, obsFinal || null, id]
+         WHERE id = ? AND versao = ?`,
+        [etapaFinal || 'Avaliação', histFinal || null, obsFinal || null, id, req.body.versao]
       );
 
+      if (!resultado.affectedRows) return res.status(409).json({ sucesso: false, erro: 'Este cadastro foi alterado em outra tela. Recarregue os dados antes de salvar.' });
       return res.status(200).json({
         sucesso: true,
         mensagem: 'Evolução clínica do paciente atualizada com sucesso!',
         dados: {
           ...pacienteAtual,
+          versao: req.body.versao + 1,
           etapa_tratamento: etapaFinal || 'Avaliação',
           historico_clinico: histFinal || null,
           observacoes: obsFinal || null
@@ -449,7 +453,6 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
     const nomeSanitizado = sanitizarTexto(nome_completo);
     const enderecoSanitizado = sanitizarTexto(endereco);
 
-    if (!Number.isSafeInteger(req.body.versao) || req.body.versao < 0) return res.status(428).json({ sucesso:false, erro:'Atualize o cadastro antes de editar.' });
     // Compare e grave na mesma instrução para não perder edições concorrentes.
     const [atualizado]: any = await pool.query(
       `UPDATE pacientes 
@@ -457,7 +460,7 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
            etapa_tratamento = COALESCE(?, etapa_tratamento),
            historico_clinico = IF(?, ?, historico_clinico),
            observacoes = IF(?, ?, observacoes),
-           atendimento_status = COALESCE(?, atendimento_status) 
+           atendimento_status = COALESCE(?, atendimento_status)
        WHERE id = ? AND versao = ?`,
       [
         nomeSanitizado,

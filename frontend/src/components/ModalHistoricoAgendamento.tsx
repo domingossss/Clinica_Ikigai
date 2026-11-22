@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from '../api';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useClinicUpdates } from '../services/clinicUpdates';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export interface AlteracaoAgendamento {
   id: number;
   id_agendamento: number;
   status_anterior: string | null;
   status_novo: string;
+  tipo_evento: 'CRIACAO' | 'REAGENDAMENTO' | 'CANCELAMENTO' | 'STATUS' | null;
   motivo: string | null;
   alterado_por: string;
   data_alteracao: string;
@@ -79,37 +80,35 @@ function HistoricoAgendamentoConteudo({
   const [erro, setErro] = useState<string | null>(null);
   const [agendamento, setAgendamento] = useState<AgendamentoResumo | null>(null);
   const [historico, setHistorico] = useState<AlteracaoAgendamento[]>([]);
+  const consulta = useRef<AbortController | null>(null);
 
-  const carregarHistorico = useCallback(async (silencioso = false) => {
+  const carregarHistorico = useCallback(async () => {
     if (!agendamentoId) return;
-    if (!silencioso) {
-      setCarregando(true);
-      setErro(null);
-    }
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/agendamentos/${agendamentoId}/historico`);
+    consulta.current?.abort();
+    const controller = new AbortController();
+    consulta.current = controller;
+    return apiFetch(`/api/agendamentos/${agendamentoId}/historico`, { signal: controller.signal }).then(async res => {
       const json = await res.json();
+      if (controller.signal.aborted) return;
       if (!res.ok || !json.sucesso) {
         throw new Error(json.erro || 'Não foi possível carregar o histórico do agendamento.');
       }
       setAgendamento(json.dados.agendamento);
       setHistorico(json.dados.historico || []);
-    } catch (err: any) {
-      if (!silencioso) {
-        setErro(err.message || 'Erro de comunicação ao buscar histórico.');
-      }
-    } finally {
-      if (!silencioso) setCarregando(false);
-    }
+      setErro(null);
+    }).catch((err: unknown) => {
+      if (!controller.signal.aborted) setErro(err instanceof Error ? err.message : 'Erro de comunicação ao buscar histórico.');
+    }).finally(() => {
+      if (!controller.signal.aborted) setCarregando(false);
+    });
   }, [agendamentoId]);
 
   useEffect(() => {
-    carregarHistorico();
+    void carregarHistorico();
+    return () => consulta.current?.abort();
   }, [carregarHistorico]);
 
-  useClinicUpdates(useCallback(() => {
-    carregarHistorico(true);
-  }, [carregarHistorico]));
+  useClinicUpdates(carregarHistorico, ['agendamentos']);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -187,7 +186,7 @@ function HistoricoAgendamentoConteudo({
               <span>{erro}</span>
               <button
                 type="button"
-                onClick={() => carregarHistorico()}
+                onClick={() => { setCarregando(true); void carregarHistorico(); }}
                 className="px-3 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 font-bold transition-colors cursor-pointer"
               >
                 Tentar novamente
@@ -199,9 +198,7 @@ function HistoricoAgendamentoConteudo({
             <div className="bg-light-gray rounded-xl p-6 text-center space-y-1">
               <p className="text-sm font-semibold text-dark">Nenhuma alteração registrada ainda</p>
               <p className="text-xs text-gray">
-                {agendamento?.criado_em
-                  ? `Agendamento criado em ${formatarDataHoraBR(agendamento.criado_em)} com status ${formatarStatusLabel(agendamento.status)}.`
-                  : 'As mudanças de status e reagendamentos aparecerão aqui.'}
+                O histórico deste atendimento ainda não contém eventos.
               </p>
             </div>
           )}
@@ -212,6 +209,7 @@ function HistoricoAgendamentoConteudo({
                 <li key={item.id} className="ml-5 relative">
                   <span className="absolute -left-[27px] top-1.5 w-3 h-3 rounded-full bg-primary border-2 border-white shadow-xs" />
                   <div className="bg-light-gray rounded-xl p-3.5 border border-gray/15 space-y-2">
+                    <strong className="text-xs">{item.tipo_evento ? ({ CRIACAO: 'Criação', REAGENDAMENTO: 'Reagendamento', CANCELAMENTO: 'Cancelamento', STATUS: 'Alteração de status' })[item.tipo_evento] : 'Registro de histórico'}</strong>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 text-[11px] font-bold">
                         <span className={`px-2 py-0.5 rounded-full border ${STATUS_BADGES[item.status_anterior || ''] || 'bg-white text-gray border-gray/30'}`}>

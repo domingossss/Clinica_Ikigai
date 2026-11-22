@@ -1,7 +1,7 @@
 import { registrarCapacidadeHoje } from './services/capacidadeAgenda.js';
 import express from 'express';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -10,13 +10,17 @@ import dotenv from 'dotenv';
 import agendamentosRouter from './routes/agendamentos.js';
 import authRouter from './routes/auth.js';
 import usuariosRouter from './routes/usuarios.js';
-import { exigirAutenticacao, exigirPerfil, garantirAdminInicial } from './middleware/auth.js';
+import { controlarPermissoesApi } from './middleware/permissoes.js';
+import comunicacoesRouter from './routes/comunicacoes.js';
+import { iniciarLembretes } from './services/comunicacoes.js';
+import { exigirAutenticacao, validarConfiguracaoSessao } from './middleware/auth.js';
 import pool, { testarConexao, acompanharAlteracoes, notificarAlteracoes } from './config/database.js';
 
 // Carregar variáveis de ambiente do .env
 dotenv.config();
 
-const app = express();
+export const app = express();
+if (process.env.TRUST_PROXY_LOOPBACK === 'true') app.set('trust proxy', 'loopback');
 const PORT = process.env.PORT || 3000;
 
 // ============================================================================
@@ -91,56 +95,21 @@ app.disable('x-powered-by');
 // Registro de rotas da API
 app.use('/api/auth', authRouter);
 
-function controlarPermissoesApi(req: express.Request, res: express.Response, next: express.NextFunction): any {
-  const perfil = req.usuario?.perfil;
-  if (!perfil) return res.status(401).json({ sucesso: false, erro: 'Autenticação necessária.' });
-  if (perfil === 'ADMIN' || req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
-    return next();
-  }
-
-  const ehConfiguracaoCatalogo = /^\/(servicos|categorias|profissionais|excecoes)(\/|$)/.test(req.path);
-  const ehJornadaPropria = perfil === 'PROFISSIONAL' && req.method === 'PUT' && /^\/profissionais\/\d+\/jornada$/.test(req.path);
-
-  if (ehConfiguracaoCatalogo && !ehJornadaPropria) {
-    return res.status(403).json({
-      sucesso: false,
-      erro: 'Apenas administradores podem alterar serviços, preços, categorias, profissionais e exceções gerais da clínica.'
-    });
-  }
-
-  if (perfil === 'PROFISSIONAL') {
-    const podeStatusAgendamento = req.method === 'PUT' && /^\/agendamentos\/\d+\/status$/.test(req.path);
-    const podeBloqueioProprio =
-      (req.method === 'POST' && req.path === '/bloqueios') ||
-      (req.method === 'DELETE' && /^\/bloqueios\/\d+$/.test(req.path));
-    const podeEvolucaoPaciente = (req.method === 'PUT' || req.method === 'PATCH') && /^\/pacientes\/[^/]+(\/evolucao)?$/.test(req.path);
-
-    if (!podeStatusAgendamento && !podeBloqueioProprio && !ehJornadaPropria && !podeEvolucaoPaciente) {
-      return res.status(403).json({
-        sucesso: false,
-        erro: 'Perfil profissional permite apenas atualizar status e bloqueios da própria agenda, ajustar a própria jornada e registrar evolução clínica do paciente.'
-      });
-    }
-  }
-
-  return next();
-}
-
-app.use('/api/usuarios', usuariosRouter);
-app.use('/api/dashboard', exigirAutenticacao, exigirPerfil('ADMIN'), dashboardRoutes);
-app.get('/api/eventos', exigirAutenticacao, acompanharAlteracoes);
-app.use('/api', exigirAutenticacao, controlarPermissoesApi, notificarAlteracoes);
-app.use('/api', exigirAutenticacao, controlarPermissoesApi, agendamentosRouter);
-
 async function verificarSaude(_req: express.Request, res: express.Response) {
   try {
     await pool.query('SELECT 1');
-    res.json({ status: 'OK', banco: 'disponivel', servico: 'Clínica Ikigai' });
+    res.json({ status: 'OK' });
   } catch {
-    res.status(503).json({ status: 'indisponivel', banco: 'indisponivel', servico: 'Clínica Ikigai' });
+    res.status(503).json({ status: 'indisponivel' });
   }
 }
 app.get('/api/health', verificarSaude);
+app.use('/api', exigirAutenticacao, controlarPermissoesApi, notificarAlteracoes);
+app.use('/api/usuarios', usuariosRouter);
+app.use('/api/dashboard', dashboardRoutes);
+app.get('/api/eventos', acompanharAlteracoes);
+app.use('/api/comunicacoes', comunicacoesRouter);
+app.use('/api', agendamentosRouter);
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ sucesso: false, erro: 'Rota não encontrada.' });
@@ -168,17 +137,17 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 async function bootstrap() {
   console.log('[Server] Iniciando servidor da Clinica Ikigai...');
   
+  validarConfiguracaoSessao();
   // Testar conexão física com o MySQL
   const dbConnected = await testarConexao();
   
   if (!dbConnected) {
   console.warn('[Server] Banco indisponível. As operações retornarão erro até a conexão ser restabelecida.');
-  } else {
-    await garantirAdminInicial().catch(() => console.error('[Auth] Não foi possível verificar o administrador inicial.'));
   }
 
   await registrarCapacidadeHoje().catch(() => console.error('[Capacidade] Não foi possível registrar a capacidade diária.'));
   setInterval(() => { void registrarCapacidadeHoje().catch(() => console.error('[Capacidade] Falha ao registrar capacidade.')); }, 60000).unref();
+  iniciarLembretes();
   app.listen(Number(PORT), process.env.HOST || '127.0.0.1', () => {
     console.log(`[Server] API REST ativa em http://localhost:${PORT}`);
     console.log(`[Server] Healthcheck: http://localhost:${PORT}/health`);
@@ -187,4 +156,6 @@ async function bootstrap() {
   });
 }
 
-bootstrap();
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  void bootstrap().catch(err => { console.error('[Server]', err.message); process.exitCode = 1; });
+}

@@ -160,6 +160,9 @@ async function executarTestes() {
   }
 
   // 1. REGRAS DE DIAS DE ATENDIMENTO
+  const { testarAcesso } = await import('./test-acesso.js');
+  await testarAcesso(assert);
+
   console.log("\n--- SUÍTE 1: DIAS OPERACIONAIS (Segunda a Sexta) ---");
   casosDias.forEach((caso, index) => {
     const obtido = validarRegraAgendamento(caso.data, caso.tipo);
@@ -294,6 +297,10 @@ async function executarTestes() {
   falhados += integridade.fail;
 
   console.log("\n================================================================");
+  const { runComunicacaoTests } = await import('./test-comunicacoes.js');
+  const comunicacao = await runComunicacaoTests();
+  passados += comunicacao.pass;
+  falhados += comunicacao.fail;
   console.log("RESUMO DA EXECUÇÃO");
   console.log("================================================================");
   console.log(`🎉 Sucessos: ${passados}`);

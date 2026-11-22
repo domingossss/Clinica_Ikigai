@@ -135,6 +135,14 @@ export async function runIntegrityRegressionTests() {
   const { transacaoAgenda, acompanharAlteracoes, notificarAlteracoes } = await import('../config/database.js');
   const app = express();
   app.use(express.json());
+  const operador = { id: 37, nome: 'Operadora de teste', email: 'operadora@example.test', perfil: 'RECEPCAO' as 'RECEPCAO' | 'PROFISSIONAL', profissional_id: 0 };
+  const { identificarSessao, COOKIE_TOKEN_NAME } = await import('../middleware/auth.js');
+  const { randomBytes } = await import('node:crypto');
+  const token = randomBytes(32).toString('base64url');
+  const [conta] = await pool.query<any>("INSERT INTO usuario(nome,email,senha_hash,perfil) VALUES (?,?,?,?)", [operador.nome,operador.email,'indisponivel',operador.perfil]);
+  operador.id = conta.insertId;
+  await pool.query('INSERT INTO sessao_usuario(identificador,id_usuario,expira_em) VALUES(?,?,UTC_TIMESTAMP()+INTERVAL 1 HOUR)',[identificarSessao(token),operador.id]);
+  app.use((req, _res, next) => { req.usuario = operador; next(); });
   app.get('/api/eventos', acompanharAlteracoes);
   app.use('/api', notificarAlteracoes);
   app.use('/api/dashboard', dashboard);
@@ -153,7 +161,7 @@ export async function runIntegrityRegressionTests() {
   const abrirFluxo = async () => {
     const controller = new AbortController();
     fluxos.push(controller);
-    const resposta = await fetch('http://127.0.0.1:' + porta + '/api/eventos', { signal: controller.signal });
+    const resposta = await fetch('http://127.0.0.1:' + porta + '/api/eventos', { signal: controller.signal, headers: {Cookie: COOKIE_TOKEN_NAME+'='+token} });
     if (!resposta.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Fluxo de eventos inválido.');
     const reader = resposta.body!.getReader();
     const decoder = new TextDecoder();
@@ -198,6 +206,19 @@ export async function runIntegrityRegressionTests() {
     while (futuro.getUTCDay() !== 1) futuro.setUTCDate(futuro.getUTCDate() + 1);
     const data = futuro.toISOString().slice(0, 10);
     const reserva = { paciente_id: uuid, profissional_id: profId, servico_id: proc.insertId, data, horario_inicio: '09:00' };
+    const excepcional = { ...reserva, data: '2040-02-07', confirmarFechamento: true };
+    await pool.query("INSERT INTO excecao_disponibilidade(data,tipo_excecao,motivo) VALUES (?,'Fechado','Feriado de teste')",[excepcional.data]);
+    assert((await request('/agendamentos','POST',excepcional)).status === 409,'Fechamento global impede reserva comum mesmo com confirmação');
+    operador.perfil = 'PROFISSIONAL';
+    assert((await request('/agendamentos','POST',excepcional)).status === 403,'Profissional não reserva em agenda de terceiro');
+    operador.profissional_id = profId;
+    assert((await request('/agendamentos','POST',{...excepcional,confirmarFechamento:false})).status === 403,'Reserva excepcional exige confirmação explícita');
+    assert((await request('/agendamentos','POST',{...excepcional,data})).status === 409,'Profissional não agenda por exceção em dia aberto');
+    const especial = await request('/agendamentos','POST',excepcional);
+    assert(especial.status === 201,'Profissional confirma reserva excepcional no feriado');
+    assert((await request('/agendamentos','POST',excepcional)).status === 409,'Exceção mantém controle de conflito');
+    operador.perfil = 'RECEPCAO';
+    await request('/agendamentos/'+especial.json.dados.id+'/status','PUT',{status:'Cancelado'});
     const [paginaAgenda, paginaDashboard] = await Promise.all([abrirFluxo(), abrirFluxo()]);
     const [inicioAgenda, inicioDashboard] = await Promise.all([paginaAgenda.proximo('pronto'), paginaDashboard.proximo('pronto')]);
     assert(inicioAgenda?.versao === inicioDashboard?.versao, 'Abas independentes iniciam com a mesma revisão da API');
@@ -212,6 +233,12 @@ export async function runIntegrityRegressionTests() {
     await request('/agendamentos', 'POST', { ...reserva, horario_inicio: '12:00' });
     await request('/servicos');
     assert(await semAlteracoes.proximo('alteracao', 300) === null, 'Operação rejeitada e consultas de leitura não emitem avisos de alteração');
+    const gradeClinica = { dia_semana:1, ativo:true, horario_inicio:'09:00', horario_fim:'17:00', intervalo_inicio:'14:00', intervalo_fim:'15:00' };
+    assert((await request('/expediente-clinica','PUT',gradeClinica)).status === 200,'Configuração da grade semanal da clínica no banco de teste');
+    const janelasClinica = await request('/disponibilidade?data='+data+'&servico_id='+proc.insertId+'&profissional_id='+profId);
+    const livresClinica: string[] = janelasClinica.json.dados.filter((s: {disponivel:boolean})=>s.disponivel).map((s: {horario:string})=>s.horario);
+    assert(livresClinica.includes('10:30') && !livresClinica.includes('08:00') && !livresClinica.includes('12:00') && !livresClinica.includes('14:00'),'Disponibilidade cruza abertura, pausa da clínica e pausa individual');
+    await pool.query('DELETE FROM expediente_clinica WHERE dia_semana=1');
     const [gravados]: any = await pool.query('SELECT a.*, p.id_paciente AS esperado FROM agendamento a JOIN paciente p ON p.uuid = a.paciente_uuid WHERE a.id_agendamento = ?', [id]);
     assert(gravados[0].id_paciente === gravados[0].esperado, 'UUID e identificador numérico do paciente permanecem coerentes');
     assert((await request('/agendamentos', 'POST', { ...reserva, horario_inicio: '12:00' })).status === 409, 'Criação respeita intervalo de almoço');
@@ -219,6 +246,9 @@ export async function runIntegrityRegressionTests() {
     const disponibilidade = await request('/disponibilidade?data=' + data + '&servico_id=' + proc.insertId + '&profissional_id=' + profId);
     assert(disponibilidade.status === 200 && !disponibilidade.json.dados.some((d: any) => d.horario === '12:00'), 'Consulta e criação usam o mesmo intervalo de almoço');
     assert(disponibilidade.json.dados.find((d: any) => d.horario === '09:00')?.disponivel === false, 'Disponibilidade mostra o horário recém-reservado como ocupado');
+    assert(disponibilidade.json.dados.find((d: any) => d.horario === '14:00')?.disponivel === true, 'Consulta apresenta o horário livre compatível com a duração');
+    const [aposConsulta]: any = await pool.query('SELECT COUNT(*) AS total FROM agendamento WHERE id_profissional = ? AND data = ?', [profId, data]);
+    assert(Number(aposConsulta[0].total) === 1, 'Consultar horários não cria reserva');
     const jornada = await request('/profissionais/' + profId + '/jornada', 'PUT', { dias: [{ dia_semana: 1, ativo: 1, horario_inicio: '10:00', horario_fim: '18:00', intervalo_inicio: null, intervalo_fim: null }] });
     assert(jornada.status === 409, 'Jornada que invalida uma reserva é rejeitada');
     const [dias]: any = await pool.query('SELECT * FROM jornada_profissional WHERE id_profissional = ?', [profId]);
@@ -231,10 +261,19 @@ export async function runIntegrityRegressionTests() {
     const fechado = proximoDia.toISOString().slice(0, 10);
     assert((await request('/excecoes', 'POST', { data: fechado, id_profissional: profId, tipo_excecao: 'Fechado', motivo: 'Verificação' })).status === 201, 'Fechamento válido é gravado');
     assert((await request('/agendamentos', 'POST', { ...reserva, data: fechado })).status === 409, 'Uma chamada direta não contorna o fechamento');
+    const semHorarios = await request('/disponibilidade?data=' + fechado + '&servico_id=' + proc.insertId + '&profissional_id=' + profId);
+    assert(semHorarios.status === 200 && semHorarios.json.dados.length === 0, 'Consulta de dia fechado retorna lista vazia');
     assert((await request('/agendamentos/' + id + '/reagendar', 'PUT', { data, horario_inicio: '11:00' })).status === 409, 'Reagendamento também respeita o intervalo e o respiro');
     assert((await request('/agendamentos/' + id + '/reagendar', 'PUT', { data, horario_inicio: '14:00', motivo: 'Mudança de teste' })).status === 200, 'Reagendamento válido é efetivado');
-    const [historico]: any = await pool.query('SELECT * FROM historico_status_agendamento WHERE id_agendamento = ?', [id]);
-    assert(historico.length === 1 && historico[0].motivo === 'Mudança de teste', 'Gatilho e API produzem um único registro de histórico com o motivo correto');
+    const [historico]: any = await pool.query('SELECT * FROM historico_status_agendamento WHERE id_agendamento = ? ORDER BY id_historico', [id]);
+    assert(historico.length === 2 && historico[0].tipo_evento === 'CRIACAO' && historico[1].motivo === 'Mudança de teste', 'Histórico preserva a criação e registra o reagendamento uma única vez');
+    assert((await request('/agendamentos/' + id + '/reagendar', 'PUT', { data, horario_inicio: '13:00' })).status === 200, 'Segundo reagendamento registrado mesmo mantendo o status');
+    await pool.query("CREATE TRIGGER falha_historico_teste BEFORE INSERT ON historico_status_agendamento FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falha de auditoria simulada'");
+    try {
+      assert((await request('/agendamentos/' + id + '/reagendar', 'PUT', { data, horario_inicio: '14:00' })).status === 500, 'Falha ao gravar o histórico interrompe o reagendamento');
+      const [horario]: any = await pool.query("SELECT TIME_FORMAT(horario_inicio,'%H:%i') AS hora FROM agendamento WHERE id_agendamento = ?", [id]);
+      assert(horario[0].hora === '13:00', 'Rollback do reagendamento preserva o horário anterior');
+    } finally { await pool.query('DROP TRIGGER falha_historico_teste'); }
     await pool.query("CREATE TRIGGER falha_vinculo_teste BEFORE INSERT ON profissional_procedimento FOR EACH ROW BEGIN IF NEW.id_procedimento = " + proc2.insertId + " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falha controlada'; END IF; END");
     try {
       assert((await request('/profissionais/' + profId + '/procedimentos', 'PUT', { procedimentos: [proc2.insertId] })).status === 500, 'Falha controlada no meio da substituição retorna erro');
@@ -246,12 +285,17 @@ export async function runIntegrityRegressionTests() {
     assert(profs[0].nome === 'Profissional de verificação', 'Uma transação interrompida não deixa alteração parcial');
     const bloqueio = await request('/bloqueios', 'POST', { profissional_id: profId, data, horario_inicio: '16:00', horario_fim: '17:00', motivo: 'Verificação' });
     assert(bloqueio.status === 201, 'Bloqueio livre é criado');
+    const aposBloqueio = await request('/disponibilidade?data=' + data + '&servico_id=' + proc.insertId + '&profissional_id=' + profId);
+    assert(aposBloqueio.json.dados.find((s: any) => s.horario === '16:00')?.disponivel === false, 'Consulta identifica um horário bloqueado');
     assert((await request('/agendamentos', 'POST', { ...reserva, horario_inicio: '16:00' })).status === 409, 'Reserva não contorna um bloqueio');
     assert((await request('/bloqueios/' + bloqueio.json.dados.id, 'DELETE')).status === 200, 'Remoção do bloqueio usa o identificador correto da tabela');
     assert((await request('/agendamentos/' + id + '/status', 'PUT', { status: 'Cancelado' })).status === 200, 'Cancelamento é registrado');
     assert((await request('/agendamentos/' + id + '/status', 'PUT', { status: 'Confirmado' })).status === 409, 'Alteração direta de status não reativa um cancelamento');
-    const [novoHistorico]: any = await pool.query('SELECT * FROM historico_status_agendamento WHERE id_agendamento = ?', [id]);
-    assert(novoHistorico.length === 2, 'Há somente um histórico por mudança efetiva');
+    await pool.query("UPDATE historico_status_agendamento SET data_alteracao = '2026-01-01 00:00:00' WHERE id_agendamento = ?", [id]);
+    const consultaHistorico = await request('/agendamentos/' + id + '/historico');
+    const eventos = consultaHistorico.json.dados.historico;
+    assert(eventos.map((e: any) => e.tipo_evento).join() === 'CANCELAMENTO,REAGENDAMENTO,REAGENDAMENTO,CRIACAO', 'Empate de timestamp preserva ordem determinística e cada alteração efetiva aparece uma vez');
+    assert(eventos.every((e: any) => e.id_usuario === operador.id && e.alterado_por === operador.nome), 'Eventos preservam identificador e nome do operador da sessão');
     const cpf = '52998224725';
     const cadastro = { nome_completo:'Paciente regressão', cpf, telefone:'11912345678', endereco:'Endereço fictício' };
     const criado = await request('/pacientes','POST',cadastro);

@@ -1,8 +1,9 @@
+import Swal from 'sweetalert2';
+import { apiFetch } from '../api';
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
 import { PERFIL_LABELS, type PerfilUsuario } from '../services/auth';
 import CampoSenha from './CampoSenha';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 interface UsuarioItem {
   id: number;
@@ -47,31 +48,27 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
   const [senha, setSenha] = useState('');
   const [salvando, setSalvando] = useState(false);
 
-  const carregarDados = useCallback(async () => {
-    setCarregando(true);
-    setErro(null);
-    try {
-      const [resUsers, resProfs] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/usuarios`, { credentials: 'include' }),
-        fetch(`${API_BASE_URL}/api/profissionais`, { credentials: 'include' }),
-      ]);
-      const jsonUsers = await resUsers.json();
-      if (!resUsers.ok || !jsonUsers.sucesso) {
-        throw new Error(jsonUsers.erro || 'Não foi possível carregar usuários.');
-      }
-      setUsuarios(jsonUsers.dados || []);
-
-      if (resProfs.ok) {
-        const jsonProfs = await resProfs.json();
-        if (jsonProfs.sucesso && Array.isArray(jsonProfs.dados)) {
-          setProfissionais(jsonProfs.dados);
+  const carregarDados = useCallback(() => {
+    return Promise.all([apiFetch('/api/usuarios'), apiFetch('/api/profissionais')])
+      .then(async ([resUsers, resProfs]) => {
+        const jsonUsers = await resUsers.json();
+        if (!resUsers.ok || !jsonUsers.sucesso) {
+          throw new Error(jsonUsers.erro || 'Não foi possível carregar usuários.');
         }
-      }
-    } catch (err: any) {
-      setErro(err.message || 'Erro ao buscar usuários.');
-    } finally {
-      setCarregando(false);
-    }
+        setErro(null);
+        setUsuarios(jsonUsers.dados || []);
+
+        if (resProfs.ok) {
+          const jsonProfs = await resProfs.json();
+          if (jsonProfs.sucesso && Array.isArray(jsonProfs.dados)) {
+            setProfissionais(jsonProfs.dados);
+          }
+        }
+      })
+      .catch((err: unknown) => {
+        setErro(err instanceof Error ? err.message : 'Erro ao buscar usuários.');
+      })
+      .finally(() => setCarregando(false));
   }, []);
 
   useEffect(() => {
@@ -103,10 +100,10 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
     setSalvando(true);
     try {
       const url = editandoId
-        ? `${API_BASE_URL}/api/usuarios/${editandoId}`
-        : `${API_BASE_URL}/api/usuarios`;
+        ? `/api/usuarios/${editandoId}`
+        : `/api/usuarios`;
       const method = editandoId ? 'PUT' : 'POST';
-      const body: Record<string, any> = {
+      const body: Record<string, string | number | null> = {
         nome: nome.trim(),
         email: email.trim(),
         perfil,
@@ -117,7 +114,7 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
       }
       if (senha) body.senha = senha;
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -138,17 +135,17 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
       limparFormulario();
       await carregarDados();
       onProfissionaisChange?.();
-    } catch (err: any) {
-      onNotify?.(err.message || 'Erro ao salvar usuário.', 'error');
+    } catch (err) {
+      onNotify?.(err instanceof Error ? err.message : 'Erro ao salvar usuário.', 'error');
     } finally {
       setSalvando(false);
     }
   }
 
   async function alternarStatus(u: UsuarioItem) {
-    const novoAtivo = !Boolean(u.ativo);
+    const novoAtivo = !u.ativo;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/usuarios/${u.id}/status`, {
+      const res = await apiFetch(`/api/usuarios/${u.id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -160,8 +157,31 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
       }
       onNotify?.(novoAtivo ? 'Usuário ativado.' : 'Usuário inativado.', 'success');
       await carregarDados();
-    } catch (err: any) {
-      onNotify?.(err.message || 'Erro ao alterar status.', 'error');
+    } catch (err) {
+      onNotify?.(err instanceof Error ? err.message : 'Erro ao alterar status.', 'error');
+    }
+  }
+
+  async function excluirUsuario(u: UsuarioItem) {
+    const confirmacao = await Swal.fire({
+      title: 'Excluir usuário?',
+      text: `O acesso de ${u.nome} (${u.email}) será removido definitivamente.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Excluir usuário',
+      cancelButtonText: 'Voltar',
+      confirmButtonColor: '#b91c1c',
+      focusCancel: true,
+    });
+    if (!confirmacao.isConfirmed) return;
+    try {
+      const res = await apiFetch(`/api/usuarios/${u.id}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (!res.ok || !json.sucesso) throw new Error(json.erro || 'Falha ao excluir usuário.');
+      onNotify?.('Usuário excluído.', 'success');
+      await carregarDados();
+    } catch (err) {
+      onNotify?.(err instanceof Error ? err.message : 'Falha ao excluir usuário.', 'error');
     }
   }
 
@@ -371,7 +391,7 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => iniciarEdicao(u)}
@@ -390,6 +410,12 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
                         }`}
                       >
                         {ativo ? 'Inativar' : 'Ativar'}
+                      </button>
+                    )}
+                    {u.id !== usuarioLogadoId && (
+                      <button type="button" onClick={() => void excluirUsuario(u)}
+                        className="rounded-lg px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50">
+                        Excluir
                       </button>
                     )}
                   </div>

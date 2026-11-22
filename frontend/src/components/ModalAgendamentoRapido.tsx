@@ -1,3 +1,4 @@
+import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Swal from 'sweetalert2';
@@ -28,6 +29,8 @@ export interface ServicoItem {
 }
 
 interface ModalAgendamentoRapidoProps {
+  excepcional?: boolean;
+  admin: boolean;
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (dadosAgendamento?: { data: string; profissionalId: number }) => void;
@@ -43,13 +46,14 @@ interface ModalAgendamentoRapidoProps {
 
 const AVISO_SERVICO_INDISPONIVEL = 'O serviço selecionado foi removido ou inativado. Escolha outro serviço.';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export default function ModalAgendamentoRapido(props: ModalAgendamentoRapidoProps) {
   return props.isOpen ? <FormularioAgendamento {...props} /> : null;
 }
 
 function FormularioAgendamento({
+  excepcional = false,
+  admin,
   isOpen,
   onClose,
   onSuccess,
@@ -71,7 +75,8 @@ function FormularioAgendamento({
   const [profissionalEscolhidoId, setProfissionalId] = useState<number>(initialProfissionalId || 1);
   const [servicoEscolhidoId, setServicoId] = useState<string>('');
   const [data, setData] = useState<string>(initialDate || new Date().toISOString().substring(0, 10));
-  const [horaInicio, setHoraInicio] = useState<string>(initialTime || '09:00');
+  const [horaEscolhida, setHoraInicio] = useState<string>(initialTime || '');
+  const [iniciouAgendamento, setIniciouAgendamento] = useState(false);
   const [observacoes, setObservacoes] = useState<string>('');
   const [tipoAtendimento, setTipoAtendimento] = useState('Primeira_Consulta');
 
@@ -107,20 +112,20 @@ function FormularioAgendamento({
     const timer = setTimeout(async () => {
       if (!isOpen || termoBusca.trim().length < 2) { setResultadosBusca([]); return; }
       try {
-        const res = await fetch(API_BASE_URL + '/api/pacientes?limite=10&busca=' + encodeURIComponent(termoBusca), {signal:controller.signal});
+        const res = await apiFetch((excepcional ? '/api/agenda/pacientes?busca=' : '/api/pacientes?limite=10&busca=') + encodeURIComponent(termoBusca), {signal:controller.signal});
         const json = await res.json();
         if (!res.ok) throw new Error(json.erro);
         if (!controller.signal.aborted) setResultadosBusca(json.dados.map((p: PacienteItem) => ({...p,nome:p.nome_completo || p.nome})));
       } catch { if (!controller.signal.aborted) { setResultadosBusca([]); setErrorMessage('Não foi possível buscar pacientes.'); } }
     }, 250);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [isOpen, termoBusca]);
+  }, [isOpen, termoBusca, excepcional]);
 
   const atualizarServicosAtivos = useCallback(() => {
     consultaServicos.current?.abort();
     const controller = new AbortController();
     consultaServicos.current = controller;
-    return fetch(API_BASE_URL + '/api/servicos?apenas_ativos=true', { signal: controller.signal, cache: 'no-store' }).then(async res => {
+    return apiFetch('/api/servicos?apenas_ativos=true', { signal: controller.signal, cache: 'no-store' }).then(async res => {
       const json = await res.json();
       if (!res.ok || !json.sucesso || !Array.isArray(json.dados)) throw new Error(json.erro || 'Não foi possível consultar os serviços ativos.');
       if (controller.signal.aborted) return;
@@ -147,13 +152,45 @@ function FormularioAgendamento({
 
   const [elegibilidade, setElegibilidade] = useState<{servicoId: string; profissionais: ProfissionalItem[]}>({servicoId:'', profissionais:[]});
   const carregandoProfissionaisElegiveis = !!servicoId && elegibilidade.servicoId !== servicoId;
-  const profissionaisElegiveis = !servicoId ? profissionais : carregandoProfissionaisElegiveis ? [] : elegibilidade.profissionais;
+  const profissionaisDoServico = !servicoId ? profissionais : carregandoProfissionaisElegiveis ? [] : elegibilidade.profissionais;
+  const profissionaisElegiveis = excepcional
+    ? profissionaisDoServico.filter(p => p.id === initialProfissionalId)
+    : profissionaisDoServico;
   const profissionalId = profissionaisElegiveis.some(p => p.id === profissionalEscolhidoId) ? profissionalEscolhidoId : profissionaisElegiveis[0]?.id || 0;
+
+  const [revisaoHorarios, setRevisaoHorarios] = useState(0);
+  const [consultaHorarios, setConsultaHorarios] = useState<{ chave: string; livres: string[]; erro?: string }>();
+  const parametros = servicoId && profissionalId && data
+    ? new URLSearchParams({ servico_id: servicoId, profissional_id: String(profissionalId), data, excepcional: excepcional ? '1' : '0' }).toString()
+    : '';
+  const chaveHorarios = parametros + '#' + revisaoHorarios;
+  const horarios = consultaHorarios?.chave === chaveHorarios ? consultaHorarios : undefined;
+  const horaInicio = horarios?.livres.includes(horaEscolhida) ? horaEscolhida : '';
+  const atualizarHorarios = () => setRevisaoHorarios(n => n + 1);
+  useClinicUpdates(atualizarHorarios, ['agendamentos', 'bloqueios', 'profissionais', 'servicos', 'jornadas', 'excecoes', 'expediente-clinica']);
+
+  useEffect(() => {
+    if (!parametros) return;
+    const controller = new AbortController();
+    async function consultar() {
+      try {
+        const res = await apiFetch('/api/disponibilidade?' + parametros, { signal: controller.signal, cache: 'no-store' });
+        const resultado = await res.json();
+        if (!res.ok || !resultado.sucesso || !Array.isArray(resultado.dados)) throw new Error(resultado.erro || 'Não foi possível consultar os horários.');
+        const slots: { horario: string; disponivel: boolean }[] = resultado.dados;
+        if (!controller.signal.aborted) setConsultaHorarios({ chave: chaveHorarios, livres: slots.filter(s => s.disponivel).map(s => s.horario) });
+      } catch (erro) {
+        if (!controller.signal.aborted) setConsultaHorarios({ chave: chaveHorarios, livres: [], erro: erro instanceof Error ? erro.message : 'Falha ao consultar horários.' });
+      }
+    }
+    void consultar();
+    return () => controller.abort();
+  }, [chaveHorarios, parametros]);
 
   useEffect(() => {
     if (!servicoId) return;
     const controller = new AbortController();
-    fetch(API_BASE_URL + '/api/servicos/' + servicoId + '/profissionais', {signal:controller.signal})
+    apiFetch('/api/servicos/' + servicoId + '/profissionais', {signal:controller.signal})
       .then(async res => {
         const json = await res.json();
         if (!res.ok || !json.sucesso || !Array.isArray(json.dados)) throw new Error('Falha ao consultar profissionais.');
@@ -170,7 +207,7 @@ function FormularioAgendamento({
   useEffect(() => {
     if (!initialPacienteId || pacienteEscolhido) return;
     const controller = new AbortController();
-    fetch(API_BASE_URL + '/api/pacientes/' + encodeURIComponent(initialPacienteId), {signal:controller.signal})
+    apiFetch('/api/pacientes/' + encodeURIComponent(initialPacienteId), {signal:controller.signal})
       .then(async res => {
         const json = await res.json();
         if (!res.ok || !json.sucesso) throw new Error('Não foi possível consultar o paciente.');
@@ -252,7 +289,7 @@ function FormularioAgendamento({
     setSalvandoPaciente(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/pacientes/rapido`, {
+      const res = await apiFetch(`/api/pacientes/rapido`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -262,9 +299,17 @@ function FormularioAgendamento({
         })
       });
 
-      const dataRes = await res.json();
+      if ([502, 503, 504].includes(res.status)) {
+        setErrorMessage('O servidor não confirmou o cadastro. Busque o paciente antes de tentar novamente.');
+        return;
+      }
+      const dataRes = await res.json().catch(() => null);
+      if (!dataRes) {
+        setErrorMessage('O servidor retornou uma resposta inválida. Busque o paciente antes de tentar novamente.');
+        return;
+      }
 
-      if (dataRes.sucesso && dataRes.dados) {
+      if (res.ok && dataRes.sucesso && dataRes.dados) {
         const pacienteSalvo: PacienteItem = {
           id: dataRes.dados.id,
           nome: dataRes.dados.nome || novoNome.trim(),
@@ -325,10 +370,12 @@ function FormularioAgendamento({
     setSubmitting(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/agendamentos`, {
+      if (excepcional && !window.confirm('Confirmar a reserva excepcional para ' + data + ' às ' + horaInicio + '?')) return;
+      const response = await apiFetch(`/api/agendamentos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          confirmarFechamento: excepcional,
           paciente_id: selectedPaciente.id,
           profissional_id: Number(profissionalId),
           servico_id: Number(servicoId),
@@ -345,14 +392,7 @@ function FormularioAgendamento({
         Swal.fire({
           icon: 'success',
           title: 'Agendamento Confirmado',
-          html: `
-            <div class="text-sm text-left mt-2 space-y-1">
-              <p><strong>Paciente:</strong> ${selectedPaciente.nome}</p>
-              <p><strong>Data:</strong> ${data.split('-').reverse().join('/')}</p>
-              <p><strong>Horário:</strong> ${horaInicio} às ${calculoHorario?.horaTermino || ''}</p>
-              <p><strong>Serviço:</strong> ${servicoSelecionado?.nome || ''}</p>
-            </div>
-          `,
+          text: [selectedPaciente.nome, data.split('-').reverse().join('/'), horaInicio, servicoSelecionado?.nome].filter(Boolean).join(' · '),
           confirmButtonColor: '#1e3a8a',
           confirmButtonText: 'Concluir'
         });
@@ -360,6 +400,7 @@ function FormularioAgendamento({
         onSuccess({ data, profissionalId: Number(profissionalId) });
         onClose();
       } else {
+        if (response.status === 409) atualizarHorarios();
         const msg = result.erro && result.detalhes
           ? `${result.erro} ${result.detalhes}`
           : (result.erro || result.detalhes || 'Não foi possível realizar o agendamento.');
@@ -390,8 +431,7 @@ function FormularioAgendamento({
               </svg>
             </div>
             <div>
-              <h3 className="text-base font-bold text-gray-900">Novo Agendamento</h3>
-              <p className="text-xs text-gray-500">Agendamento de consulta e cálculo automático de horário</p>
+              <h3 className="text-base font-bold text-gray-900">{iniciouAgendamento ? 'Novo Agendamento' : 'Consultar horários disponíveis'}</h3>
             </div>
           </div>
           <button
@@ -418,7 +458,7 @@ function FormularioAgendamento({
           )}
 
           {/* SEÇÃO 1: PACIENTE */}
-          <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+          {iniciouAgendamento && <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
             <div className="flex items-center justify-between mb-3">
               <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
                 Paciente <span className="text-red-500">*</span>
@@ -437,7 +477,7 @@ function FormularioAgendamento({
                 >
                   Buscar
                 </button>
-                <button
+                {!excepcional && <button
                   type="button"
                   onClick={() => setModoPaciente('novo')}
                   className={`text-xs font-semibold px-3 py-1 rounded transition-all ${
@@ -447,7 +487,7 @@ function FormularioAgendamento({
                   }`}
                 >
                   Novo Paciente
-                </button>
+                </button>}
               </div>
             </div>
 
@@ -462,13 +502,13 @@ function FormularioAgendamento({
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-gray-900">{selectedPaciente.nome}</h4>
-                    <p className="text-[11px] text-gray-600">
+                    {selectedPaciente.whatsapp && <p className="text-[11px] text-gray-600">
                       WhatsApp: {aplicarMascaraTelefone(selectedPaciente.whatsapp)}
-                    </p>
+                    </p>}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
+                  {admin && <button
                     type="button"
                     onClick={() => setIsHistoricoModalOpen(true)}
                     className="text-xs font-bold text-primary hover:text-primary-dark bg-secondary/15 hover:bg-secondary/25 px-2.5 py-1.5 rounded-lg border border-secondary/30 transition-all flex items-center gap-1 cursor-pointer"
@@ -478,7 +518,7 @@ function FormularioAgendamento({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <span>Histórico</span>
-                  </button>
+                  </button>}
                   <button
                     type="button"
                     onClick={() => {
@@ -497,7 +537,7 @@ function FormularioAgendamento({
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="Digite nome ou telefone para buscar..."
+                    placeholder={excepcional ? 'Buscar paciente por nome' : 'Digite nome ou telefone para buscar...'}
                     value={termoBusca}
                     onChange={e => {
                       setTermoBusca(e.target.value);
@@ -526,7 +566,7 @@ function FormularioAgendamento({
                         >
                           <div>
                             <p className="text-xs font-semibold text-gray-900">{p.nome || p.nome_completo}</p>
-                            <p className="text-[10px] text-gray-500">{aplicarMascaraTelefone(p.whatsapp)}</p>
+                            <p className="text-[10px] text-gray-500">{p.whatsapp && aplicarMascaraTelefone(p.whatsapp)}</p>
                           </div>
                           <span className="text-[10px] bg-blue-50 text-blue-700 font-semibold px-2 py-0.5 rounded">
                             Selecionar
@@ -536,7 +576,7 @@ function FormularioAgendamento({
                     ) : (
                       <div className="p-3 text-center">
                         <p className="text-xs text-gray-500 mb-1">Nenhum paciente encontrado com esse termo.</p>
-                        <button
+                        {!excepcional && <button
                           type="button"
                           onClick={() => {
                             setNovoNome(termoBusca);
@@ -546,7 +586,7 @@ function FormularioAgendamento({
                           className="text-xs text-blue-600 font-semibold hover:underline"
                         >
                           Cadastrar "{termoBusca}" como novo paciente
-                        </button>
+                        </button>}
                       </div>
                     )}
                   </div>
@@ -614,7 +654,7 @@ function FormularioAgendamento({
                 </div>
               </form>
             )}
-          </div>
+          </div>}
 
           {/* SEÇÃO 2: SERVIÇO E PROFISSIONAL (IK-80 CA03) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -698,19 +738,21 @@ function FormularioAgendamento({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
-                Horário de Início *
+              <label htmlFor="horario-livre" className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                Horários disponíveis *
               </label>
-              <input
-                type="time"
-                min="08:00"
-                max="18:00"
+              <select
+                id="horario-livre"
+                disabled={!horarios?.livres.length}
                 required
                 value={horaInicio}
                 onChange={e => setHoraInicio(e.target.value)}
                 className="w-full p-2.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900"
-              />
-              <span className="text-[10px] text-gray-500 mt-1 block">Horário sujeito à disponibilidade da agenda</span>
+              >
+                <option value="">{!parametros ? 'Defina serviço, profissional e data' : !horarios ? 'Consultando horários…' : horarios.erro ? 'Consulta indisponível' : horarios.livres.length ? 'Selecione um horário' : 'Nenhum horário disponível'}</option>
+                {horarios?.livres.map(hora => <option key={hora} value={hora}>{hora}</option>)}
+              </select>
+              {horarios?.erro && <p role="alert" className="text-xs text-red-700">{horarios.erro} <button type="button" className="underline" onClick={atualizarHorarios}>Tentar novamente</button></p>}
             </div>
           </div>
 
@@ -735,7 +777,7 @@ function FormularioAgendamento({
             </div>
           )}
 
-          <label className="block text-xs font-bold text-gray-700">Tipo de atendimento
+          {iniciouAgendamento && <><label className="block text-xs font-bold text-gray-700">Tipo de atendimento
             <select value={tipoAtendimento} onChange={e => setTipoAtendimento(e.target.value)} className="w-full p-2 border rounded-lg">
               <option value="Primeira_Consulta">Primeira consulta</option><option value="Retorno">Retorno</option>
             </select>
@@ -752,7 +794,7 @@ function FormularioAgendamento({
               onChange={e => setObservacoes(e.target.value)}
               className="w-full p-2.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs"
             />
-          </div>
+          </div></>}
         </div>
 
         {/* Rodapé com Botões de Ação */}
@@ -765,10 +807,15 @@ function FormularioAgendamento({
             Cancelar
           </button>
 
-          <button
+          {!iniciouAgendamento ? <button
+            type="button"
+            onClick={() => setIniciouAgendamento(true)}
+            disabled={!horaInicio}
+            className="rounded-lg bg-blue-600 px-5 py-2.5 text-xs font-semibold text-white disabled:bg-gray-400"
+          >Agendar neste horário</button> : <button
             type="button"
             onClick={handleSalvarAgendamento}
-            disabled={submitting || carregandoProfissionaisElegiveis || carregandoServicos || !selectedPaciente || !servicoSelecionado || !profissionalId}
+            disabled={submitting || carregandoProfissionaisElegiveis || carregandoServicos || !selectedPaciente || !servicoSelecionado || !profissionalId || !horaInicio}
             className={`px-5 py-2.5 rounded-lg font-semibold text-xs text-white shadow-xs transition-all flex items-center gap-2 ${
               !selectedPaciente
                 ? 'bg-gray-400 cursor-not-allowed'
@@ -783,7 +830,7 @@ function FormularioAgendamento({
             ) : (
               <span>Salvar agendamento</span>
             )}
-          </button>
+          </button>}
         </div>
       </div>
 

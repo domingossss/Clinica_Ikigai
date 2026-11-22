@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "dev": "tsc && concurrently --kill-others \"tsc --watch --preserveWatchOutput\" \"node --watch dist/server.js\"",
     "test": "tsc && node dist/utils/test-runner.js",
+    "admin:provisionar": "tsc && node dist/scripts/provisionar-admin.js",
     "db:migrate": "tsc && node dist/scripts/migrate.js",
     "db:backup": "tsc && node dist/scripts/backup.js"
   },

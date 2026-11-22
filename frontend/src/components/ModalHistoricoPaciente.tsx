@@ -1,7 +1,7 @@
+import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export interface AtendimentoHistorico {
   id: number;
@@ -103,7 +103,7 @@ function HistoricoPaciente({
     const controller = new AbortController();
     consultaHistorico.current = controller;
 
-    return fetch(`${API_BASE_URL}/api/pacientes/${encodeURIComponent(pacienteId)}/historico?ordem=${ordem}`, { signal: controller.signal }).then(async res => {
+    return apiFetch(`/api/pacientes/${encodeURIComponent(pacienteId)}/historico?ordem=${ordem}`, { signal: controller.signal }).then(async res => {
       
       let data: { sucesso?: boolean; erro?: string; dados?: { paciente: PacienteHistoricoInfo; historico: AtendimentoHistorico[] } } | null = null;
       const contentType = res.headers.get('content-type');

@@ -209,6 +209,25 @@ CREATE TABLE IF NOT EXISTS agendamento (
 -- =====================================================================
 -- 9. TABELA: avaliacao_atendimento (NPS 0 a 10)
 -- =====================================================================
+CREATE TABLE IF NOT EXISTS comunicacao_agendamento (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_agendamento INT NOT NULL,
+    ocorrencia DATETIME NOT NULL,
+    tipo ENUM('CONFIRMACAO', 'LEMBRETE') NOT NULL,
+    canal ENUM('WHATSAPP') NOT NULL DEFAULT 'WHATSAPP',
+    provedor VARCHAR(40) NOT NULL,
+    tentativa INT NOT NULL DEFAULT 1,
+    estado ENUM('PENDENTE','SUBMETIDA','ENTREGUE','FALHA','INCERTA') NOT NULL DEFAULT 'PENDENTE',
+    referencia_externa VARCHAR(120) NULL,
+    erro VARCHAR(160) NULL,
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_comunicacao_ocorrencia (id_agendamento, ocorrencia, tipo, tentativa),
+    INDEX idx_comunicacao_pendentes (estado, id),
+    CONSTRAINT fk_comunicacao_agendamento FOREIGN KEY (id_agendamento)
+        REFERENCES agendamento(id_agendamento) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS avaliacao_atendimento (
     id_avaliacao INT AUTO_INCREMENT PRIMARY KEY,
     id_agendamento INT NOT NULL UNIQUE,
@@ -248,7 +267,9 @@ CREATE TABLE IF NOT EXISTS historico_status_agendamento (
     status_anterior ENUM('Agendado', 'Confirmado', 'Na Recepção', 'Em Atendimento', 'Concluído', 'Realizado', 'Cancelado', 'No_Show', 'Reagendado') NULL,
     status_novo ENUM('Agendado', 'Confirmado', 'Na Recepção', 'Em Atendimento', 'Concluído', 'Realizado', 'Cancelado', 'No_Show', 'Reagendado') NOT NULL,
     motivo VARCHAR(255) NULL,
-    alterado_por VARCHAR(100) NOT NULL DEFAULT 'Sistema',
+    alterado_por VARCHAR(150) NOT NULL DEFAULT 'Sistema',
+    id_usuario INT NULL,
+    tipo_evento ENUM('CRIACAO','REAGENDAMENTO','CANCELAMENTO','STATUS') NULL,
     data_alteracao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_historico_agendamento
         FOREIGN KEY (id_agendamento) REFERENCES agendamento (id_agendamento)
@@ -522,3 +543,20 @@ SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE usuario ADD 
 PREPARE ikigai_stmt FROM @ikigai_ddl;
 EXECUTE ikigai_stmt;
 DEALLOCATE PREPARE ikigai_stmt;
+
+CREATE TABLE IF NOT EXISTS sessao_usuario (
+    identificador BINARY(32) PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    expira_em DATETIME NOT NULL,
+    KEY idx_sessao_usuario_expiracao (id_usuario, expira_em),
+    CONSTRAINT fk_sessao_usuario FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS expediente_clinica (
+  dia_semana TINYINT PRIMARY KEY,
+  ativo BOOLEAN NOT NULL,
+  horario_inicio TIME NOT NULL,
+  horario_fim TIME NOT NULL,
+  intervalo_inicio TIME NULL,
+  intervalo_fim TIME NULL
+) ENGINE=InnoDB;

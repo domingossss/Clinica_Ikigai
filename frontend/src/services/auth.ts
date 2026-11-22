@@ -1,4 +1,4 @@
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+import { apiFetch } from '../api';
 
 export type PerfilUsuario = 'ADMIN' | 'RECEPCAO' | 'PROFISSIONAL';
 
@@ -19,18 +19,14 @@ export const PERFIL_LABELS: Record<PerfilUsuario, string> = {
 };
 
 export async function buscarSessao(): Promise<UsuarioSessao | null> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/auth/me`, { credentials: 'include' });
-    if (!res.ok) return null;
-    const json = await res.json();
-    return json?.sucesso ? json.dados : null;
-  } catch {
-    return null;
-  }
+  const res = await apiFetch('/api/auth/me');
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error('Não foi possível verificar sua sessão.');
+  return (await res.json()).dados;
 }
 
 export async function efetuarLogin(email: string, senha: string): Promise<UsuarioSessao> {
-  const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+  const res = await apiFetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -44,8 +40,9 @@ export async function efetuarLogin(email: string, senha: string): Promise<Usuari
 }
 
 export async function encerrarSessao(): Promise<void> {
-  await fetch(`${API_BASE_URL}/api/auth/logout`, {
+  const res = await apiFetch('/api/auth/logout', {
     method: 'POST',
     credentials: 'include',
-  }).catch(() => {});
+  });
+  if (!res.ok && res.status !== 401) throw new Error('Não foi possível encerrar sua sessão. Tente novamente.');
 }

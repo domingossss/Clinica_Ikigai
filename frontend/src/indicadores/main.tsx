@@ -1,13 +1,13 @@
+import { apiFetch } from '../api';
 import { useEffect, useRef, useState } from 'react';
 import Chart from 'chart.js/auto';
 import './styles.css';
 import { initDashboard } from './app.js';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export default function IndicadoresDashboard() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dashboardData, setDashboardData] = useState<any>(null);
+  const [dashboardData, setDashboardData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -17,9 +17,7 @@ export default function IndicadoresDashboard() {
 
     async function carregarDados() {
       try {
-        setLoading(true);
-        setErro(null);
-        const response = await fetch(`${API_BASE_URL}/api/dashboard/dados-painel`);
+        const response = await apiFetch(`/api/dashboard/dados-painel`);
         if (!response.ok) {
           throw new Error(`Falha ao obter dados da clínica (Status HTTP: ${response.status})`);
         }
@@ -28,10 +26,10 @@ export default function IndicadoresDashboard() {
           setDashboardData(data);
           setLoading(false);
         }
-      } catch (err: any) {
+      } catch (err) {
         if (ativo) {
           console.error('[Dashboard] Erro na API:', err);
-          setErro(err?.message || 'Falha ao conectar com o servidor da clínica.');
+          setErro(err instanceof Error ? err.message : 'Falha ao conectar com o servidor da clínica.');
           setLoading(false);
         }
       }

@@ -1,3 +1,4 @@
+import { apiUrl, eventoSessao } from '../api';
 import { useEffect, useRef } from 'react';
 export interface ClinicChange { recursos: string[]; versao?: string }
 const CLINIC_CHANGE_EVENT = 'ikigai:alteracao';
@@ -48,10 +49,11 @@ export function startClinicUpdates(): () => void {
   const visibilidade = () => { if (document.visibilityState === 'visible') sincronizar(); };
   const conectar = () => {
     if (stopped) return;
-    source = new EventSource((import.meta.env.VITE_API_URL || '').replace(/\/$/, '') + '/api/eventos');
+    source = new EventSource(apiUrl('/api/eventos'), { withCredentials: true });
     source.addEventListener('pronto', receber);
     source.addEventListener('alteracao', receber);
     source.onerror = () => {
+      if (!stopped) window.dispatchEvent(new Event(eventoSessao));
       // O navegador retoma quedas normais. Após uma resposta HTTP temporária que
       // encerre o EventSource (por exemplo durante a inicialização da API), reabre o fluxo.
       if (!stopped && source.readyState === EventSource.CLOSED && reconnect === undefined) {

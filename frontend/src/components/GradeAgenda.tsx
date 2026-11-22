@@ -1,10 +1,10 @@
+import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import ModalHistoricoPaciente from './ModalHistoricoPaciente';
 import ModalHistoricoAgendamento from './ModalHistoricoAgendamento';
 import type { UsuarioSessao } from '../services/auth';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +60,7 @@ type StatusAgendamento =
   | 'Reagendado';
 
 interface Props {
+  admin: boolean;
   profissionais: Profissional[];
   dataSelecionada?: string;
   onDataChange?: (novaData: string) => void;
@@ -176,6 +177,7 @@ function obterDiasDaSemana(dateStr: string): Array<{ data: string; nomeDia: stri
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function GradeAgenda({
+  admin,
   profissionais,
   dataSelecionada: dataProp,
   onDataChange,
@@ -301,7 +303,7 @@ export default function GradeAgenda({
       ? '/api/profissionais/' + profId + '/agenda?data=' + data + '&periodo=' + modo
       : '/api/agendamentos/dia?data=' + data;
     return Promise.all([agendaUrl, '/api/janelas?data=' + data + '&periodo=' + modo].map(async url => {
-      const res = await fetch(API_BASE_URL + url, {signal:controller.signal});
+      const res = await apiFetch(url, {signal:controller.signal});
       const json = await res.json();
       if (!res.ok || !json.sucesso) throw new Error(json.erro || 'Não foi possível consultar a agenda.');
       return json;
@@ -329,7 +331,7 @@ export default function GradeAgenda({
     });
   }, []);
 
-  useClinicUpdates(() => { void buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao); }, ['agendamentos', 'bloqueios', 'profissionais', 'pacientes', 'servicos', 'excecoes']);
+  useClinicUpdates(() => { void buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao); }, ['agendamentos', 'bloqueios', 'profissionais', 'pacientes', 'servicos', 'excecoes','expediente-clinica']);
 
 
   useEffect(() => {
@@ -343,7 +345,7 @@ export default function GradeAgenda({
   const atualizarStatus = async (id: number, novoStatus: StatusAgendamento) => {
     setAtualizandoStatus(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/agendamentos/${id}/status`, {
+      const res = await apiFetch(`/api/agendamentos/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: novoStatus }),
@@ -379,7 +381,7 @@ export default function GradeAgenda({
     setReagendarErro(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/agendamentos/${agendamentoSelecionado.id}/reagendar`, {
+      const res = await apiFetch(`/api/agendamentos/${agendamentoSelecionado.id}/reagendar`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -424,7 +426,7 @@ export default function GradeAgenda({
     setBloqueioErro(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/bloqueios`, {
+      const res = await apiFetch(`/api/bloqueios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -470,7 +472,7 @@ export default function GradeAgenda({
 
     setRemovendoBloqueio(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/bloqueios/${bloqueioId}`, {
+      const res = await apiFetch(`/api/bloqueios/${bloqueioId}`, {
         method: 'DELETE'
       });
       const json = await res.json();
@@ -503,7 +505,7 @@ export default function GradeAgenda({
     setJornadaErro(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${profId}/jornada`);
+      const res = await apiFetch(`/api/profissionais/${profId}/jornada`);
       const json = await res.json();
       if (!res.ok || !json.sucesso) {
         throw new Error(json.erro || 'Não foi possível carregar sua jornada.');
@@ -516,7 +518,7 @@ export default function GradeAgenda({
     }
   };
 
-  const atualizarDiaJornada = (diaSemana: number, campo: keyof DiaJornada, valor: any) => {
+  const atualizarDiaJornada = <Campo extends keyof DiaJornada,>(diaSemana: number, campo: Campo, valor: DiaJornada[Campo]) => {
     setJornadaDias(prev =>
       prev.map(d => (d.dia_semana === diaSemana ? { ...d, [campo]: valor } : d))
     );
@@ -531,7 +533,7 @@ export default function GradeAgenda({
     setJornadaErro(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${profId}/jornada`, {
+      const res = await apiFetch(`/api/profissionais/${profId}/jornada`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -648,7 +650,7 @@ export default function GradeAgenda({
             });
 
             const dentroJornada = janelasAgenda.find(j => j.profissional_id === profIdDoSlot && j.data === dataDoSlot)?.janelas.some(([i,f]) => slotMin >= i && slotMin < f);
-            return (dentroJornada && !temAgendamento && !temBloqueio) ? (
+            return (onAbrirNovoAgendamento && dentroJornada && !temAgendamento && !temBloqueio) ? (
               <div
                 key={slot}
                 onClick={() =>
@@ -1267,8 +1269,9 @@ export default function GradeAgenda({
               </button>
             )}
 
+            {admin && <a className="block text-center py-2 text-xs font-bold text-primary" href={`/comunicacao?agendamento=${agendamentoSelecionado.id}`}>Comunicações do atendimento</a>}
             {/* Botão Visualizar Histórico do Paciente (IK-77) */}
-            <button
+            {admin && <button
               onClick={() => setIsHistoricoModalOpen(true)}
               className="w-full py-2 px-3 rounded-xl text-xs font-bold border border-secondary/40 bg-secondary/15 text-primary-dark hover:bg-secondary/25 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
             >
@@ -1276,11 +1279,11 @@ export default function GradeAgenda({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <span>Ver Histórico do Paciente</span>
-            </button>
+            </button>}
 
             {/* Ações de status */}
             {/* Botão Visualizar Histórico de Alterações do Agendamento (IK-97) */}
-            <button
+            {admin && <button
               onClick={() => setIsHistoricoAgendamentoOpen(true)}
               className="w-full py-2 px-3 rounded-xl text-xs font-bold border border-gray/25 bg-light-gray text-dark hover:bg-gray/15 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
             >
@@ -1288,7 +1291,7 @@ export default function GradeAgenda({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <span>Ver Histórico do Agendamento</span>
-            </button>
+            </button>}
 
             {usuarioLogado?.perfil === 'PROFISSIONAL' && (!usuarioLogado.profissional_id || Number(agendamentoSelecionado.profissional_id) !== Number(usuarioLogado.profissional_id)) ? (
               <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-semibold text-center">
@@ -1321,7 +1324,7 @@ export default function GradeAgenda({
             ) : null}
 
             {/* Sem acoes disponiveis */}
-            {FLUXO_STATUS[agendamentoSelecionado.status].length === 0 && agendamentoSelecionado.status === 'Cancelado' && (
+            {admin && FLUXO_STATUS[agendamentoSelecionado.status].length === 0 && agendamentoSelecionado.status === 'Cancelado' && (
               <p className="text-[11px] text-gray text-center py-2 bg-light-gray rounded-xl">
                 Atendimento cancelado.
               </p>

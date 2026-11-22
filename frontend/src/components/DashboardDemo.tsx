@@ -1,5 +1,6 @@
+import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import ServicosAgendamentos from './ServicosAgendamentos';
 import CadastroPacientes from './CadastroPacientes';
 import ModalAgendamentoRapido, { type PacienteItem } from './ModalAgendamentoRapido';
@@ -24,7 +25,6 @@ interface Toast {
 }
 
 // Configuração do Base URL do Backend (Express)
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 interface Profissional {
   id: number;
@@ -43,7 +43,7 @@ function dataHoje(): string {
 }
 
 export default function DashboardDemo({ usuario, onLogout }: { usuario?: UsuarioSessao; onLogout?: () => void }) {
-  // Estados de controle geral das abas: Grade de Horários, Pacientes ou Serviços e Configurações
+  // Aba selecionada na área de agendamentos.
   const [currentTab, setCurrentTab] = useState<'grade' | 'cadastro' | 'servicos' | 'usuarios'>('grade');
 
   // Controle de data e atualização da Grade
@@ -52,12 +52,6 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
   const [gradeProfissionalSelecionadoId, setGradeProfissionalSelecionadoId] = useState<number | null>(() =>
     usuario?.perfil === 'PROFISSIONAL' && usuario.profissional_id ? Number(usuario.profissional_id) : null
   );
-
-  useEffect(() => {
-    if (usuario?.perfil === 'PROFISSIONAL' && usuario.profissional_id) {
-      setGradeProfissionalSelecionadoId(Number(usuario.profissional_id));
-    }
-  }, [usuario?.perfil, usuario?.profissional_id]);
 
   // Estados dinâmicos conectados à API
   const [pacientes, setPacientes] = useState<PacienteItem[]>([]);
@@ -85,13 +79,13 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
 
   // Carregar dados da API
   const consulta = useRef<AbortController | null>(null);
-  const fetchDashboardData = () => {
+  const fetchDashboardData = useCallback(() => {
     consulta.current?.abort();
     const controller = new AbortController();
     consulta.current = controller;
     return Promise.all(
         ['pacientes', 'servicos', 'profissionais'].map(async recurso => {
-          const response = await fetch(API_BASE_URL + '/api/' + recurso, { signal: controller.signal });
+          const response = await apiFetch('/api/' + recurso, { signal: controller.signal });
           const json = await response.json();
           if (!response.ok || !json.sucesso || !Array.isArray(json.dados)) throw new Error(json.erro || 'Falha ao carregar ' + recurso + '.');
           return json.dados;
@@ -110,12 +104,12 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
       if (controller.signal.aborted) return;
       setApiError(error instanceof Error ? error.message : 'Falha na comunicação com o servidor.');
     });
-  };
+  }, []);
 
   useEffect(() => {
     void fetchDashboardData();
     return () => consulta.current?.abort();
-  }, []);
+  }, [fetchDashboardData]);
 
   useClinicUpdates(() => { void fetchDashboardData(); }, ['pacientes', 'servicos', 'categorias', 'profissionais']);
 
@@ -200,6 +194,11 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             </div>
           </div>
 
+          <nav className="flex flex-wrap gap-3 text-xs font-bold" aria-label="Navegação principal">
+            {usuario?.perfil === 'ADMIN' && <a href="/inicio">Início</a>}
+            {usuario?.perfil !== 'PROFISSIONAL' && <a href="/dashboard">Indicadores</a>}
+            {usuario?.perfil === 'ADMIN' && <a href="/comunicacao">Comunicação</a>}
+          </nav>
           {/* Menu de Abas */}
           <div className="flex items-center gap-1 bg-light-gray p-1 rounded-xl border border-gray/10">
             <button
@@ -212,7 +211,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             >
               Grade de Horários
             </button>
-            <button
+            {usuario && <button
               onClick={() => setCurrentTab('cadastro')}
               className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer capitalize ${
                 currentTab === 'cadastro'
@@ -221,7 +220,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
               }`}
             >
               Pacientes
-            </button>
+            </button>}
             {usuario?.perfil === 'ADMIN' && (
               <button
                 onClick={() => setCurrentTab('servicos')}
@@ -231,7 +230,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
                     : 'text-gray hover:text-dark hover:bg-white/50'
                 }`}
               >
-                Serviços e Configurações
+                {usuario?.perfil === 'ADMIN' ? 'Serviços e Configurações' : 'Serviços'}
               </button>
             )}
             {usuario?.perfil === 'ADMIN' && (
@@ -249,7 +248,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
           </div>
 
           <div className="flex items-center gap-3">
-            {usuario?.perfil !== 'PROFISSIONAL' && (
+            {usuario && (usuario.perfil !== 'PROFISSIONAL' || usuario.profissional_id) && (
               <button
                 disabled={Boolean(apiError)}
                 onClick={() => setIsBookingModalOpen(true)}
@@ -258,7 +257,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
                 </svg>
-                Novo Agendamento
+                {usuario?.perfil === 'PROFISSIONAL' ? 'Reserva excepcional' : 'Novo Agendamento'}
               </button>
             )}
             {usuario && onLogout && (
@@ -285,7 +284,13 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
               <p className="text-sm text-red-700 font-semibold">{apiError}</p>
             </div>
             <button 
-              onClick={fetchDashboardData}
+              onClick={() => {
+                if (apiError.toLowerCase().includes('sessão') || apiError.toLowerCase().includes('autenticação')) {
+                  onLogout?.();
+                } else {
+                  void fetchDashboardData();
+                }
+              }}
               className="bg-red-500 hover:bg-red-600 active:scale-95 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition-all"
             >
               Tentar Novamente
@@ -296,13 +301,14 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
         {/* Áreas do sistema integrado */}
         {currentTab === 'grade' && (
           <GradeAgenda
+            admin={usuario?.perfil === 'ADMIN'}
             profissionais={profissionais.filter(p => p.ativo !== 0 && p.ativo !== false)}
             dataSelecionada={gradeData}
             onDataChange={setGradeData}
             refreshTrigger={gradeRefreshKey}
             profissionalInicialId={gradeProfissionalSelecionadoId}
             onProfissionalChange={setGradeProfissionalSelecionadoId}
-            onAbrirNovoAgendamento={handleAbrirAgendamentoDaGrade}
+            onAbrirNovoAgendamento={usuario?.perfil === 'PROFISSIONAL' ? undefined : handleAbrirAgendamentoDaGrade}
             usuarioLogado={usuario}
             onRefresh={() => {
               fetchDashboardData();
@@ -340,6 +346,8 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
 
       {/* Modal de Agendamento Rápido com Pré-Cadastro e Cálculo de Tempo */}
       <ModalAgendamentoRapido
+        admin={usuario?.perfil === 'ADMIN'}
+        excepcional={usuario?.perfil === 'PROFISSIONAL'}
         isOpen={isBookingModalOpen}
         onClose={() => {
           setIsBookingModalOpen(false);
@@ -360,7 +368,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
         initialPacienteId={bookingInitialPacienteId}
         initialDate={bookingInitialData}
         initialTime={bookingInitialHorario}
-        initialProfissionalId={bookingInitialProfissionalId}
+        initialProfissionalId={usuario?.perfil === 'PROFISSIONAL' ? usuario.profissional_id ?? undefined : bookingInitialProfissionalId}
         profissionais={profissionais.filter(p => p.ativo !== 0 && p.ativo !== false)}
         servicos={servicos.filter(s => s.ativo !== 0 && s.ativo !== false)}
         pacientesExistentes={pacientes}
