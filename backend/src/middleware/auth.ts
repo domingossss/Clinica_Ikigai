@@ -9,6 +9,9 @@ export interface UsuarioAutenticado {
   nome: string;
   email: string;
   perfil: PerfilUsuario;
+  profissional_id?: number | null;
+  profissional_nome?: string | null;
+  profissional_especialidade?: string | null;
 }
 
 declare global {
@@ -114,17 +117,35 @@ export async function exigirAutenticacao(req: Request, res: Response, next: Next
   }
   try {
     const [rows] = await pool.query<any[]>(
-      'SELECT id_usuario AS id, nome, email, perfil, ativo FROM usuario WHERE id_usuario = ? LIMIT 1',
+      `SELECT u.id_usuario AS id,
+              u.nome,
+              u.email,
+              u.perfil,
+              u.ativo,
+              u.id_profissional AS profissional_id,
+              p.nome AS profissional_nome,
+              p.especialidade_principal AS profissional_especialidade,
+              p.ativo AS profissional_ativo
+       FROM usuario u
+       LEFT JOIN profissional p ON u.id_profissional = p.id_profissional
+       WHERE u.id_usuario = ?
+       LIMIT 1`,
       [decodificado.id]
     );
     if (!rows.length || !rows[0].ativo) {
       return res.status(401).json({ sucesso: false, erro: 'Usuário inativo ou não encontrado.' });
+    }
+    if (rows[0].perfil === 'PROFISSIONAL' && rows[0].profissional_id && (rows[0].profissional_ativo === 0 || rows[0].profissional_ativo === false)) {
+      return res.status(401).json({ sucesso: false, erro: 'O cadastro deste profissional está inativo na clínica.' });
     }
     req.usuario = {
       id: Number(rows[0].id),
       nome: rows[0].nome,
       email: rows[0].email,
       perfil: rows[0].perfil,
+      profissional_id: rows[0].profissional_id ? Number(rows[0].profissional_id) : null,
+      profissional_nome: rows[0].profissional_nome || null,
+      profissional_especialidade: rows[0].profissional_especialidade || null,
     };
     return next();
   } catch {

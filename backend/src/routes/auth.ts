@@ -21,7 +21,20 @@ router.post('/login', async (req: Request, res: Response): Promise<any> => {
     }
 
     const [rows] = await pool.query<any[]>(
-      'SELECT id_usuario AS id, nome, email, senha_hash, perfil, ativo FROM usuario WHERE email = ? LIMIT 1',
+      `SELECT u.id_usuario AS id,
+              u.nome,
+              u.email,
+              u.senha_hash,
+              u.perfil,
+              u.ativo,
+              u.id_profissional AS profissional_id,
+              p.nome AS profissional_nome,
+              p.especialidade_principal AS profissional_especialidade,
+              p.ativo AS profissional_ativo
+       FROM usuario u
+       LEFT JOIN profissional p ON u.id_profissional = p.id_profissional
+       WHERE u.email = ?
+       LIMIT 1`,
       [email]
     );
 
@@ -34,6 +47,10 @@ router.post('/login', async (req: Request, res: Response): Promise<any> => {
       return res.status(403).json({ sucesso: false, erro: 'Usuário inativo. Contate o administrador.' });
     }
 
+    if (user.perfil === 'PROFISSIONAL' && user.profissional_id && (user.profissional_ativo === 0 || user.profissional_ativo === false)) {
+      return res.status(403).json({ sucesso: false, erro: 'O cadastro deste profissional está inativo na grade da clínica. Contate o administrador.' });
+    }
+
     if (!verificarSenha(senha, user.senha_hash)) {
       return res.status(401).json({ sucesso: false, erro: 'E-mail ou senha inválidos.' });
     }
@@ -43,6 +60,9 @@ router.post('/login', async (req: Request, res: Response): Promise<any> => {
       nome: user.nome,
       email: user.email,
       perfil: user.perfil,
+      profissional_id: user.profissional_id ? Number(user.profissional_id) : null,
+      profissional_nome: user.profissional_nome || null,
+      profissional_especialidade: user.profissional_especialidade || null,
     };
 
     const token = assinarToken(usuario);

@@ -97,16 +97,32 @@ function controlarPermissoesApi(req: express.Request, res: express.Response, nex
   if (perfil === 'ADMIN' || req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next();
   }
-  const ehConfiguracao = /^\/(servicos|categorias|profissionais|excecoes)(\/|$)/.test(req.path);
-  if (ehConfiguracao) {
-    if (perfil !== 'PROFISSIONAL') {
-      return res.status(403).json({ sucesso: false, erro: 'Apenas administradores e profissionais podem alterar serviços, categorias, profissionais e jornadas.' });
+
+  const ehConfiguracaoCatalogo = /^\/(servicos|categorias|profissionais|excecoes)(\/|$)/.test(req.path);
+  const ehJornadaPropria = perfil === 'PROFISSIONAL' && req.method === 'PUT' && /^\/profissionais\/\d+\/jornada$/.test(req.path);
+
+  if (ehConfiguracaoCatalogo && !ehJornadaPropria) {
+    return res.status(403).json({
+      sucesso: false,
+      erro: 'Apenas administradores podem alterar serviços, preços, categorias, profissionais e exceções gerais da clínica.'
+    });
+  }
+
+  if (perfil === 'PROFISSIONAL') {
+    const podeStatusAgendamento = req.method === 'PUT' && /^\/agendamentos\/\d+\/status$/.test(req.path);
+    const podeBloqueioProprio =
+      (req.method === 'POST' && req.path === '/bloqueios') ||
+      (req.method === 'DELETE' && /^\/bloqueios\/\d+$/.test(req.path));
+    const podeEvolucaoPaciente = (req.method === 'PUT' || req.method === 'PATCH') && /^\/pacientes\/[^/]+(\/evolucao)?$/.test(req.path);
+
+    if (!podeStatusAgendamento && !podeBloqueioProprio && !ehJornadaPropria && !podeEvolucaoPaciente) {
+      return res.status(403).json({
+        sucesso: false,
+        erro: 'Perfil profissional permite apenas atualizar status e bloqueios da própria agenda, ajustar a própria jornada e registrar evolução clínica do paciente.'
+      });
     }
-    return next();
   }
-  if (perfil === 'PROFISSIONAL' && !/^\/agendamentos\/\d+\/status$/.test(req.path)) {
-    return res.status(403).json({ sucesso: false, erro: 'Perfil profissional permite apenas configurações, consulta e atualização de status do atendimento.' });
-  }
+
   return next();
 }
 

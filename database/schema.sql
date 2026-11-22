@@ -509,7 +509,16 @@ CREATE TABLE IF NOT EXISTS usuario (
     email VARCHAR(150) NOT NULL UNIQUE,
     senha_hash VARCHAR(255) NOT NULL,
     perfil ENUM('ADMIN', 'RECEPCAO', 'PROFISSIONAL') NOT NULL DEFAULT 'RECEPCAO',
+    id_profissional INT NULL UNIQUE,
     ativo BOOLEAN NOT NULL DEFAULT TRUE,
     criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_usuario_profissional
+        FOREIGN KEY (id_profissional) REFERENCES profissional (id_profissional)
+        ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE usuario ADD COLUMN id_profissional INT NULL UNIQUE AFTER perfil, ADD CONSTRAINT fk_usuario_profissional FOREIGN KEY (id_profissional) REFERENCES profissional (id_profissional) ON DELETE SET NULL ON UPDATE CASCADE') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuario' AND COLUMN_NAME = 'id_profissional');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;

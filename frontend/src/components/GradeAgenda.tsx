@@ -2,6 +2,7 @@ import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import ModalHistoricoPaciente from './ModalHistoricoPaciente';
 import ModalHistoricoAgendamento from './ModalHistoricoAgendamento';
+import type { UsuarioSessao } from '../services/auth';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
@@ -37,6 +38,16 @@ interface Profissional {
   especialidade?: string;
 }
 
+interface DiaJornada {
+  dia_semana: number;
+  dia_nome: string;
+  ativo: number | boolean;
+  horario_inicio: string;
+  horario_fim: string;
+  intervalo_inicio: string | null;
+  intervalo_fim: string | null;
+}
+
 type StatusAgendamento =
   | 'Agendado'
   | 'Confirmado'
@@ -61,6 +72,7 @@ interface Props {
   onRefresh?: () => void;
   profissionalInicialId?: number | null;
   onProfissionalChange?: (profissionalId: number | null) => void;
+  usuarioLogado?: UsuarioSessao;
 }
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -171,7 +183,8 @@ export default function GradeAgenda({
   onAbrirNovoAgendamento,
   onRefresh,
   profissionalInicialId,
-  onProfissionalChange
+  onProfissionalChange,
+  usuarioLogado
 }: Props) {
   const [dataLocal, setDataSelecionada] = useState(dataProp || dataHoje());
   const [profissionalLocalId, setProfissionalSelecionadoId] = useState<number | null>(
@@ -252,6 +265,13 @@ export default function GradeAgenda({
   // Modal de Histórico do Paciente (IK-77)
   const [isHistoricoModalOpen, setIsHistoricoModalOpen] = useState(false);
   const [isHistoricoAgendamentoOpen, setIsHistoricoAgendamentoOpen] = useState(false);
+
+  // Modal de Minha Jornada (Perfil PROFISSIONAL)
+  const [isJornadaModalOpen, setIsJornadaModalOpen] = useState(false);
+  const [jornadaDias, setJornadaDias] = useState<DiaJornada[]>([]);
+  const [carregandoJornada, setCarregandoJornada] = useState(false);
+  const [salvandoJornada, setSalvandoJornada] = useState(false);
+  const [jornadaErro, setJornadaErro] = useState<string | null>(null);
 
   const mudarData = (novaData: string) => {
     setDataSelecionada(novaData);
@@ -469,6 +489,76 @@ export default function GradeAgenda({
       alert('Erro ao remover bloqueio: ' + ((err instanceof Error ? err.message : '') || 'Tente novamente.'));
     } finally {
       setRemovendoBloqueio(false);
+    }
+  };
+
+  // ─── Ação de Configurar Minha Jornada (Perfil PROFISSIONAL) ─────────────────
+
+  const abrirModalMinhaJornada = async () => {
+    const profId = usuarioLogado?.profissional_id;
+    if (!profId) return;
+
+    setIsJornadaModalOpen(true);
+    setCarregandoJornada(true);
+    setJornadaErro(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profissionais/${profId}/jornada`);
+      const json = await res.json();
+      if (!res.ok || !json.sucesso) {
+        throw new Error(json.erro || 'Não foi possível carregar sua jornada.');
+      }
+      setJornadaDias(json.dados || []);
+    } catch (err: unknown) {
+      setJornadaErro((err instanceof Error ? err.message : '') || 'Erro ao carregar jornada.');
+    } finally {
+      setCarregandoJornada(false);
+    }
+  };
+
+  const atualizarDiaJornada = (diaSemana: number, campo: keyof DiaJornada, valor: any) => {
+    setJornadaDias(prev =>
+      prev.map(d => (d.dia_semana === diaSemana ? { ...d, [campo]: valor } : d))
+    );
+  };
+
+  const handleSalvarMinhaJornada = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const profId = usuarioLogado?.profissional_id;
+    if (!profId) return;
+
+    setSalvandoJornada(true);
+    setJornadaErro(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profissionais/${profId}/jornada`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dias: jornadaDias.map(d => ({
+            dia_semana: d.dia_semana,
+            ativo: d.ativo ? 1 : 0,
+            horario_inicio: d.horario_inicio || '08:00',
+            horario_fim: d.horario_fim || '18:00',
+            intervalo_inicio: d.intervalo_inicio || null,
+            intervalo_fim: d.intervalo_fim || null,
+          })),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.sucesso) {
+        throw new Error(json.erro || 'Falha ao salvar jornada de trabalho.');
+      }
+
+      setMensagemSucesso('Sua jornada de trabalho foi atualizada com sucesso!');
+      setTimeout(() => setMensagemSucesso(null), 3500);
+      setIsJornadaModalOpen(false);
+      buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
+      onRefresh?.();
+    } catch (err: unknown) {
+      setJornadaErro((err instanceof Error ? err.message : '') || 'Erro ao salvar jornada.');
+    } finally {
+      setSalvandoJornada(false);
     }
   };
 
@@ -795,6 +885,17 @@ export default function GradeAgenda({
               </div>
             )}
           </div>
+
+          {usuarioLogado?.perfil === 'PROFISSIONAL' && usuarioLogado.profissional_id && Number(profissionalSelecionadoId) !== Number(usuarioLogado.profissional_id) && (
+            <button
+              type="button"
+              onClick={() => selecionarProfissional(Number(usuarioLogado.profissional_id))}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-secondary/25 text-primary-dark border border-secondary/40 hover:bg-secondary/35 transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <span>🩺</span>
+              <span>Minha Agenda</span>
+            </button>
+          )}
         </div>
 
         {/* Alternador de Modo de Visualização quando profissional específico está selecionado */}
@@ -891,22 +992,40 @@ export default function GradeAgenda({
 
         {/* Ações e Navegação de datas (CA03) */}
         <div className="flex items-center flex-wrap gap-2">
+          {/* Botão Minha Jornada (exclusivo para PROFISSIONAL vinculado) */}
+          {usuarioLogado?.perfil === 'PROFISSIONAL' && usuarioLogado.profissional_id && (
+            <button
+              onClick={abrirModalMinhaJornada}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/15 text-primary border border-primary/30 hover:bg-primary hover:text-white active:scale-95 transition-all shadow-xs cursor-pointer"
+              title="Configurar seus horários de expediente e intervalo de almoço"
+            >
+              <span>⏰</span>
+              <span>Minha Jornada</span>
+            </button>
+          )}
+
           {/* Botão Bloquear Horário (IK-87) */}
-          <button
-            onClick={() => {
-              setBloqueioData(dataSelecionada);
-              setBloqueioProfissionalId(profissionalAtivo?.id || profissionais[0]?.id || 1);
-              setBloqueioErro(null);
-              setIsBloquearModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-800 text-white hover:bg-gray-700 active:scale-95 transition-all shadow-sm cursor-pointer"
-            title="Bloquear Horário na Grade"
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-            <span>Bloquear Horário</span>
-          </button>
+          {(!usuarioLogado || usuarioLogado.perfil !== 'PROFISSIONAL' || usuarioLogado.profissional_id) && (
+            <button
+              onClick={() => {
+                setBloqueioData(dataSelecionada);
+                const profIdPadrao =
+                  usuarioLogado?.perfil === 'PROFISSIONAL' && usuarioLogado.profissional_id
+                    ? Number(usuarioLogado.profissional_id)
+                    : profissionalAtivo?.id || profissionais[0]?.id || 1;
+                setBloqueioProfissionalId(profIdPadrao);
+                setBloqueioErro(null);
+                setIsBloquearModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-800 text-white hover:bg-gray-700 active:scale-95 transition-all shadow-sm cursor-pointer"
+              title="Bloquear Horário na Grade"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <span>Bloquear Horário</span>
+            </button>
+          )}
 
           {/* Navegação anterior (Dia ou Semana) */}
           <button
@@ -1130,7 +1249,7 @@ export default function GradeAgenda({
             </div>
 
             {/* Botão de Reagendamento (IK-85) */}
-            {!['Cancelado', 'No_Show', 'Concluído', 'Realizado', 'Em Atendimento'].includes(agendamentoSelecionado.status) && (
+            {usuarioLogado?.perfil !== 'PROFISSIONAL' && !['Cancelado', 'No_Show', 'Concluído', 'Realizado', 'Em Atendimento'].includes(agendamentoSelecionado.status) && (
               <button
                 onClick={() => {
                   setReagendarData(agendamentoSelecionado.data || dataSelecionada);
@@ -1171,7 +1290,11 @@ export default function GradeAgenda({
               <span>Ver Histórico do Agendamento</span>
             </button>
 
-            {FLUXO_STATUS[agendamentoSelecionado.status].length > 0 && (
+            {usuarioLogado?.perfil === 'PROFISSIONAL' && (!usuarioLogado.profissional_id || Number(agendamentoSelecionado.profissional_id) !== Number(usuarioLogado.profissional_id)) ? (
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-semibold text-center">
+                Somente leitura: você só pode alterar o status dos atendimentos da sua própria agenda.
+              </div>
+            ) : FLUXO_STATUS[agendamentoSelecionado.status].length > 0 ? (
               <div>
                 <p className="text-[10px] uppercase font-bold text-gray mb-2">Avançar status para:</p>
                 <div className="flex flex-col gap-1.5">
@@ -1195,7 +1318,7 @@ export default function GradeAgenda({
                   })}
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* Sem acoes disponiveis */}
             {FLUXO_STATUS[agendamentoSelecionado.status].length === 0 && agendamentoSelecionado.status === 'Cancelado' && (
@@ -1250,16 +1373,25 @@ export default function GradeAgenda({
               </div>
             </div>
 
-            <button
-              disabled={removendoBloqueio}
-              onClick={() => handleRemoverBloqueio(bloqueioSelecionado.id)}
-              className="w-full py-2.5 px-3 rounded-xl text-xs font-bold border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              <span>{removendoBloqueio ? 'Removendo...' : 'Desbloquear Horário (Liberar)'}</span>
-            </button>
+            {(!usuarioLogado ||
+              usuarioLogado.perfil !== 'PROFISSIONAL' ||
+              (usuarioLogado.profissional_id &&
+                Number(bloqueioSelecionado.profissional_id) === Number(usuarioLogado.profissional_id))) ? (
+              <button
+                disabled={removendoBloqueio}
+                onClick={() => handleRemoverBloqueio(bloqueioSelecionado.id)}
+                className="w-full py-2.5 px-3 rounded-xl text-xs font-bold border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                <span>{removendoBloqueio ? 'Removendo...' : 'Desbloquear Horário (Liberar)'}</span>
+              </button>
+            ) : (
+              <p className="text-[11px] text-amber-800 text-center py-2 px-3 bg-amber-50 border border-amber-200 rounded-xl font-medium">
+                🔒 Bloqueio pertencente a outro profissional (somente leitura).
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -1389,14 +1521,20 @@ export default function GradeAgenda({
                 <label className="block text-xs font-bold text-dark mb-1">Profissional</label>
                 <select
                   required
+                  disabled={usuarioLogado?.perfil === 'PROFISSIONAL' && Boolean(usuarioLogado.profissional_id)}
                   value={bloqueioProfissionalId}
                   onChange={e => setBloqueioProfissionalId(Number(e.target.value))}
-                  className="w-full text-xs border border-gray/20 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-400 bg-white"
+                  className="w-full text-xs border border-gray/20 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-400 bg-white disabled:bg-gray-100 disabled:text-gray-600"
                 >
                   {profissionais.map(p => (
                     <option key={p.id} value={p.id}>{p.nome} {p.especialidade ? `(${p.especialidade})` : ''}</option>
                   ))}
                 </select>
+                {usuarioLogado?.perfil === 'PROFISSIONAL' && (
+                  <span className="text-[10px] text-gray mt-1 block">
+                    Vinculado automaticamente à sua própria agenda profissional.
+                  </span>
+                )}
               </div>
 
               <div>
@@ -1463,6 +1601,150 @@ export default function GradeAgenda({
                   className="flex-1 py-2.5 px-4 rounded-xl bg-gray-800 text-white text-xs font-bold hover:bg-gray-700 transition-all disabled:opacity-50"
                 >
                   {bloqueando ? 'Criando Bloqueio...' : 'Confirmar Bloqueio'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Minha Jornada de Trabalho (Perfil PROFISSIONAL) */}
+      {isJornadaModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-gray/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+            <div className="bg-primary text-white px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">⏰</span>
+                <div>
+                  <h3 className="text-base font-bold">Minha Jornada de Trabalho</h3>
+                  <p className="text-xs text-white/80 mt-0.5">
+                    Configure seus dias de atendimento, expediente e intervalo de almoço
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsJornadaModalOpen(false)}
+                className="text-white/80 hover:text-white"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleSalvarMinhaJornada} className="p-6 space-y-4 overflow-y-auto">
+              {jornadaErro && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                  {jornadaErro}
+                </div>
+              )}
+
+              {carregandoJornada ? (
+                <div className="py-10 text-center text-xs text-gray">
+                  Carregando sua jornada de trabalho...
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {jornadaDias.map(dia => {
+                    const ativoBool = Boolean(dia.ativo);
+                    return (
+                      <div
+                        key={dia.dia_semana}
+                        className={`p-3 rounded-xl border text-xs transition-all ${
+                          ativoBool
+                            ? 'bg-white border-gray/20'
+                            : 'bg-light-gray/60 border-gray/10 opacity-75'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <label className="flex items-center gap-2 font-bold text-dark min-w-[140px] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={ativoBool}
+                              onChange={e =>
+                                atualizarDiaJornada(dia.dia_semana, 'ativo', e.target.checked ? 1 : 0)
+                              }
+                              className="rounded border-gray/30 text-primary focus:ring-primary"
+                            />
+                            <span>{dia.dia_nome}</span>
+                          </label>
+
+                          {ativoBool ? (
+                            <div className="flex flex-wrap items-center gap-3">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-gray font-semibold">Expediente:</span>
+                                <input
+                                  type="time"
+                                  value={dia.horario_inicio || '08:00'}
+                                  onChange={e =>
+                                    atualizarDiaJornada(dia.dia_semana, 'horario_inicio', e.target.value)
+                                  }
+                                  className="border border-gray/20 rounded-lg px-2 py-1 text-xs bg-white"
+                                />
+                                <span className="text-gray">às</span>
+                                <input
+                                  type="time"
+                                  value={dia.horario_fim || '18:00'}
+                                  onChange={e =>
+                                    atualizarDiaJornada(dia.dia_semana, 'horario_fim', e.target.value)
+                                  }
+                                  className="border border-gray/20 rounded-lg px-2 py-1 text-xs bg-white"
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-gray font-semibold">Intervalo:</span>
+                                <input
+                                  type="time"
+                                  value={dia.intervalo_inicio || ''}
+                                  onChange={e =>
+                                    atualizarDiaJornada(
+                                      dia.dia_semana,
+                                      'intervalo_inicio',
+                                      e.target.value || null
+                                    )
+                                  }
+                                  className="border border-gray/20 rounded-lg px-2 py-1 text-xs bg-white"
+                                />
+                                <span className="text-gray">às</span>
+                                <input
+                                  type="time"
+                                  value={dia.intervalo_fim || ''}
+                                  onChange={e =>
+                                    atualizarDiaJornada(
+                                      dia.dia_semana,
+                                      'intervalo_fim',
+                                      e.target.value || null
+                                    )
+                                  }
+                                  className="border border-gray/20 rounded-lg px-2 py-1 text-xs bg-white"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-gray italic">Sem expediente neste dia</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-3 border-t border-gray/10">
+                <button
+                  type="button"
+                  onClick={() => setIsJornadaModalOpen(false)}
+                  className="flex-1 py-2.5 px-4 rounded-xl border border-gray/20 text-xs font-bold text-gray hover:bg-light-gray cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvandoJornada || carregandoJornada}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {salvandoJornada ? 'Salvando Jornada...' : 'Salvar Minha Jornada'}
                 </button>
               </div>
             </form>

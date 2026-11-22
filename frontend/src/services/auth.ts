@@ -7,6 +7,9 @@ export interface UsuarioSessao {
   nome: string;
   email: string;
   perfil: PerfilUsuario;
+  profissional_id?: number | null;
+  profissional_nome?: string | null;
+  profissional_especialidade?: string | null;
 }
 
 export const PERFIL_LABELS: Record<PerfilUsuario, string> = {

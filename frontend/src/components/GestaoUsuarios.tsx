@@ -9,17 +9,30 @@ interface UsuarioItem {
   nome: string;
   email: string;
   perfil: PerfilUsuario;
+  profissional_id?: number | null;
+  profissional_nome?: string | null;
+  profissional_especialidade?: string | null;
+  profissional_ativo?: number | boolean | null;
   ativo: number | boolean;
   criado_em?: string;
+}
+
+interface ProfissionalOpcao {
+  id: number;
+  nome: string;
+  especialidade?: string;
+  ativo?: number | boolean;
 }
 
 interface GestaoUsuariosProps {
   usuarioLogadoId: number;
   onNotify?: (message: string, type?: 'success' | 'error' | 'info') => void;
+  onProfissionaisChange?: () => void;
 }
 
-export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsuariosProps) {
+export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfissionaisChange }: GestaoUsuariosProps) {
   const [usuarios, setUsuarios] = useState<UsuarioItem[]>([]);
+  const [profissionais, setProfissionais] = useState<ProfissionalOpcao[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState('');
@@ -29,19 +42,31 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
   const [perfil, setPerfil] = useState<PerfilUsuario>('RECEPCAO');
+  const [profissionalId, setProfissionalId] = useState<string>('novo');
+  const [especialidade, setEspecialidade] = useState('');
   const [senha, setSenha] = useState('');
   const [salvando, setSalvando] = useState(false);
 
-  const carregarUsuarios = useCallback(async () => {
+  const carregarDados = useCallback(async () => {
     setCarregando(true);
     setErro(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/usuarios`, { credentials: 'include' });
-      const json = await res.json();
-      if (!res.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Não foi possível carregar usuários.');
+      const [resUsers, resProfs] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/usuarios`, { credentials: 'include' }),
+        fetch(`${API_BASE_URL}/api/profissionais`, { credentials: 'include' }),
+      ]);
+      const jsonUsers = await resUsers.json();
+      if (!resUsers.ok || !jsonUsers.sucesso) {
+        throw new Error(jsonUsers.erro || 'Não foi possível carregar usuários.');
       }
-      setUsuarios(json.dados || []);
+      setUsuarios(jsonUsers.dados || []);
+
+      if (resProfs.ok) {
+        const jsonProfs = await resProfs.json();
+        if (jsonProfs.sucesso && Array.isArray(jsonProfs.dados)) {
+          setProfissionais(jsonProfs.dados);
+        }
+      }
     } catch (err: any) {
       setErro(err.message || 'Erro ao buscar usuários.');
     } finally {
@@ -50,14 +75,16 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
   }, []);
 
   useEffect(() => {
-    carregarUsuarios();
-  }, [carregarUsuarios]);
+    void carregarDados();
+  }, [carregarDados]);
 
   function limparFormulario() {
     setEditandoId(null);
     setNome('');
     setEmail('');
     setPerfil('RECEPCAO');
+    setProfissionalId('novo');
+    setEspecialidade('');
     setSenha('');
   }
 
@@ -66,6 +93,8 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
     setNome(u.nome);
     setEmail(u.email);
     setPerfil(u.perfil);
+    setProfissionalId(u.profissional_id ? String(u.profissional_id) : 'novo');
+    setEspecialidade(u.profissional_especialidade || '');
     setSenha('');
   }
 
@@ -77,7 +106,15 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
         ? `${API_BASE_URL}/api/usuarios/${editandoId}`
         : `${API_BASE_URL}/api/usuarios`;
       const method = editandoId ? 'PUT' : 'POST';
-      const body: Record<string, string> = { nome: nome.trim(), email: email.trim(), perfil };
+      const body: Record<string, any> = {
+        nome: nome.trim(),
+        email: email.trim(),
+        perfil,
+      };
+      if (perfil === 'PROFISSIONAL') {
+        body.especialidade = especialidade.trim() || 'Especialista';
+        body.profissional_id = profissionalId !== 'novo' ? Number(profissionalId) : null;
+      }
       if (senha) body.senha = senha;
 
       const res = await fetch(url, {
@@ -90,9 +127,17 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
       if (!res.ok || !json.sucesso) {
         throw new Error(json.erro || 'Falha ao salvar usuário.');
       }
-      onNotify?.(editandoId ? 'Usuário atualizado com sucesso!' : 'Usuário criado com sucesso!', 'success');
+      onNotify?.(
+        editandoId
+          ? 'Usuário atualizado com sucesso!'
+          : perfil === 'PROFISSIONAL'
+          ? 'Usuário e cadastro de profissional criados e vinculados com sucesso!'
+          : 'Usuário criado com sucesso!',
+        'success'
+      );
       limparFormulario();
-      await carregarUsuarios();
+      await carregarDados();
+      onProfissionaisChange?.();
     } catch (err: any) {
       onNotify?.(err.message || 'Erro ao salvar usuário.', 'error');
     } finally {
@@ -114,7 +159,7 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
         throw new Error(json.erro || 'Falha ao alterar status.');
       }
       onNotify?.(novoAtivo ? 'Usuário ativado.' : 'Usuário inativado.', 'success');
-      await carregarUsuarios();
+      await carregarDados();
     } catch (err: any) {
       onNotify?.(err.message || 'Erro ao alterar status.', 'error');
     }
@@ -123,7 +168,12 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
   const filtrados = usuarios.filter(u => {
     const q = busca.trim().toLowerCase();
     if (!q) return true;
-    return u.nome.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.perfil.toLowerCase().includes(q);
+    return (
+      u.nome.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      u.perfil.toLowerCase().includes(q) ||
+      (u.profissional_especialidade || '').toLowerCase().includes(q)
+    );
   });
 
   return (
@@ -139,6 +189,19 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
 
         <form onSubmit={handleSalvar} autoComplete="off" className="space-y-3.5">
           <div>
+            <label className="block text-xs font-bold text-dark mb-1">Perfil de acesso</label>
+            <select
+              value={perfil}
+              onChange={e => setPerfil(e.target.value as PerfilUsuario)}
+              className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              <option value="ADMIN">Administrador (acesso total)</option>
+              <option value="RECEPCAO">Recepção (agenda, pacientes e painel)</option>
+              <option value="PROFISSIONAL">Profissional (agenda clínica individual)</option>
+            </select>
+          </div>
+
+          <div>
             <label className="block text-xs font-bold text-dark mb-1">Nome completo</label>
             <input
               type="text"
@@ -146,7 +209,7 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
               minLength={2}
               value={nome}
               onChange={e => setNome(e.target.value)}
-              placeholder="Ex.: Maria Oliveira"
+              placeholder={perfil === 'PROFISSIONAL' ? 'Ex.: Dr. Ulisses Higo' : 'Ex.: Maria Oliveira'}
               className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
           </div>
@@ -160,23 +223,55 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
               required
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="maria@clinicaikigai.com.br"
+              placeholder="usuario@clinicaikigai.com.br"
               className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-dark mb-1">Perfil de acesso</label>
-            <select
-              value={perfil}
-              onChange={e => setPerfil(e.target.value as PerfilUsuario)}
-              className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
-            >
-              <option value="ADMIN">Administrador (acesso total)</option>
-              <option value="RECEPCAO">Recepção (agenda, pacientes e painel)</option>
-              <option value="PROFISSIONAL">Profissional (consulta agenda e status)</option>
-            </select>
-          </div>
+          {perfil === 'PROFISSIONAL' && (
+            <div className="p-3.5 rounded-xl bg-secondary/10 border border-secondary/30 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-primary-dark mb-1">
+                  Especialidade Clínica *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={especialidade}
+                  onChange={e => setEspecialidade(e.target.value)}
+                  placeholder="Ex.: Terapeuta Ortomolecular, Acupunturista..."
+                  className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-primary-dark mb-1">
+                  Vínculo na Grade de Horários (1:1)
+                </label>
+                <select
+                  value={profissionalId}
+                  onChange={e => setProfissionalId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray/25 text-xs text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
+                >
+                  <option value="novo">+ Criar novo cadastro de profissional na grade</option>
+                  {profissionais.map(p => {
+                    const usuarioVinculado = usuarios.find(
+                      u => Number(u.profissional_id) === Number(p.id) && u.id !== editandoId
+                    );
+                    return (
+                      <option key={p.id} value={String(p.id)} disabled={Boolean(usuarioVinculado)}>
+                        {p.nome} ({p.especialidade || 'Especialista'})
+                        {usuarioVinculado ? ` — Já vinculado a ${usuarioVinculado.nome}` : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+                <span className="text-[10px] text-gray mt-1 block">
+                  Cada login de profissional fica vinculado exclusivamente à sua própria coluna na agenda.
+                </span>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-bold text-dark mb-1">
@@ -238,9 +333,10 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
           <div className="divide-y divide-gray/15">
             {filtrados.map(u => {
               const ativo = Boolean(u.ativo);
+              const profInativo = u.perfil === 'PROFISSIONAL' && u.profissional_id && (u.profissional_ativo === 0 || u.profissional_ativo === false);
               return (
                 <div key={u.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="space-y-0.5">
+                  <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-bold text-dark">{u.nome}</span>
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary-dark border border-primary/25">
@@ -249,8 +345,30 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify }: GestaoUsua
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${ativo ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-100 text-zinc-600 border-zinc-300'}`}>
                         {ativo ? 'Ativo' : 'Inativo'}
                       </span>
+                      {profInativo && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                          Agenda Inativa na Clínica
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-gray font-mono">{u.email}</p>
+                    {u.perfil === 'PROFISSIONAL' && (
+                      <div className="flex items-center gap-1.5 pt-0.5">
+                        {u.profissional_id ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary-dark bg-secondary/20 px-2.5 py-0.5 rounded-lg border border-secondary/40">
+                            <span>🩺</span>
+                            <span>
+                              Agenda vinculada: <strong>{u.profissional_nome || u.nome}</strong>
+                              {u.profissional_especialidade ? ` • ${u.profissional_especialidade}` : ''}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-lg border border-amber-200">
+                            ⚠️ Sem agenda vinculada (clique em Editar para vincular)
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2">

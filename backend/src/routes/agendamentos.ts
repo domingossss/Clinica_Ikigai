@@ -777,6 +777,11 @@ router.put('/agendamentos/:id/status', async (req: Request, res: Response): Prom
       Reagendado: ['Confirmado', 'Na Recepção', 'Cancelado', 'No_Show']
     };
     const profissionalId = await profissionalDoAgendamento(id);
+    if (req.usuario?.perfil === 'PROFISSIONAL') {
+      if (!req.usuario.profissional_id || Number(req.usuario.profissional_id) !== Number(profissionalId)) {
+        throw new ErroOperacao(403, 'Você só pode atualizar o status de atendimentos da sua própria agenda.');
+      }
+    }
     await transacaoAgenda([profissionalId], async conexao => {
       const [rows] = await conexao.query<any[]>('SELECT * FROM agendamento WHERE id_agendamento = ? FOR UPDATE', [id]);
       const atual = rows[0];
@@ -872,6 +877,11 @@ router.post('/bloqueios', async (req: Request, res: Response): Promise<any> => {
     validarDataHora(data, horario_inicio);
     validarDataHora(data, horario_fim);
     const profissional_id = idPositivo(req.body.profissional_id);
+    if (req.usuario?.perfil === 'PROFISSIONAL') {
+      if (!req.usuario.profissional_id || Number(req.usuario.profissional_id) !== Number(profissional_id)) {
+        throw new ErroOperacao(403, 'Você só pode criar bloqueios de horário na sua própria agenda.');
+      }
+    }
     if (parseTimeToMins(horario_inicio) >= parseTimeToMins(horario_fim)) throw new ErroOperacao(400, 'Início deve ser anterior ao fim.');
     const motivo = sanitizarTexto(typeof req.body.motivo === 'string' ? req.body.motivo : '') || 'Horário Bloqueado';
     const id = await transacaoAgenda([profissional_id], async conexao => {
@@ -941,9 +951,18 @@ router.delete('/bloqueios/:id', async (req: Request, res: Response): Promise<any
       return res.status(400).json({ sucesso: false, erro: 'ID do bloqueio inválido.' });
     }
 
-    const [existing] = await pool.query('SELECT id_bloqueio FROM bloqueio_agenda WHERE id_bloqueio = ?', [id]);
-    if ((existing as any[]).length === 0) {
+    const [existing]: any = await pool.query('SELECT id_bloqueio, id_profissional FROM bloqueio_agenda WHERE id_bloqueio = ?', [id]);
+    if (existing.length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Bloqueio não encontrado.' });
+    }
+
+    if (req.usuario?.perfil === 'PROFISSIONAL') {
+      if (!req.usuario.profissional_id || Number(req.usuario.profissional_id) !== Number(existing[0].id_profissional)) {
+        return res.status(403).json({
+          sucesso: false,
+          erro: 'Você só pode remover bloqueios de horário da sua própria agenda.'
+        });
+      }
     }
 
     await pool.query('DELETE FROM bloqueio_agenda WHERE id_bloqueio = ?', [id]);
@@ -1016,6 +1035,11 @@ router.get('/profissionais/:id/jornada', async (req: Request, res: Response): Pr
 router.put('/profissionais/:id/jornada', async (req: Request, res: Response): Promise<any> => {
   try {
     const id = idPositivo(req.params.id);
+    if (req.usuario?.perfil === 'PROFISSIONAL') {
+      if (!req.usuario.profissional_id || Number(req.usuario.profissional_id) !== Number(id)) {
+        throw new ErroOperacao(403, 'Você só pode alterar a jornada de trabalho da sua própria agenda.');
+      }
+    }
     const { dias } = req.body;
     if (!Array.isArray(dias) || !dias.length || dias.length > 7) throw new ErroOperacao(400, 'Informe os dias da jornada (máximo de sete).');
     const vistos = new Set<number>();

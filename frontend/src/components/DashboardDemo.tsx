@@ -49,7 +49,15 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
   // Controle de data e atualização da Grade
   const [gradeData, setGradeData] = useState<string>(dataHoje());
   const [gradeRefreshKey, setGradeRefreshKey] = useState<number>(0);
-  const [gradeProfissionalSelecionadoId, setGradeProfissionalSelecionadoId] = useState<number | null>(null);
+  const [gradeProfissionalSelecionadoId, setGradeProfissionalSelecionadoId] = useState<number | null>(() =>
+    usuario?.perfil === 'PROFISSIONAL' && usuario.profissional_id ? Number(usuario.profissional_id) : null
+  );
+
+  useEffect(() => {
+    if (usuario?.perfil === 'PROFISSIONAL' && usuario.profissional_id) {
+      setGradeProfissionalSelecionadoId(Number(usuario.profissional_id));
+    }
+  }, [usuario?.perfil, usuario?.profissional_id]);
 
   // Estados dinâmicos conectados à API
   const [pacientes, setPacientes] = useState<PacienteItem[]>([]);
@@ -177,10 +185,18 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
               <h1 className="text-lg font-bold tracking-tight text-dark flex items-center gap-2">
                 Clínica Ikigai
                 <span className="text-[11px] bg-secondary/15 text-primary-dark font-semibold px-2 py-0.5 rounded-full border border-secondary/30">
-                  {usuario ? PERFIL_LABELS[usuario.perfil] : 'Recepção'}
+                  {usuario
+                    ? usuario.perfil === 'PROFISSIONAL'
+                      ? `Profissional • ${usuario.profissional_nome || usuario.nome}`
+                      : PERFIL_LABELS[usuario.perfil]
+                    : 'Recepção'}
                 </span>
               </h1>
-              <p className="text-xs text-gray">Sistema de Gestão da Clínica</p>
+              <p className="text-xs text-gray">
+                {usuario?.perfil === 'PROFISSIONAL' && usuario.profissional_especialidade
+                  ? `Modo Consultório • ${usuario.profissional_especialidade}`
+                  : 'Sistema de Gestão da Clínica'}
+              </p>
             </div>
           </div>
 
@@ -206,7 +222,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             >
               Pacientes
             </button>
-            {(usuario?.perfil === 'ADMIN' || usuario?.perfil === 'PROFISSIONAL') && (
+            {usuario?.perfil === 'ADMIN' && (
               <button
                 onClick={() => setCurrentTab('servicos')}
                 className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
@@ -287,6 +303,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             profissionalInicialId={gradeProfissionalSelecionadoId}
             onProfissionalChange={setGradeProfissionalSelecionadoId}
             onAbrirNovoAgendamento={handleAbrirAgendamentoDaGrade}
+            usuarioLogado={usuario}
             onRefresh={() => {
               fetchDashboardData();
               setGradeRefreshKey(prev => prev + 1);
@@ -295,21 +312,28 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
         )}
 
         {currentTab === 'cadastro' && (
-          <CadastroPacientes onNovoAgendamento={handleAbrirAgendamentoParaPaciente} />
+          <CadastroPacientes
+            onNovoAgendamento={usuario?.perfil !== 'PROFISSIONAL' ? handleAbrirAgendamentoParaPaciente : undefined}
+            usuarioLogado={usuario}
+          />
         )}
 
         {currentTab === 'usuarios' && usuario?.perfil === 'ADMIN' && (
-          <GestaoUsuarios usuarioLogadoId={usuario.id} onNotify={showToast} />
+          <GestaoUsuarios
+            usuarioLogadoId={usuario.id}
+            onNotify={showToast}
+            onProfissionaisChange={fetchDashboardData}
+          />
         )}
 
-        {currentTab === 'servicos' && (usuario?.perfil === 'ADMIN' || usuario?.perfil === 'PROFISSIONAL') && (
+        {currentTab === 'servicos' && usuario?.perfil === 'ADMIN' && (
           <ServicosAgendamentos
             onProfissionaisAtualizados={fetchDashboardData}
             onStatusServicoAlterado={atualizado => {
               setServicos(prev => prev.map(servico => servico.id === atualizado.id ? { ...servico, ativo: atualizado.ativo } : servico));
             }}
             onAbrirAgendaProfissional={handleAbrirAgendaDoProfissional}
-            isAdmin={usuario?.perfil === 'ADMIN'}
+            isAdmin={true}
           />
         )}
       </main>
