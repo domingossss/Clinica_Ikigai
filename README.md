@@ -82,7 +82,7 @@ As views `pacientes`, `profissionais`, `servicos`, `categorias`, `agendamentos` 
 - **`/dashboard`:** indicadores por período e especialidade, análises detalhadas e calendário de atendimentos.
 - **`/`:** redirecionamento para a agenda.
 
-Agenda e dashboard não possuem botões de navegação entre si. Login e controle de acesso por usuário ainda não estão implementados; a configuração padrão mantém os servidores acessíveis apenas na máquina local.
+O acesso começa em `/login`. Cada conta possui um perfil e o administrador gerencia as contas na interface. O servidor revalida a conta e o perfil em cada requisição autenticada. A sessão dura até 12 horas e o logout a revoga no banco. Desativar uma conta ou trocar sua senha revoga todas as suas sessões.
 
 ### Atualização automática
 
@@ -101,6 +101,8 @@ A capacidade diária é registrada enquanto a API está em execução. Períodos
 | Endpoint | Finalidade |
 | --- | --- |
 | `GET /api/health` e `GET /health` | Verificar a disponibilidade da API e do banco. |
+| `POST /api/auth/login`, `GET /api/auth/me` e `POST /api/auth/logout` | Abrir, consultar e encerrar a sessão com cookie HttpOnly. |
+| `/api/usuarios` | Listar, criar, editar e ativar ou desativar contas, com acesso administrativo. |
 | `/api/pacientes` | Cadastros, busca e histórico dos pacientes. |
 | `/api/agendamentos` | Reservas, consultas da agenda e mudanças de situação. |
 | `/api/servicos`, `/api/categorias` e `/api/profissionais` | Configuração de atendimentos e profissionais. |
@@ -190,6 +192,26 @@ EXIT;
 
 A instalação inicial não exige dados fictícios. Cadastre categorias, serviços e profissionais pela aplicação e configure os vínculos e jornadas antes de agendar.
 
+#### Primeiro administrador
+
+Após criar ou migrar o banco, provisione a primeira conta pelo terminal local. A API inicia sem criar contas automaticamente. No PowerShell, informe o e-mail e uma senha exclusiva de pelo menos 12 caracteres. O comando recusa bancos que já possuem usuários.
+
+```powershell
+$env:ADMIN_INITIAL_EMAIL = Read-Host 'E-mail do administrador'
+$senhaInicial = Read-Host 'Senha do administrador' -AsSecureString
+try {
+    $env:ADMIN_INITIAL_PASSWORD = [System.Net.NetworkCredential]::new('', $senhaInicial).Password
+    npm run admin:provisionar
+} finally {
+    Remove-Item Env:ADMIN_INITIAL_PASSWORD,Env:ADMIN_INITIAL_EMAIL -ErrorAction SilentlyContinue
+    $senhaInicial.Dispose()
+}
+```
+
+Em produção, configure `NODE_ENV=production` e um `SESSION_SECRET` aleatório e estável de pelo menos 32 bytes no ambiente protegido do serviço. Gere um valor com `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`. Sirva a aplicação via HTTPS. Para um proxy reverso na mesma máquina, mantenha o Express em loopback, configure o proxy para sobrescrever `X-Forwarded-Proto` e habilite `TRUST_PROXY_LOOPBACK=true`. O cookie usa `HttpOnly`, `SameSite=Lax`, caminho `/` e `Secure` em produção. O cliente web utiliza o cookie de sessão. Clientes da API devem guardar o cookie de login e enviá-lo nas chamadas seguintes.
+
+Ao atualizar uma instalação anterior, os usuários existentes são preservados e precisam entrar novamente. Se a instalação criou o administrador com a senha padrão da versão anterior, altere a senha em Gestão de usuários antes de disponibilizar o serviço. Para recuperar o banco anterior, restaure o backup feito antes da migração em um banco separado e use a versão correspondente da aplicação.
+
 **Dados de demonstração:** `database/seed.sql` contém operações `TRUNCATE` que apagam registros existentes. Seu uso é exclusivo de bancos descartáveis de desenvolvimento. Ele não faz parte da instalação operacional.
 
 ### 4. Atualizar um banco existente
@@ -247,6 +269,14 @@ npm run build
 npm start
 ```
 
+### Comunicação com pacientes em simulação
+
+Administradores acessam `/comunicacao` ou abrem as mensagens a partir do atendimento. A confirmação usa o WhatsApp cadastrado para o paciente. Cada tentativa identifica o atendimento, o horário a que se refere e o resultado. Apenas uma falha definitiva permite solicitar nova tentativa. Uma submissão com resultado incerto fica disponível para conferência.
+
+Após a migração, configure `COMUNICACAO_PROVEDOR=simulado` em um ambiente de teste e reinicie o servidor. O simulador não envia mensagens a pacientes. Use `COMUNICACAO_SIMULAR_RESULTADO` para exercitar os resultados `submetida`, `entregue`, `rejeitada` e `timeout`. Deixe o provedor vazio para desabilitar o envio.
+
+A clínica usa uma antecedência de 24 horas (1440 minutos), no fuso `America/Sao_Paulo`. A cada minuto o servidor seleciona atendimentos futuros agendados, confirmados e reagendados que entraram na janela. O horário atual do atendimento identifica a ocorrência. Alterar o horário pode gerar um lembrete para a nova ocorrência quando ela se tornar elegível. Tentativas pendentes são reavaliadas após o reinício.
+
 ### Verificações do projeto
 
 ```powershell
@@ -270,3 +300,11 @@ MYSQLDUMP_PATH="C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
 ```
 
 Mantenha uma cópia protegida fora da máquina. Para recuperar dados, interrompa a API, importe o backup em um banco de recuperação e confira registros e vínculos antes de alterar `DB_NAME`. Não valide restaurações sobrescrevendo o banco operacional. Backups e arquivos `.env` contêm informações privadas e não devem ser enviados ao repositório.
+
+### Perfis e comunicação
+
+O administrador abre o resumo do dia em `/inicio` e tem acesso a todas as telas. A recepção abre a agenda, realiza reservas, gerencia cadastros de pacientes e consulta os indicadores. O profissional vinculado pode editar a jornada, os bloqueios e o status dos atendimentos da própria agenda e registrar a evolução clínica de pacientes. O administrador pode vincular uma conta profissional a um cadastro existente ou criar o cadastro em Gestão de Usuários. O botão **Reserva excepcional** permite ao profissional selecionar um paciente existente e confirmar uma reserva na própria agenda em dia fechado. A reserva respeita jornada individual, pausas, bloqueios e ocupações.
+
+Em **Serviços e Configurações → Exceções**, o administrador configura o expediente semanal da clínica. Até configurar um dia da semana, a disponibilidade segue a jornada individual e as exceções da data.
+
+A área **Comunicação** fica disponível ao administrador, inclusive pelo detalhe do atendimento. Para testes locais com dados fictícios, configure `COMUNICACAO_PROVEDOR=simulado`. A simulação distingue submissão, entrega, rejeição e resultado incerto. O simulador usa a regra de 24 horas da clínica. O WhatsApp externo aguarda homologação.

@@ -58,7 +58,7 @@ function responderFalha(res: Response, erro: unknown) {
   const temporario = ['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT', 'ECONNREFUSED', 'ER_ACCESS_DENIED_ERROR', 'ETIMEDOUT', 'PROTOCOL_CONNECTION_LOST'].includes(codigo || '');
   return res.status(temporario ? 503 : 500).json({ sucesso: false, erro: temporario ? 'Serviço temporariamente indisponível. Tente novamente.' : 'Não foi possível concluir a operação.' });
 }
-async function validarReserva(banco: ConsultaBanco, profissionalId: number, servicoId: number, data: string, inicio: string, ignorarId = 0) {
+async function validarReserva(banco: ConsultaBanco, profissionalId: number, servicoId: number, data: string, inicio: string, ignorarId = 0, excepcional = false) {
   const [profissionais] = await banco.query<any[]>('SELECT ativo FROM profissional WHERE id_profissional = ?', [profissionalId]);
   if (!profissionais.length || !profissionais[0].ativo) throw new ErroOperacao(400, 'Profissional inativo ou não cadastrado.');
   const [servicos] = await banco.query<any[]>('SELECT * FROM procedimento WHERE id_procedimento = ? FOR SHARE', [servicoId]);
@@ -68,7 +68,7 @@ async function validarReserva(banco: ConsultaBanco, profissionalId: number, serv
   const duracao = Number(servicos[0].duracao_minutos);
   if (!Number.isInteger(duracao) || duracao <= 0) throw new ErroOperacao(400, 'Duração do procedimento inválida.');
   const fim = formatMinsToTime(parseTimeToMins(inicio) + duracao + 15);
-  const janelas = await obterJanelasAgenda(banco, profissionalId, data);
+  const janelas = await obterJanelasAgenda(banco, profissionalId, data, excepcional);
   if (!horarioCabeNasJanelas(inicio, fim, janelas)) throw new ErroOperacao(409, 'Horário fora da jornada disponível, intervalo ou exceção da data (incluindo 15 minutos de respiro).');
   const [conflitos] = await banco.query<any[]>(
     "SELECT id_agendamento FROM agendamento WHERE id_profissional = ? AND data = ? AND id_agendamento <> ? AND status <> 'Cancelado' AND ? < horario_fim AND horario_inicio < ?",
@@ -79,16 +79,18 @@ async function validarReserva(banco: ConsultaBanco, profissionalId: number, serv
   if (bloqueios.length) throw new ErroOperacao(409, 'Horário bloqueado na agenda.');
   return { fim, preco: Number(servicos[0].preco) };
 }
-async function gravarHistorico(conexao: PoolConnection, agendamento: any, status: string, atualizar: () => Promise<unknown>, motivo: string) {
+async function gravarHistorico(conexao: PoolConnection, agendamento: { id_agendamento: number; status: string }, status: string, usuario: Request['usuario'], atualizar: () => Promise<unknown>, motivo: string) {
+  const tipo = status === 'Cancelado' ? 'CANCELAMENTO' : status === 'Reagendado' ? 'REAGENDAMENTO' : 'STATUS';
+  const autor = usuario?.nome ?? 'Sistema';
   const [anteriores] = await conexao.query<any[]>('SELECT COALESCE(MAX(id_historico), 0) AS ultimo FROM historico_status_agendamento WHERE id_agendamento = ?', [agendamento.id_agendamento]);
   await atualizar();
   // Reaproveita o registro gerado pelo gatilho. Se o banco legado não tiver o gatilho,
   // registra na mesma transação, sem perder nem duplicar a auditoria.
   const [novos] = await conexao.query<any[]>('SELECT id_historico FROM historico_status_agendamento WHERE id_agendamento = ? AND id_historico > ? ORDER BY id_historico DESC LIMIT 1', [agendamento.id_agendamento, anteriores[0].ultimo]);
   if (novos.length) {
-    await conexao.query('UPDATE historico_status_agendamento SET motivo = ?, alterado_por = ? WHERE id_historico = ?', [motivo, 'Recepção', novos[0].id_historico]);
+    await conexao.query('UPDATE historico_status_agendamento SET motivo = ?, tipo_evento = ?, alterado_por = ?, id_usuario = ? WHERE id_historico = ?', [motivo, tipo, autor, usuario?.id ?? null, novos[0].id_historico]);
   } else {
-    await conexao.query('INSERT INTO historico_status_agendamento (id_agendamento, status_anterior, status_novo, motivo, alterado_por) VALUES (?, ?, ?, ?, ?)', [agendamento.id_agendamento, agendamento.status, status, motivo, 'Recepção']);
+    await conexao.query('INSERT INTO historico_status_agendamento (id_agendamento, status_anterior, status_novo, motivo, tipo_evento, alterado_por, id_usuario) VALUES (?, ?, ?, ?, ?, ?, ?)', [agendamento.id_agendamento, agendamento.status, status, motivo, tipo, autor, usuario?.id ?? null]);
   }
 }
 async function verificarAgendaAposConfiguracao(conexao: PoolConnection, profissionalId: number | null, data?: string) {
@@ -96,9 +98,9 @@ async function verificarAgendaAposConfiguracao(conexao: PoolConnection, profissi
   let filtro = "status IN ('Agendado', 'Confirmado', 'Reagendado', 'Na Recepção', 'Em Atendimento')";
   if (profissionalId !== null) { filtro += ' AND id_profissional = ?'; params.push(profissionalId); }
   if (data) { filtro += ' AND data = ?'; params.push(data); } else { filtro += ' AND data >= CURDATE()'; }
-  const [agendamentos] = await conexao.query<any[]>("SELECT id_agendamento, id_profissional, DATE_FORMAT(data, '%Y-%m-%d') AS data, horario_inicio, horario_fim FROM agendamento WHERE " + filtro, params);
+  const [agendamentos] = await conexao.query<any[]>("SELECT id_agendamento, id_profissional, DATE_FORMAT(data, '%Y-%m-%d') AS data, horario_inicio, horario_fim, EXISTS(SELECT 1 FROM historico_status_agendamento h WHERE h.id_agendamento=agendamento.id_agendamento AND h.tipo_evento='CRIACAO' AND h.motivo='Reserva confirmada pelo profissional em dia fechado') AS excepcional FROM agendamento WHERE " + filtro, params);
   for (const ag of agendamentos) {
-    const janelas = await obterJanelasAgenda(conexao, ag.id_profissional, ag.data);
+    const janelas = await obterJanelasAgenda(conexao, ag.id_profissional, ag.data, ag.excepcional ? 'existente' : false);
     if (!horarioCabeNasJanelas(ag.horario_inicio, ag.horario_fim, janelas)) throw new ErroOperacao(409, 'A configuração conflita com o agendamento #' + ag.id_agendamento + '. Reagende ou cancele o atendimento primeiro.');
   }
 }
@@ -130,6 +132,32 @@ function formatMinsToTime(mins: number): string {
 // ============================================================================
 // ENDPOINT: GET /api/janelas (Disponibilidade por data e profissional)
 // ============================================================================
+router.get('/expediente-clinica', async (_req,res,next) => {
+  try { const [dados] = await pool.query('SELECT * FROM expediente_clinica ORDER BY dia_semana'); res.json({dados}); } catch(e) { next(e); }
+});
+router.put('/expediente-clinica', async (req,res,next) => {
+  try {
+    const {dia_semana, ativo, horario_inicio, horario_fim, intervalo_inicio, intervalo_fim} = req.body;
+    if (!Number.isInteger(dia_semana) || dia_semana < 0 || dia_semana > 6 || typeof ativo !== 'boolean' ||
+        (ativo && !validarJornadaProfissional(horario_inicio, horario_fim, intervalo_inicio, intervalo_fim).valido)) {
+      res.status(400).json({erro:'Informe um dia e horários válidos.'}); return;
+    }
+    await transacaoAgenda(null, async conexao => {
+      await conexao.query('REPLACE INTO expediente_clinica (dia_semana,ativo,horario_inicio,horario_fim,intervalo_inicio,intervalo_fim) VALUES (?,?,?,?,?,?)',
+        [dia_semana,ativo,ativo ? horario_inicio : '00:00',ativo ? horario_fim : '00:00',ativo ? intervalo_inicio || null : null,ativo ? intervalo_fim || null : null]);
+      await verificarAgendaAposConfiguracao(conexao,null);
+    });
+    res.json({sucesso:true});
+  } catch(e) { if(e instanceof ErroOperacao) res.status(e.status).json({erro:e.message}); else next(e); }
+});
+router.get('/agenda/pacientes', async (req,res,next) => {
+  try {
+    const busca = String(req.query.busca || '').trim().slice(0,150);
+    if (busca.length < 2) {res.json({dados:[]});return;}
+    const [dados] = await pool.query('SELECT uuid AS id,nome FROM paciente WHERE LOCATE(?,nome)>0 ORDER BY nome LIMIT 10',[busca]);
+    res.json({dados});
+  } catch(e) { next(e); }
+});
 router.get('/janelas', async (req, res) => {
   try {
     validarDataHora(req.query.data, '08:00');
@@ -157,7 +185,7 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
       const [profs] = await conexao.query<any[]>('SELECT ativo FROM profissional WHERE id_profissional = ?', [profId]);
       const [vinculos] = await conexao.query<any[]>('SELECT 1 FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?', [profId, servId]);
       if (!profs[0].ativo || !vinculos.length) throw new ErroOperacao(400, 'Profissional inativo ou não habilitado.');
-      const janelas = await obterJanelasAgenda(conexao, profId, data as string);
+      const janelas = await obterJanelasAgenda(conexao, profId, data as string, req.usuario?.perfil === 'PROFISSIONAL' && req.query.excepcional === '1');
       const [agendamentos] = await conexao.query<any[]>(
         "SELECT a.id_agendamento AS id, TIME_FORMAT(a.horario_inicio, '%H:%i') AS horario_inicio, TIME_FORMAT(a.horario_fim, '%H:%i') AS horario_fim, p.nome AS paciente_nome, s.nome AS servico_nome FROM agendamento a JOIN paciente p ON p.uuid = a.paciente_uuid JOIN procedimento s ON s.id_procedimento = a.id_procedimento WHERE a.id_profissional = ? AND a.data = ? AND a.status <> 'Cancelado'", [profId, data]);
       const [bloqueios] = await conexao.query<any[]>("SELECT id_bloqueio AS id, TIME_FORMAT(horario_inicio, '%H:%i') AS horario_inicio, TIME_FORMAT(horario_fim, '%H:%i') AS horario_fim, motivo FROM bloqueio_agenda WHERE id_profissional = ? AND data = ?", [profId, data]);
@@ -180,13 +208,18 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
 // ============================================================================
 router.post('/agendamentos', async (req: Request, res: Response): Promise<any> => {
   try {
+    const excepcional = req.usuario?.perfil === 'PROFISSIONAL';
+    if (excepcional && req.body.confirmarFechamento !== true) throw new ErroOperacao(403, 'Confirme a reserva em dia fechado.');
     const { paciente_id, data, horario_inicio } = req.body;
     validarDataHora(data, horario_inicio);
     if (typeof paciente_id !== 'string' || !paciente_id.trim()) throw new ErroOperacao(400, 'Paciente é obrigatório.');
     const profissional_id = idPositivo(req.body.profissional_id);
+    if (excepcional && req.usuario?.profissional_id !== profissional_id) {
+      throw new ErroOperacao(403, 'Você só pode confirmar uma reserva excepcional na própria agenda.');
+    }
     const servico_id = idPositivo(req.body.servico_id);
     const dados = await transacaoAgenda([profissional_id], async conexao => {
-      const reserva = await validarReserva(conexao, profissional_id, servico_id, data, horario_inicio);
+      const reserva = await validarReserva(conexao, profissional_id, servico_id, data, horario_inicio, 0, excepcional);
       const [pacientes] = await conexao.query<any[]>('SELECT id_paciente, uuid FROM paciente WHERE uuid = ? FOR UPDATE', [paciente_id]);
       if (!pacientes.length) throw new ErroOperacao(404, 'Paciente não cadastrado.');
       const [ocupado] = await conexao.query<any[]>("SELECT id_agendamento FROM agendamento WHERE paciente_uuid = ? AND data = ? AND status <> 'Cancelado' AND ? < horario_fim AND horario_inicio < ? FOR UPDATE", [paciente_id, data, horario_inicio, reserva.fim]);
@@ -195,6 +228,9 @@ router.post('/agendamentos', async (req: Request, res: Response): Promise<any> =
         "INSERT INTO agendamento (id_paciente, paciente_uuid, id_profissional, id_procedimento, data, horario_inicio, horario_fim, data_hora_agendamento, valor_cobrado, observacoes, tipo_atendimento, origem, status) VALUES (?, ?, ?, ?, ?, ?, ?, TIMESTAMP(?, ?), ?, ?, ?, 'Humano_Recepcao', 'Agendado')",
         [pacientes[0].id_paciente, paciente_id, profissional_id, servico_id, data, horario_inicio, reserva.fim, data, horario_inicio, reserva.preco, sanitizarTexto(req.body.observacoes || ''), req.body.tipo_atendimento === 'Retorno' ? 'Retorno' : 'Primeira_Consulta']);
       if (resultado.affectedRows !== 1) throw new Error('Agendamento não gravado.');
+      await conexao.query(
+        "INSERT INTO historico_status_agendamento (id_agendamento, status_novo, tipo_evento, alterado_por, id_usuario, motivo) VALUES (?, 'Agendado', 'CRIACAO', ?, ?, ?)",
+        [resultado.insertId, req.usuario?.nome ?? 'Sistema', req.usuario?.id ?? null, excepcional ? 'Reserva confirmada pelo profissional em dia fechado' : null]);
       return { id: resultado.insertId, paciente_id, profissional_id, servico_id, data, horario_inicio, horario_fim: reserva.fim, status: 'Agendado' };
     });
     return res.status(201).json({ sucesso: true, mensagem: 'Agendamento cadastrado com sucesso!', dados });
@@ -608,7 +644,7 @@ router.get('/profissionais/:id/agenda', async (req: Request, res: Response): Pro
          a.status,
          p.id as paciente_id,
          p.nome_completo as paciente_nome,
-         p.whatsapp as paciente_whatsapp,
+         ${req.usuario?.perfil === 'PROFISSIONAL' ? 'NULL' : 'p.whatsapp'} as paciente_whatsapp,
          pr.id as profissional_id,
          pr.nome as profissional_nome,
          s.id as servico_id,
@@ -704,7 +740,7 @@ router.get('/agendamentos/dia', async (req: Request, res: Response): Promise<any
          a.status,
          p.id as paciente_id,
          p.nome_completo as paciente_nome,
-         p.whatsapp as paciente_whatsapp,
+         ${req.usuario?.perfil === 'PROFISSIONAL' ? 'NULL' : 'p.whatsapp'} as paciente_whatsapp,
          pr.id as profissional_id,
          pr.nome as profissional_nome,
          s.nome as servico_nome,
@@ -786,10 +822,13 @@ router.put('/agendamentos/:id/status', async (req: Request, res: Response): Prom
       const [rows] = await conexao.query<any[]>('SELECT * FROM agendamento WHERE id_agendamento = ? FOR UPDATE', [id]);
       const atual = rows[0];
       if (!atual) throw new ErroOperacao(404, 'Agendamento não encontrado.');
+      if (req.usuario?.perfil === 'PROFISSIONAL' && Number(atual.id_profissional) !== req.usuario.profissional_id) {
+        throw new ErroOperacao(403, 'Você só pode atualizar o status na própria agenda.');
+      }
       if (status === atual.status) return;
       if (typeof status !== 'string' || !transicoes[atual.status]?.includes(status)) throw new ErroOperacao(409, 'Mudança de status não permitida para este atendimento.');
       const motivo = sanitizarTexto(typeof req.body.motivo === 'string' ? req.body.motivo : '') || ('Status alterado para ' + status);
-      await gravarHistorico(conexao, atual, status, () => conexao.query("UPDATE agendamento SET status = ?, data_hora_checkin = IF(? = 'Na Recepção', NOW(), data_hora_checkin), data_hora_inicio_atendimento = IF(? = 'Em Atendimento', NOW(), data_hora_inicio_atendimento), minutos_atraso = IF(? = 'Em Atendimento', GREATEST(0, TIMESTAMPDIFF(MINUTE, TIMESTAMP(data, horario_inicio), NOW())), minutos_atraso) WHERE id_agendamento = ?", [status, status, status, status, id]), motivo);
+      await gravarHistorico(conexao, atual, status, req.usuario, () => conexao.query("UPDATE agendamento SET status = ?, data_hora_checkin = IF(? = 'Na Recepção', NOW(), data_hora_checkin), data_hora_inicio_atendimento = IF(? = 'Em Atendimento', NOW(), data_hora_inicio_atendimento), minutos_atraso = IF(? = 'Em Atendimento', GREATEST(0, TIMESTAMPDIFF(MINUTE, TIMESTAMP(data, horario_inicio), NOW())), minutos_atraso) WHERE id_agendamento = ?", [status, status, status, status, id]), motivo);
     });
     return res.json({ sucesso: true, mensagem: 'Status atualizado com sucesso!', dados: { id, status } });
   } catch (erro) { return responderFalha(res, erro); }
@@ -813,7 +852,7 @@ router.put('/agendamentos/:id/reagendar', async (req: Request, res: Response): P
       const [ocupado] = await conexao.query<any[]>("SELECT id_agendamento FROM agendamento WHERE paciente_uuid = ? AND data = ? AND id_agendamento <> ? AND status <> 'Cancelado' AND ? < horario_fim AND horario_inicio < ? FOR UPDATE", [atual.paciente_uuid, data, id, horario_inicio, reserva.fim]);
       if (ocupado.length) throw new ErroOperacao(409, 'Paciente já possui atendimento neste horário.');
       const texto = sanitizarTexto(typeof motivo === 'string' ? motivo : '') || ('Reagendado para ' + data + ' às ' + horario_inicio);
-      await gravarHistorico(conexao, atual, 'Reagendado', () => conexao.query("UPDATE agendamento SET data = ?, horario_inicio = ?, horario_fim = ?, data_hora_agendamento = TIMESTAMP(?, ?), status = 'Reagendado' WHERE id_agendamento = ?", [data, horario_inicio, reserva.fim, data, horario_inicio, id]), texto);
+      await gravarHistorico(conexao, atual, 'Reagendado', req.usuario, () => conexao.query("UPDATE agendamento SET data = ?, horario_inicio = ?, horario_fim = ?, data_hora_agendamento = TIMESTAMP(?, ?), status = 'Reagendado' WHERE id_agendamento = ?", [data, horario_inicio, reserva.fim, data, horario_inicio, id]), texto);
       return { id, data, horario_inicio, horario_fim: reserva.fim, status: 'Reagendado' };
     });
     return res.json({ sucesso: true, mensagem: 'Atendimento reagendado com sucesso!', dados });
@@ -832,7 +871,7 @@ router.get('/agendamentos/:id/historico', async (req: Request, res: Response): P
               TIME_FORMAT(a.horario_fim, '%H:%i') AS horario_fim,
               a.status,
               a.origem,
-              DATE_FORMAT(a.data_hora_criacao, '%Y-%m-%dT%H:%i:%s') AS criado_em,
+              DATE_FORMAT(a.criado_em, '%Y-%m-%dT%H:%i:%s') AS criado_em,
               p.nome AS paciente_nome,
               pr.nome AS profissional_nome,
               s.nome AS servico_nome
@@ -850,6 +889,8 @@ router.get('/agendamentos/:id/historico', async (req: Request, res: Response): P
               id_agendamento,
               status_anterior,
               status_novo,
+              tipo_evento,
+              id_usuario,
               motivo,
               alterado_por,
               DATE_FORMAT(data_alteracao, '%Y-%m-%dT%H:%i:%s') AS data_alteracao

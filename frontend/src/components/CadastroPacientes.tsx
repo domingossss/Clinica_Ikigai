@@ -1,3 +1,4 @@
+import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Swal from 'sweetalert2';
@@ -30,9 +31,9 @@ interface CadastroPacientesProps {
   usuarioLogado?: UsuarioSessao;
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: CadastroPacientesProps) {
+  const admin = usuarioLogado?.perfil === 'ADMIN';
   const isProfissional = usuarioLogado?.perfil === 'PROFISSIONAL';
   // Estados de dados
   const [pacientes, setPacientes] = useState<Paciente[]>([]);
@@ -93,7 +94,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
     consultaPacientes.current = controller;
     if (!silencioso) setLoadingPacientes(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/pacientes?pagina=${pagina}&limite=50&busca=${encodeURIComponent(searchTerm)}`, { signal: controller.signal });
+      const res = await apiFetch(`/api/pacientes?pagina=${pagina}&limite=50&busca=${encodeURIComponent(searchTerm)}`, { signal: controller.signal });
       const data = await res.json();
       if (controller.signal.aborted) return;
       if (res.ok && data.sucesso && Array.isArray(data.dados)) {
@@ -283,7 +284,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
     }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/pacientes/${id}`, {
+      const res = await apiFetch(`/api/pacientes/${id}`, {
         method: 'DELETE'
       });
       const data = await res.json();
@@ -322,7 +323,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
       // Validar campos obrigatórios cadastrais
       const newErrors: Record<string, string | boolean> = {};
       if (!form.nome_completo.trim()) newErrors.nome_completo = 'Nome completo é obrigatório.';
-      
+
       const cleanCpf = form.cpf.replace(/\D/g, '');
       if (!cleanCpf) {
         newErrors.cpf = 'CPF é obrigatório.';
@@ -350,11 +351,11 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
     try {
       const isEditing = !!editingPacienteId;
       const url = isEditing 
-        ? `${API_BASE_URL}/api/pacientes/${editingPacienteId}`
-        : `${API_BASE_URL}/api/pacientes`;
+        ? `/api/pacientes/${editingPacienteId}`
+        : `/api/pacientes`;
       const method = isEditing ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, versao: editingVersion })
@@ -459,8 +460,8 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
             <p className="text-xs text-gray mb-5">
               {isProfissional
                 ? 'Atualize a etapa do tratamento, o histórico clínico e as observações do paciente.'
-                : (editingPacienteId 
-                    ? 'Modifique os dados do paciente. CPF e Telefone serão re-sanitizados.' 
+                : (editingPacienteId
+                    ? 'Modifique os dados do paciente. CPF e Telefone serão re-sanitizados.'
                     : 'Insira os dados do paciente. CPF e Telefone serão sanitizados automaticamente.')}
             </p>
 
@@ -727,7 +728,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                     filteredPacientes.map(p => (
                       <tr key={p.id} className="hover:bg-light-gray/40 transition-colors">
                         <td className="px-4 py-4">
-                          <button
+                          {admin ? <button
                             type="button"
                             onClick={() => handleAbrirHistorico(p)}
                             className="text-left font-bold text-dark hover:text-primary transition-colors cursor-pointer group flex items-center gap-1.5"
@@ -737,7 +738,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                             <span className="opacity-0 group-hover:opacity-100 text-[10px] bg-secondary/15 text-primary-dark font-semibold px-1.5 py-0.5 rounded transition-opacity">
                               Ver Histórico
                             </span>
-                          </button>
+                          </button> : <span>{p.nome_completo}</span>}
                         </td>
                         <td className="px-4 py-4 text-gray font-mono">{formatarCPFExibicao(p.cpf)}</td>
                         <td className="px-4 py-4 text-gray font-semibold">{formatarTelefoneExibicao(p.telefone)}</td>
@@ -748,7 +749,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                           {new Date(p.criado_em).toLocaleDateString('pt-BR')}
                         </td>
                         <td className="px-4 py-4 text-right flex items-center justify-end gap-2">
-                          <button
+                          {admin && <button
                             onClick={() => handleAbrirHistorico(p)}
                             title="Visualizar histórico de atendimentos (IK-77)"
                             className="p-1.5 bg-light-gray hover:bg-secondary/30 text-gray hover:text-primary-dark rounded-lg transition-colors cursor-pointer"
@@ -756,8 +757,8 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                             <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                          </button>
-                          <button
+                          </button>}
+                          {usuarioLogado && <button
                             onClick={() => handleEditClick(p)}
                             title={isProfissional ? 'Registrar evolução clínica' : 'Editar paciente'}
                             className="p-1.5 bg-light-gray hover:bg-primary/15 text-gray hover:text-primary rounded-lg transition-colors cursor-pointer"
@@ -765,8 +766,8 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                             </svg>
-                          </button>
-                          {!isProfissional && (
+                          </button>}
+                          {admin && (
                             <button
                               onClick={() => handleDeleteClick(p.id, p.nome_completo)}
                               title="Excluir paciente"

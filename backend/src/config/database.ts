@@ -49,13 +49,28 @@ export class ErroOperacao extends Error {
 
 export type ConsultaBanco = Pick<PoolConnection, 'query'>;
 
-export async function obterJanelasAgenda(banco: ConsultaBanco, profissionalId: number, data: string) {
+export async function obterJanelasAgenda(banco: ConsultaBanco, profissionalId: number, data: string, excepcional: boolean | 'existente' = false) {
   const dia = new Date(data + 'T12:00:00Z').getUTCDay();
   const [jornadas] = await banco.query<any[]>(
     'SELECT * FROM jornada_profissional WHERE id_profissional = ? AND dia_semana = ?', [profissionalId, dia]);
   const [excecoes] = await banco.query<any[]>(
-    'SELECT * FROM excecao_disponibilidade WHERE data = ? AND (id_profissional IS NULL OR id_profissional = ?) ORDER BY (id_profissional IS NOT NULL) DESC, id_excecao DESC LIMIT 1', [data, profissionalId]);
-  return resolverJanelasAgenda(data, jornadas[0], excecoes[0]);
+    'SELECT * FROM excecao_disponibilidade WHERE data = ? AND (id_profissional IS NULL OR id_profissional = ?) ORDER BY id_excecao DESC', [data, profissionalId]);
+  const [grade] = await banco.query<any[]>('SELECT * FROM expediente_clinica WHERE dia_semana=?', [dia]);
+  const local = excecoes.find(e => e.id_profissional == null);
+  const individual = excecoes.find(e => e.id_profissional != null);
+  const fimDeSemana = dia === 0 || dia === 6;
+  const jornada = jornadas[0] ?? (excepcional && fimDeSemana
+    ? { ativo: true, horario_inicio: '08:00', horario_fim: '18:00' }
+    : undefined);
+  const profissional = resolverJanelasAgenda(data, jornada, individual);
+  const fechada = local ? local.tipo_excecao === 'Fechado' : grade.length && !grade[0].ativo;
+  if (excepcional && fechada) return profissional;
+  if (excepcional === true && !fimDeSemana) {
+    throw new ErroOperacao(409, 'A reserva excepcional exige um fim de semana ou um dia fechado pela clínica.');
+  }
+  if (!grade.length && !local) return profissional;
+  const clinica = resolverJanelasAgenda(data, grade[0], local);
+  return profissional.flatMap(([a,b]) => clinica.map(([c,d]): [number,number] => [Math.max(a,c), Math.min(b,d)]).filter(([i,f]) => i < f));
 }
 
 // Todas as alterações de agenda usam o mesmo bloqueio por profissional.
@@ -89,7 +104,7 @@ const eventosClinica = new EventEmitter();
 eventosClinica.setMaxListeners(0);
 const instancia = randomUUID();
 let revisao = 0;
-const recursosSincronizados = new Set(['agendamentos', 'pacientes', 'servicos', 'categorias', 'profissionais', 'bloqueios', 'excecoes']);
+const recursosSincronizados = new Set(['agendamentos', 'pacientes', 'servicos', 'categorias', 'profissionais', 'bloqueios', 'expediente-clinica', 'excecoes']);
 
 export function notificarAlteracoes(req: Request, res: Response, next: NextFunction): void {
   const recurso = req.path.split('/').filter(Boolean)[0];
@@ -97,7 +112,7 @@ export function notificarAlteracoes(req: Request, res: Response, next: NextFunct
     res.once('finish', () => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         const publicar = () => eventosClinica.emit('alteracao', { versao: instancia + ':' + (++revisao), recursos: [recurso] });
-        if (['profissionais','servicos','categorias','excecoes','bloqueios'].includes(recurso)) {
+        if (['profissionais','servicos','categorias','expediente-clinica','excecoes','bloqueios'].includes(recurso)) {
           void import('../services/capacidadeAgenda.js').then(m => m.registrarCapacidadeHoje()).catch(error => registrarErro('[Capacidade]', error)).finally(publicar);
         } else publicar();
       }
@@ -106,7 +121,7 @@ export function notificarAlteracoes(req: Request, res: Response, next: NextFunct
   next();
 }
 
-export function acompanharAlteracoes(_req: Request, res: Response): void {
+export function acompanharAlteracoes(req: Request, res: Response): void {
   res.status(200).set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -117,12 +132,22 @@ export function acompanharAlteracoes(_req: Request, res: Response): void {
   res.write('retry: 3000\n\n');
   // Reconexões sempre pedem uma leitura completa: não dependemos de um histórico em memória.
   res.write('event: pronto\ndata: ' + JSON.stringify({ versao: instancia + ':' + revisao, recursos: [] }) + '\n\n');
+  async function enviarSeAutorizado(mensagem: string) {
+    if (res.destroyed || res.writableEnded) return;
+    try {
+      const { consultarSessao } = await import('../middleware/auth.js');
+      const usuario = await consultarSessao(req);
+      if (!usuario || usuario.id !== req.usuario?.id || usuario.perfil !== req.usuario?.perfil) {
+        res.end();
+        return;
+      }
+      if (!res.destroyed && !res.writableEnded) res.write(mensagem);
+    } catch { res.end(); }
+  }
   const enviar = (mudanca: { versao: string; recursos: string[] }) => {
-    if (!res.destroyed && !res.writableEnded) {
-      res.write('id: ' + mudanca.versao + '\nevent: alteracao\ndata: ' + JSON.stringify(mudanca) + '\n\n');
-    }
+    void enviarSeAutorizado('id: ' + mudanca.versao + '\nevent: alteracao\ndata: ' + JSON.stringify(mudanca) + '\n\n');
   };
   eventosClinica.on('alteracao', enviar);
-  const manterConexao = setInterval(() => { if (!res.destroyed) res.write(': conectado\n\n'); }, 20000);
+  const manterConexao = setInterval(() => { void enviarSeAutorizado(': conectado\n\n'); }, 20000);
   res.once('close', () => { clearInterval(manterConexao); eventosClinica.off('alteracao', enviar); });
 }

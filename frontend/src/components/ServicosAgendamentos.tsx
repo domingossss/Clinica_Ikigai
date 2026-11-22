@@ -1,3 +1,5 @@
+import GradeClinica from './GradeClinica';
+import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Swal from 'sweetalert2';
@@ -58,7 +60,6 @@ interface ServicosAgendamentosProps {
   isAdmin?: boolean;
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 function obterIniciais(nome: string): string {
   if (!nome) return 'PR';
@@ -156,7 +157,7 @@ export default function ServicosAgendamentos({
   const carregarDadosServicos = useCallback(() => {
     const controller = iniciarConsulta('servicos');
     return Promise.all(['categorias', 'servicos'].map(async recurso => {
-        const res = await fetch(API_BASE_URL + '/api/' + recurso, { signal: controller.signal });
+        const res = await apiFetch('/api/' + recurso, { signal: controller.signal });
         const json = await res.json();
         if (!res.ok || !json.sucesso || !Array.isArray(json.dados)) throw new Error(json.erro || 'Falha ao consultar ' + recurso);
         return json.dados;
@@ -174,7 +175,7 @@ export default function ServicosAgendamentos({
   const carregarVinculosProfissionais = useCallback(async (profs: ProfissionalItem[], signal: AbortSignal) => {
     const mapa: Record<number, number[]> = {};
     await Promise.all(profs.map(async prof => {
-      const res = await fetch(API_BASE_URL + '/api/profissionais/' + prof.id + '/procedimentos', { signal });
+      const res = await apiFetch('/api/profissionais/' + prof.id + '/procedimentos', { signal });
       const data = await res.json();
       if (!res.ok || !data.sucesso || !Array.isArray(data.procedimento_ids)) throw new Error(data.erro || 'Não foi possível consultar os vínculos.');
       mapa[prof.id] = data.procedimento_ids;
@@ -185,7 +186,7 @@ export default function ServicosAgendamentos({
   // Carregar dados de Profissionais
   const carregarProfissionais = useCallback(() => {
     const controller = iniciarConsulta('profissionais');
-    return fetch(API_BASE_URL + '/api/profissionais', { signal: controller.signal }).then(async res => {
+    return apiFetch('/api/profissionais', { signal: controller.signal }).then(async res => {
       const data = await res.json();
       if (!res.ok || !data.sucesso || !Array.isArray(data.dados)) throw new Error(data.erro || 'Falha ao consultar profissionais.');
       const vinculos = await carregarVinculosProfissionais(data.dados, controller.signal);
@@ -201,9 +202,9 @@ export default function ServicosAgendamentos({
   useEffect(() => {
     const pendentes = consultas.current;
     void carregarDadosServicos();
-    void carregarProfissionais();
+    if (isAdmin) void carregarProfissionais();
     return () => Object.values(pendentes).forEach(controller => controller.abort());
-  }, [carregarDadosServicos, carregarProfissionais]);
+  }, [carregarDadosServicos, carregarProfissionais, isAdmin]);
 
   // ==========================================
   // AÇÕES DE SERVIÇOS & CATEGORIAS
@@ -250,7 +251,7 @@ export default function ServicosAgendamentos({
     }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/servicos/${servico.id}/status`, {
+      const res = await apiFetch(`/api/servicos/${servico.id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ativo: novoStatus })
@@ -279,7 +280,7 @@ export default function ServicosAgendamentos({
   const handleCriarCategoria = async () => {
     if (!novaCategoriaNome.trim()) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/categorias`, {
+      const res = await apiFetch(`/api/categorias`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nome: novaCategoriaNome })
@@ -321,7 +322,7 @@ export default function ServicosAgendamentos({
 
     if (novoNome && novoNome.trim() && novoNome.trim() !== nomeAtual) {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/categorias/${catId}`, {
+        const res = await apiFetch(`/api/categorias/${catId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ nome: novoNome.trim() })
@@ -360,7 +361,7 @@ export default function ServicosAgendamentos({
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/categorias/${catId}`, {
+      const res = await apiFetch(`/api/categorias/${catId}`, {
         method: 'DELETE'
       });
       const data = await res.json();
@@ -398,11 +399,11 @@ export default function ServicosAgendamentos({
     try {
       const isEditing = editingServiceId !== null;
       const url = isEditing 
-        ? `${API_BASE_URL}/api/servicos/${editingServiceId}` 
-        : `${API_BASE_URL}/api/servicos`;
+        ? `/api/servicos/${editingServiceId}`
+        : `/api/servicos`;
       const method = isEditing ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -464,11 +465,11 @@ export default function ServicosAgendamentos({
     try {
       const isEditing = editingProfissionalId !== null;
       const url = isEditing
-        ? `${API_BASE_URL}/api/profissionais/${editingProfissionalId}`
-        : `${API_BASE_URL}/api/profissionais`;
+        ? `/api/profissionais/${editingProfissionalId}`
+        : `/api/profissionais`;
       const method = isEditing ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -512,7 +513,7 @@ export default function ServicosAgendamentos({
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${p.id}`, {
+      const res = await apiFetch(`/api/profissionais/${p.id}`, {
         method: 'DELETE'
       });
       const data = await res.json();
@@ -551,7 +552,7 @@ export default function ServicosAgendamentos({
     );
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${p.id}/status`, {
+      const res = await apiFetch(`/api/profissionais/${p.id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ativo: valorNumerico })
@@ -613,7 +614,7 @@ export default function ServicosAgendamentos({
     setModalVinculosProf(p);
     setModalTermoBusca('');
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${p.id}/procedimentos`);
+      const res = await apiFetch(`/api/profissionais/${p.id}/procedimentos`);
       const data = await res.json();
       if (data.sucesso && Array.isArray(data.procedimento_ids)) {
         setModalSelectedProcs(data.procedimento_ids);
@@ -634,7 +635,7 @@ export default function ServicosAgendamentos({
     setModalJornadaProf(p);
     setCarregandoJornada(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${p.id}/jornada`);
+      const res = await apiFetch(`/api/profissionais/${p.id}/jornada`);
       const data = await res.json();
       if (data.sucesso && Array.isArray(data.dados)) {
         setJornadaDias(data.dados);
@@ -651,7 +652,7 @@ export default function ServicosAgendamentos({
     if (!modalJornadaProf) return;
     setSalvandoJornada(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${modalJornadaProf.id}/jornada`, {
+      const res = await apiFetch(`/api/profissionais/${modalJornadaProf.id}/jornada`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dias: jornadaDias })
@@ -678,7 +679,7 @@ export default function ServicosAgendamentos({
     const controller = iniciarConsulta('excecoes');
     if (!silencioso) setLoadingExcecoes(true);
     try {
-      const res = await fetch(API_BASE_URL + '/api/excecoes', { signal: controller.signal });
+      const res = await apiFetch('/api/excecoes', { signal: controller.signal });
       const data = await res.json();
       if (!res.ok || !data.sucesso || !Array.isArray(data.dados)) throw new Error(data.erro || 'Falha ao consultar exceções.');
       if (!controller.signal.aborted) setExcecoes(data.dados);
@@ -696,7 +697,7 @@ export default function ServicosAgendamentos({
     }
     setSubmittingExcecao(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/excecoes`, {
+      const res = await apiFetch(`/api/excecoes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -745,7 +746,7 @@ export default function ServicosAgendamentos({
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/excecoes/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/excecoes/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.sucesso) {
         showToast('Exceção removida com sucesso!', 'success');
@@ -784,7 +785,7 @@ export default function ServicosAgendamentos({
     setSalvandoVinculos(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${modalVinculosProf.id}/procedimentos`, {
+      const res = await apiFetch(`/api/profissionais/${modalVinculosProf.id}/procedimentos`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ procedimentos: modalSelectedProcs })
@@ -815,7 +816,7 @@ export default function ServicosAgendamentos({
     const nomeProc = servico?.nome || `Procedimento #${procId}`;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/profissionais/${prof.id}/procedimentos/${procId}`, {
+      const res = await apiFetch(`/api/profissionais/${prof.id}/procedimentos/${procId}`, {
         method: 'DELETE'
       });
       const data = await res.json();
@@ -850,8 +851,8 @@ export default function ServicosAgendamentos({
   useClinicUpdates(change => {
     const geral = !change.recursos.length;
     if (geral || change.recursos.some(r => ['servicos', 'categorias'].includes(r))) void carregarDadosServicos();
-    if (geral || change.recursos.some(r => ['profissionais', 'servicos'].includes(r))) void carregarProfissionais();
-    if (geral || change.recursos.includes('excecoes')) void carregarExcecoes(true);
+    if (isAdmin && (geral || change.recursos.some(r => ['profissionais', 'servicos'].includes(r)))) void carregarProfissionais();
+    if (isAdmin && (geral || change.recursos.includes('excecoes'))) void carregarExcecoes(true);
   }, ['servicos', 'categorias', 'profissionais', 'excecoes']);
 
   return (
@@ -901,7 +902,7 @@ export default function ServicosAgendamentos({
               </span>
             </button>
 
-                        <button
+                        {isAdmin && <button
               type="button"
               onClick={() => setSubAba('profissionais')}
               className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
@@ -919,9 +920,9 @@ export default function ServicosAgendamentos({
               }`}>
                 {profissionais.length}
               </span>
-            </button>
+            </button>}
 
-            <button
+            {isAdmin && <button
               type="button"
               onClick={() => {
                 setSubAba('excecoes');
@@ -942,7 +943,7 @@ export default function ServicosAgendamentos({
               }`}>
                 {excecoes.length}
               </span>
-            </button>
+            </button>}
           </div>
 
           <div className="flex items-center gap-3 px-3 text-xs text-gray font-medium flex-wrap">
@@ -1002,21 +1003,21 @@ export default function ServicosAgendamentos({
                   <div className="flex justify-between items-center mb-1">
                     <label className="block text-xs font-bold text-dark">Categoria</label>
                     <div className="flex items-center gap-2">
-                      <button
+                      {isAdmin && <button
                         type="button"
                         onClick={() => setShowGerenciarCategorias(true)}
                         className="text-[10px] font-bold text-gray hover:text-dark transition-colors uppercase tracking-wider cursor-pointer"
                       >
                         Gerenciar
-                      </button>
+                      </button>}
                       <span className="text-gray/30 text-xs">|</span>
-                      <button
+                      {isAdmin && <button
                         type="button"
                         onClick={() => setShowNewCatInput(!showNewCatInput)}
                         className="text-[10px] font-bold text-primary hover:text-primary-dark transition-colors uppercase tracking-wider cursor-pointer"
                       >
                         {showNewCatInput ? 'Cancelar' : '+ Nova Categoria'}
-                      </button>
+                      </button>}
                     </div>
                   </div>
 
@@ -1165,7 +1166,7 @@ export default function ServicosAgendamentos({
                         </div>
 
                         {/* Status Toggle Button (IK-95) */}
-                        <button
+                        {isAdmin && <button
                           type="button"
                           onClick={() => handleToggleStatusServico(s)}
                           title={s.ativo !== 0 && s.ativo !== false ? 'Clique para inativar procedimento' : 'Clique para reativar procedimento'}
@@ -1181,7 +1182,7 @@ export default function ServicosAgendamentos({
                             }`}
                           />
                           <span>{s.ativo !== 0 && s.ativo !== false ? 'Ativo' : 'Inativo'}</span>
-                        </button>
+                        </button>}
                       </div>
 
                       {/* Linha Inferior: Valor + Duração na esquerda | Botões Editar e Inativar na direita */}
@@ -1196,15 +1197,15 @@ export default function ServicosAgendamentos({
                         </div>
 
                         <div className="flex items-center gap-1">
-                          <button
+                          {isAdmin && <button
                             type="button"
                             onClick={() => startEditService(s)}
                             title="Editar procedimento"
                             className="px-2 py-1 hover:bg-primary/10 rounded-lg text-primary text-[11px] font-bold transition-colors cursor-pointer"
                           >
                             Editar
-                          </button>
-                          <button
+                          </button>}
+                          {isAdmin && <button
                             type="button"
                             onClick={() => handleToggleStatusServico(s)}
                             title={s.ativo !== 0 && s.ativo !== false ? 'Inativar procedimento' : 'Reativar procedimento'}
@@ -1215,7 +1216,7 @@ export default function ServicosAgendamentos({
                             }`}
                           >
                             {s.ativo !== 0 && s.ativo !== false ? 'Inativar' : 'Reativar'}
-                          </button>
+                          </button>}
                         </div>
                       </div>
                     </div>
@@ -1827,6 +1828,7 @@ export default function ServicosAgendamentos({
       {/* ========================================================================= */}
       {/* ABA: EXCEÇÕES DE DISPONIBILIDADE E FERIADOS (IK-83)                       */}
       {/* ========================================================================= */}
+      {isAdmin && subAba === 'excecoes' && <GradeClinica />}
       {subAba === 'excecoes' && (
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-200">
           {/* Formulário de Criação de Exceção (1/3) */}
