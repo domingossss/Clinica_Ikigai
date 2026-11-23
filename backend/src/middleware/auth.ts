@@ -66,7 +66,7 @@ export async function consultarSessao(req: Request): Promise<UsuarioAutenticado 
      FROM sessao_usuario s JOIN usuario u ON u.id_usuario = s.id_usuario
      LEFT JOIN profissional p ON p.id_profissional = u.id_profissional
      WHERE s.identificador = ? AND s.expira_em > UTC_TIMESTAMP() AND u.ativo = 1
-       AND (u.perfil <> 'PROFISSIONAL' OR u.id_profissional IS NULL OR p.ativo = 1)`,
+       AND (u.perfil <> 'PROFISSIONAL' OR p.ativo = 1)`,
     [identificarSessao(token)]
   );
   return rows[0] ?? null;

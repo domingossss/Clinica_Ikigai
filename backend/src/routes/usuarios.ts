@@ -6,12 +6,9 @@ import { gerarHashSenha, type PerfilUsuario } from '../middleware/auth.js';
 import { transacaoUsuarios } from '../services/transacaoUsuarios.js';
 
 const router = Router();
-async function vincularProfissional(conexao: PoolConnection, req: Request, usuario: ReturnType<typeof lerUsuario>, id: number | null) {
+async function vincularProfissional(conexao: PoolConnection, req: Request, usuario: ReturnType<typeof lerUsuario>, id: number | null, profissionalAtual: number | null = null) {
   if (usuario.perfil !== 'PROFISSIONAL') return null;
-  const informado = req.body?.profissional_id;
-  const [atuais] = id === null ? [[]] : await conexao.query<RowDataPacket[]>(
-    'SELECT id_profissional FROM usuario WHERE id_usuario = ?', [id]);
-  const alvo: unknown = informado ?? atuais[0]?.id_profissional ?? null;
+  const alvo: unknown = req.body?.profissional_id ?? profissionalAtual;
   const especialidade = sanitizarTexto(typeof req.body?.especialidade === 'string' ? req.body.especialidade : '').trim();
   if (alvo === null) {
     const [novo] = await conexao.query<ResultSetHeader>(
@@ -116,10 +113,14 @@ router.put('/:id', async (req, res) => {
     if (req.usuario?.id === id && perfil !== 'ADMIN') throw new ErroOperacao(409, 'Não é possível remover seu próprio perfil de administrador.');
     const hash = senha ? gerarHashSenha(senha) : null;
     const profissional_id = await editarComoAdmin(req, id, async conexao => {
-      const vinculo = await vincularProfissional(conexao, req, { nome, email, senha, perfil }, id);
+      const [[anterior]] = await conexao.query<RowDataPacket[]>(
+        'SELECT perfil, id_profissional FROM usuario WHERE id_usuario = ?', [id]);
+      const vinculo = await vincularProfissional(conexao, req, { nome, email, senha, perfil }, id, anterior.id_profissional);
+      const revogarSessao = anterior.perfil === 'PROFISSIONAL' &&
+        (anterior.id_profissional === null || anterior.id_profissional !== vinculo);
       await conexao.query('UPDATE usuario SET nome = ?, email = ?, perfil = ?, id_profissional = ?, senha_hash = COALESCE(?, senha_hash) WHERE id_usuario = ?',
         [nome, email, perfil, vinculo, hash, id]);
-      if (hash) await conexao.query('DELETE FROM sessao_usuario WHERE id_usuario = ?', [id]);
+      if (hash || revogarSessao) await conexao.query('DELETE FROM sessao_usuario WHERE id_usuario = ?', [id]);
       return vinculo;
     });
     res.json({ sucesso: true, mensagem: 'Usuário atualizado com sucesso.', dados: { id, nome, email, perfil, profissional_id } });

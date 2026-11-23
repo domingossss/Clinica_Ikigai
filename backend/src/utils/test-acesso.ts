@@ -106,12 +106,76 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
     const edicao = await chamar(rota, 'PUT', { ...recepcao, senha: '', nome: 'Nome atualizado', perfil: 'PROFISSIONAL' }, cookie);
     verificar(edicao.status === 200 && edicao.json.dados.profissional_id > 0 && semSegredo(edicao.json) && (await chamar('/auth/me', 'GET', undefined, usuario.cookie)).json.dados.perfil === 'PROFISSIONAL',
       'Nome e perfil são editados e a sessão reflete o perfil na próxima chamada.');
+    const outro = criar('Segundo profissional fictício', 'profissional-2@example.test', 'PROFISSIONAL');
+    const outroCadastro = await chamar('/usuarios', 'POST', outro, cookie);
+    const outraSessao = await chamar('/auth/login', 'POST', outro);
+    const profissionalId = edicao.json.dados.profissional_id;
+    const outroProfissionalId = outroCadastro.json.dados.profissional_id;
+    verificar(outroCadastro.status === 201 && outraSessao.status === 200 && outroProfissionalId !== profissionalId,
+      'Profissionais têm sessões e vínculos de agenda independentes.');
+    verificar((await chamar('/usuarios', 'POST', {
+      ...outro, email: 'vinculo-duplicado@example.test', profissional_id: outroProfissionalId,
+    }, cookie)).status === 409, 'IK-98: o cadastro rejeita vínculo de agenda duplicado.');
+
     verificar((await chamar('/agendamentos/dia?data=2026-11-23', 'GET', undefined, usuario.cookie)).status === 200 &&
-      (await chamar('/servicos', 'POST', {}, usuario.cookie)).status === 403 &&
-      (await chamar('/profissionais/' + (edicao.json.dados.profissional_id + 1) + '/jornada', 'PUT', {}, usuario.cookie)).status === 403 &&
       (await chamar('/pacientes', 'GET', undefined, usuario.cookie)).status === 200 &&
       (await chamar('/dashboard/especialidades', 'GET', undefined, usuario.cookie)).status === 403,
-      'PROFISSIONAL consulta agenda e pacientes, só edita a própria jornada e não acessa indicadores ou cadastro de serviços.');
+      'Profissional consulta agenda e pacientes e tem os indicadores restritos.');
+    const rotasAdministrativas = ['/servicos', '/categorias', '/profissionais', '/excecoes'];
+    const alteracoesGlobais = await Promise.all(rotasAdministrativas.map(caminho => chamar(caminho, 'POST', {}, usuario.cookie)));
+    verificar(alteracoesGlobais.every(resp => resp.status === 403), 'IK-99 CA01: somente administrador pode alterar configurações globais.');
+
+    const pacienteRota = '/pacientes/' + pacienteRapido.json.dados.id;
+    const antes = await chamar(pacienteRota, 'GET', undefined, usuario.cookie);
+    const evolucao = { etapa_tratamento: 'Retorno', historico_clinico: 'Histórico fictício', observacoes: 'Observação fictícia' };
+    const alterado = await chamar(pacienteRota, 'PUT', {
+      ...evolucao, versao: antes.json.dados.versao, nome_completo: 'Outro nome', cpf: '00000000000',
+      telefone: '11900000000', whatsapp: '11800000000', endereco: 'Outro endereço',
+    }, usuario.cookie);
+    const depois = await chamar(pacienteRota, 'GET', undefined, cookie);
+    verificar(alterado.status === 200 && Object.entries(evolucao).every(([campo, valor]) => alterado.json.dados[campo] === valor) &&
+      depois.json.dados.etapa_tratamento === evolucao.etapa_tratamento &&
+      ['nome_completo', 'cpf', 'telefone', 'whatsapp', 'endereco'].every(campo => depois.json.dados[campo] === antes.json.dados[campo]),
+      'IK-99 CA02: a evolução clínica é salva e os dados cadastrais permanecem intactos.');
+    verificar((await chamar(pacienteRota, 'DELETE', undefined, usuario.cookie)).status === 403,
+      'IK-99 CA02: profissional não pode excluir paciente.');
+
+    const jornada = `/profissionais/${profissionalId}/jornada`;
+    const outraJornada = `/profissionais/${outroProfissionalId}/jornada`;
+    const dia = { dia_semana: 1, ativo: true, horario_inicio: '09:00', horario_fim: '17:00', intervalo_inicio: '12:30', intervalo_fim: '13:30' };
+    const gravarJornada = await chamar(jornada, 'PUT', { dias: [dia] }, usuario.cookie);
+    const lerJornada = await chamar(jornada, 'GET', undefined, usuario.cookie);
+    verificar(gravarJornada.status === 200 && lerJornada.status === 200 &&
+      lerJornada.json.dados[1].horario_inicio === dia.horario_inicio && lerJornada.json.dados[1].intervalo_inicio === dia.intervalo_inicio,
+      'IK-99 CA03: profissional salva e consulta expediente e intervalo próprios.');
+    verificar((await chamar(outraJornada, 'GET', undefined, usuario.cookie)).status === 403 &&
+      (await chamar(outraJornada, 'PUT', { dias: [dia] }, usuario.cookie)).status === 403 &&
+      (await chamar(jornada, 'GET', undefined, outraSessao.cookie)).status === 403 &&
+      (await chamar(outraJornada, 'GET', undefined, cookie)).status === 200,
+      'IK-99 CA03: profissionais não consultam ou alteram jornada de terceiros e administrador mantém acesso.');
+
+    const horario = { data: '2040-03-01', horario_inicio: '15:00', horario_fim: '15:30' };
+    const bloqueio = await chamar('/bloqueios', 'POST', { ...horario, profissional_id: profissionalId }, usuario.cookie);
+    const bloqueioRota = '/bloqueios/' + bloqueio.json.dados?.id;
+    verificar(bloqueio.status === 201 &&
+      (await chamar('/bloqueios', 'POST', { ...horario, profissional_id: outroProfissionalId }, usuario.cookie)).status === 403 &&
+      (await chamar(bloqueioRota, 'DELETE', undefined, outraSessao.cookie)).status === 403 &&
+      (await chamar(bloqueioRota, 'DELETE', undefined, usuario.cookie)).status === 200,
+      'IK-99 CA03: profissionais só criam e removem bloqueios nas próprias agendas.');
+
+    const outroUsuarioRota = '/usuarios/' + outroCadastro.json.dados.id;
+    verificar((await chamar('/profissionais/' + outroProfissionalId, 'DELETE', undefined, cookie)).status === 200,
+      'Exclusão do cadastro na grade preserva a conta profissional para reassociação administrativa.');
+    const semVinculo = await chamar('/auth/login', 'POST', outro);
+    verificar(semVinculo.status === 401 && JSON.stringify(semVinculo.json) === JSON.stringify(incorreta.json) &&
+      (await chamar('/auth/me', 'GET', undefined, outraSessao.cookie)).status === 401 &&
+      (await chamar('/pacientes', 'GET', undefined, outraSessao.cookie)).status === 401,
+      'IK-98: conta profissional sem vínculo perde acesso por login e por sessão existente.');
+    const reassociado = await chamar(outroUsuarioRota, 'PUT', { ...outro, senha: '' }, cookie);
+    verificar(reassociado.status === 200 && reassociado.json.dados.profissional_id > 0 &&
+      (await chamar('/auth/me', 'GET', undefined, outraSessao.cookie)).status === 401 &&
+      (await chamar('/auth/login', 'POST', outro)).status === 200,
+      'IK-98: novo vínculo permite novo login e exige descartar a sessão anterior.');
     verificar((await chamar(rota + '/status', 'PATCH', { ativo: false }, cookie)).status === 200, 'Administrador desativa a conta.');
     const inativo = await login();
     verificar(inativo.status === 401 && JSON.stringify(inativo.json) === JSON.stringify(incorreta.json), 'Conta inativa recebe o mesmo erro de login.');

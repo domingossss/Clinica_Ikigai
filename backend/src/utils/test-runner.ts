@@ -321,8 +321,11 @@ async function testarEmBancoIsolado() {
     multipleStatements: true
   });
   const anterior = process.env.DB_NAME;
+  const limiteAnterior = process.env.RATE_LIMIT_MAX;
   try {
     process.env.DB_NAME = nome;
+    // Os servidores da mesma suite compartilham o limitador e o IP de loopback.
+    process.env.RATE_LIMIT_MAX = '250';
     if (process.env.DB_ADMIN_USER) process.env.DB_USER = process.env.DB_ADMIN_USER;
     if (process.env.DB_ADMIN_PASS) process.env.DB_PASS = process.env.DB_ADMIN_PASS;
     for (const arquivo of ['schema.sql', 'seed.sql']) {
@@ -348,6 +351,7 @@ async function testarEmBancoIsolado() {
     if (/^ikigai_verificacao_\d+$/.test(nome)) await admin.query('DROP DATABASE IF EXISTS ' + nome);
     await admin.end();
     if (anterior === undefined) delete process.env.DB_NAME; else process.env.DB_NAME = anterior;
+    if (limiteAnterior === undefined) delete process.env.RATE_LIMIT_MAX; else process.env.RATE_LIMIT_MAX = limiteAnterior;
     console.log('[Testes] Banco temporário removido. Banco original preservado.');
   }
 }

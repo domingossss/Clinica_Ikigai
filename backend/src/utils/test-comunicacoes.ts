@@ -25,7 +25,13 @@ export async function runComunicacaoTests() {
     const senha = randomUUID();
     async function sessao(perfil: string) {
       const email = randomUUID() + '@example.invalid';
-      await pool.query('INSERT INTO usuario (nome,email,senha_hash,perfil) VALUES (?,?,?,?)', ['Teste comunicação', email, gerarHashSenha(senha), perfil]);
+      let profissionalId = null;
+      if (perfil === 'PROFISSIONAL') {
+        const [profissional] = await pool.query<ResultSetHeader>('INSERT INTO profissional (nome) VALUES (?)', ['Profissional fictício de comunicação']);
+        profissionalId = profissional.insertId;
+      }
+      await pool.query('INSERT INTO usuario (nome,email,senha_hash,perfil,id_profissional) VALUES (?,?,?,?,?)',
+        ['Teste comunicação', email, gerarHashSenha(senha), perfil, profissionalId]);
       const login = await fetch(url + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, senha }) });
       if (!login.ok) throw new Error('Falha no login de comunicação (' + login.status + ')');
       return login.headers.get('set-cookie')!.split(';')[0];

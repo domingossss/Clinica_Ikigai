@@ -38,7 +38,7 @@ router.post('/login', async (req, res) => {
       );
       const atual = rows[0];
       const valida = verificarSenha(senha, atual?.senha_hash ?? hashSimulado);
-      if (!valida || !atual?.ativo || (atual.perfil === 'PROFISSIONAL' && atual.profissional_id && !atual.profissional_ativo)) return null;
+      if (!valida || !atual?.ativo || (atual.perfil === 'PROFISSIONAL' && atual.profissional_ativo !== 1)) return null;
       const anterior = extrairToken(req);
       if (anterior) await conexao.query('DELETE FROM sessao_usuario WHERE identificador = ?', [identificarSessao(anterior)]);
       await conexao.query('DELETE FROM sessao_usuario WHERE id_usuario = ? AND expira_em <= UTC_TIMESTAMP()', [atual.id]);

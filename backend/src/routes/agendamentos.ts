@@ -1032,6 +1032,10 @@ router.get('/profissionais/:id/jornada', async (req: Request, res: Response): Pr
       return res.status(400).json({ sucesso: false, erro: 'ID do profissional inválido.' });
     }
 
+    if (req.usuario?.perfil === 'PROFISSIONAL' && req.usuario.profissional_id !== Number(id)) {
+      throw new ErroOperacao(403, 'Você só pode consultar a jornada de trabalho da sua própria agenda.');
+    }
+
     const [rows]: any = await pool.query(
       `SELECT id_jornada, id_profissional, dia_semana, ativo, 
               TIME_FORMAT(horario_inicio, '%H:%i') as horario_inicio, 
