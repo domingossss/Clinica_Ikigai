@@ -14,7 +14,7 @@ const fuso = 'America/Sao_Paulo';
 const dataClinica = new Intl.DateTimeFormat('sv-SE', { timeZone: fuso });
 const horaClinica = new Intl.DateTimeFormat('pt-BR', { timeZone: fuso, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
-export default function Inicio() {
+export default function Inicio({ onAbrirAgenda }: { onAbrirAgenda?: () => void }) {
   const [agora, setAgora] = useState(() => new Date());
   const dia = dataClinica.format(agora);
   const [atendimentos, setAtendimentos] = useState<Atendimento[]>([]);
@@ -48,11 +48,15 @@ export default function Inicio() {
 
   const proximos = atendimentos.filter(a => a.horario_inicio >= horaClinica.format(agora) &&
     ['Agendado', 'Reagendado', 'Confirmado', 'Na Recepção'].includes(a.status)).sort((a,b) => a.horario_inicio.localeCompare(b.horario_inicio) || a.id - b.id);
-  return <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+  return <div className="space-y-6">
     <header className="flex flex-wrap items-center justify-between gap-5 rounded-2xl border-t-4 border-secondary bg-primary px-6 py-7 text-white shadow-premium sm:px-8">
       <div><p className="mb-2 text-sm capitalize text-secondary-light">{agora.toLocaleDateString('pt-BR', { timeZone: fuso, dateStyle: 'full' })}</p>
       <h1 className="text-3xl font-bold tracking-tight">Resumo do dia</h1></div>
-      <a className="rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-primary hover:bg-secondary-light" href="/agendamentos">Abrir agenda <span aria-hidden="true">→</span></a>
+      {onAbrirAgenda ? (
+        <button type="button" onClick={onAbrirAgenda} className="rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-primary hover:bg-secondary-light cursor-pointer">Abrir agenda <span aria-hidden="true">→</span></button>
+      ) : (
+        <a className="rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-primary hover:bg-secondary-light" href="/agendamentos">Abrir agenda <span aria-hidden="true">→</span></a>
+      )}
     </header>
     {estado === 'carregando' ? <p className="rounded-2xl border border-gray/10 bg-white p-6 text-gray shadow-premium" role="status">Carregando atendimentos…</p>
       : estado === 'erro' ? <p className="rounded-2xl bg-red-50 p-6 text-red-800" role="alert">Falha ao consultar a agenda. <button onClick={atualizar}>Tentar novamente</button></p>
@@ -67,5 +71,5 @@ export default function Inicio() {
           <li key={a.id} className="flex items-start gap-4 py-4"><time className="rounded-lg bg-secondary-light px-3 py-1 text-sm font-bold text-primary-dark">{a.horario_inicio}</time><div><strong>{a.paciente_nome}</strong><p className="mt-1 text-sm text-gray">{a.servico_nome} · {a.profissional_nome}</p></div></li>
         )}</ul>}</section>
       </>}
-  </main>;
+  </div>;
 }

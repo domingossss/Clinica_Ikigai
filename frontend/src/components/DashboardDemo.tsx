@@ -6,6 +6,9 @@ import CadastroPacientes from './CadastroPacientes';
 import ModalAgendamentoRapido, { type PacienteItem } from './ModalAgendamentoRapido';
 import GradeAgenda from './GradeAgenda';
 import GestaoUsuarios from './GestaoUsuarios';
+import Inicio from './Inicio';
+import Comunicacoes from './Comunicacoes';
+import IndicadoresDashboard from '../indicadores/main';
 import { PERFIL_LABELS, type UsuarioSessao } from '../services/auth';
 
 // Tipagem de dados para o frontend
@@ -42,9 +45,47 @@ function dataHoje(): string {
   return `${y}-${m}-${d}`;
 }
 
+type AbaAgenda = 'inicio' | 'grade' | 'cadastro' | 'servicos' | 'usuarios' | 'comunicacao' | 'indicadores';
+
+const TITULO_POR_ABA: Record<AbaAgenda, string> = {
+  inicio: 'Início',
+  grade: 'Agendamentos',
+  cadastro: 'Pacientes',
+  servicos: 'Serviços e Configurações',
+  usuarios: 'Usuários',
+  comunicacao: 'Comunicação',
+  indicadores: 'Indicadores',
+};
+
+function obterAbaInicial(perfil?: UsuarioSessao['perfil']): AbaAgenda {
+  const rota = window.location.pathname.replace(/\/+$/, '') || '/agendamentos';
+  if (rota === '/inicio' && perfil === 'ADMIN') return 'inicio';
+  if (rota === '/comunicacao' && perfil === 'ADMIN') return 'comunicacao';
+  if ((rota === '/dashboard' || rota === '/indicadores') && perfil !== 'PROFISSIONAL') return 'indicadores';
+  if (rota === '/pacientes') return 'cadastro';
+  if (rota === '/servicos' && perfil === 'ADMIN') return 'servicos';
+  if (rota === '/usuarios' && perfil === 'ADMIN') return 'usuarios';
+  return 'grade';
+}
+
 export default function DashboardDemo({ usuario, onLogout }: { usuario?: UsuarioSessao; onLogout?: () => void }) {
-  // Aba selecionada na área de agendamentos.
-  const [currentTab, setCurrentTab] = useState<'grade' | 'cadastro' | 'servicos' | 'usuarios'>('grade');
+  // Todas as abas são exibidas dentro da mesma página principal (/agendamentos) sem recarregar.
+  const [currentTab, setCurrentTab] = useState<AbaAgenda>(() => obterAbaInicial(usuario?.perfil));
+
+  const selecionarAba = useCallback((novaAba: AbaAgenda) => {
+    setCurrentTab(novaAba);
+    if (window.location.pathname !== '/agendamentos' || window.location.search) {
+      window.history.replaceState(null, '', '/agendamentos');
+    }
+    document.title = `${TITULO_POR_ABA[novaAba]} | Clínica Ikigai`;
+  }, []);
+
+  useEffect(() => {
+    if (window.location.pathname !== '/agendamentos') {
+      window.history.replaceState(null, '', '/agendamentos');
+    }
+    document.title = `${TITULO_POR_ABA[currentTab]} | Clínica Ikigai`;
+  }, [currentTab]);
 
   // Controle de data e atualização da Grade
   const [gradeData, setGradeData] = useState<string>(dataHoje());
@@ -138,7 +179,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
   // Abrir agenda específica do profissional vindo da aba Serviços/Profissionais
   const handleAbrirAgendaDoProfissional = (profId: number) => {
     setGradeProfissionalSelecionadoId(profId);
-    setCurrentTab('grade');
+    selecionarAba('grade');
     showToast('Agenda do profissional aberta com sucesso!', 'info');
   };
 
@@ -194,16 +235,26 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             </div>
           </div>
 
-          <nav className="flex flex-wrap gap-3 text-xs font-bold" aria-label="Navegação principal">
-            {usuario?.perfil === 'ADMIN' && <a href="/inicio">Início</a>}
-            {usuario?.perfil !== 'PROFISSIONAL' && <a href="/dashboard">Indicadores</a>}
-            {usuario?.perfil === 'ADMIN' && <a href="/comunicacao">Comunicação</a>}
-          </nav>
-          {/* Menu de Abas */}
-          <div className="flex items-center gap-1 bg-light-gray p-1 rounded-xl border border-gray/10">
+          {/* Menu de Abas Padronizado */}
+          <nav
+            aria-label="Navegação principal"
+            className="flex flex-wrap items-center gap-1 bg-light-gray p-1 rounded-xl border border-gray/10"
+          >
+            {usuario?.perfil === 'ADMIN' && (
+              <button
+                onClick={() => selecionarAba('inicio')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  currentTab === 'inicio'
+                    ? 'bg-white text-primary font-extrabold shadow-sm'
+                    : 'text-gray hover:text-dark hover:bg-white/50'
+                }`}
+              >
+                Início
+              </button>
+            )}
             <button
-              onClick={() => setCurrentTab('grade')}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+              onClick={() => selecionarAba('grade')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 currentTab === 'grade'
                   ? 'bg-white text-primary font-extrabold shadow-sm'
                   : 'text-gray hover:text-dark hover:bg-white/50'
@@ -211,32 +262,34 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             >
               Grade de Horários
             </button>
-            {usuario && <button
-              onClick={() => setCurrentTab('cadastro')}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer capitalize ${
-                currentTab === 'cadastro'
-                  ? 'bg-white text-primary font-extrabold shadow-sm'
-                  : 'text-gray hover:text-dark hover:bg-white/50'
-              }`}
-            >
-              Pacientes
-            </button>}
+            {usuario && (
+              <button
+                onClick={() => selecionarAba('cadastro')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer capitalize ${
+                  currentTab === 'cadastro'
+                    ? 'bg-white text-primary font-extrabold shadow-sm'
+                    : 'text-gray hover:text-dark hover:bg-white/50'
+                }`}
+              >
+                Pacientes
+              </button>
+            )}
             {usuario?.perfil === 'ADMIN' && (
               <button
-                onClick={() => setCurrentTab('servicos')}
-                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                onClick={() => selecionarAba('servicos')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                   currentTab === 'servicos'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
                     : 'text-gray hover:text-dark hover:bg-white/50'
                 }`}
               >
-                {usuario?.perfil === 'ADMIN' ? 'Serviços e Configurações' : 'Serviços'}
+                Serviços e Configurações
               </button>
             )}
             {usuario?.perfil === 'ADMIN' && (
               <button
-                onClick={() => setCurrentTab('usuarios')}
-                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                onClick={() => selecionarAba('usuarios')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                   currentTab === 'usuarios'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
                     : 'text-gray hover:text-dark hover:bg-white/50'
@@ -245,7 +298,31 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
                 Usuários
               </button>
             )}
-          </div>
+            {usuario?.perfil === 'ADMIN' && (
+              <button
+                onClick={() => selecionarAba('comunicacao')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  currentTab === 'comunicacao'
+                    ? 'bg-white text-primary font-extrabold shadow-sm'
+                    : 'text-gray hover:text-dark hover:bg-white/50'
+                }`}
+              >
+                Comunicação
+              </button>
+            )}
+            {usuario?.perfil !== 'PROFISSIONAL' && (
+              <button
+                onClick={() => selecionarAba('indicadores')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  currentTab === 'indicadores'
+                    ? 'bg-white text-primary font-extrabold shadow-sm'
+                    : 'text-gray hover:text-dark hover:bg-white/50'
+                }`}
+              >
+                Indicadores
+              </button>
+            )}
+          </nav>
 
           <div className="flex items-center gap-3">
             {usuario && (usuario.perfil !== 'PROFISSIONAL' || usuario.profissional_id) && (
@@ -299,6 +376,10 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
         )}
 
         {/* Áreas do sistema integrado */}
+        {currentTab === 'inicio' && usuario?.perfil === 'ADMIN' && (
+          <Inicio onAbrirAgenda={() => selecionarAba('grade')} />
+        )}
+
         {currentTab === 'grade' && (
           <GradeAgenda
             admin={usuario?.perfil === 'ADMIN'}
@@ -342,6 +423,14 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             isAdmin={true}
           />
         )}
+
+        {currentTab === 'comunicacao' && usuario?.perfil === 'ADMIN' && (
+          <Comunicacoes onVoltarAgenda={() => selecionarAba('grade')} />
+        )}
+
+        {currentTab === 'indicadores' && usuario?.perfil !== 'PROFISSIONAL' && (
+          <IndicadoresDashboard />
+        )}
       </main>
 
       {/* Modal de Agendamento Rápido com Pré-Cadastro e Cálculo de Tempo */}
@@ -362,7 +451,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             setGradeData(dadosAgendamento.data);
           }
           setGradeRefreshKey(prev => prev + 1);
-          setCurrentTab('grade');
+          selecionarAba('grade');
           showToast('Agendamento realizado e adicionado à Grade de Horários!', 'success');
         }}
         initialPacienteId={bookingInitialPacienteId}
