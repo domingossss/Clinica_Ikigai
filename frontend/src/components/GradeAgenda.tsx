@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import ModalHistoricoPaciente from './ModalHistoricoPaciente';
 import ModalHistoricoAgendamento from './ModalHistoricoAgendamento';
 import ModalMinhaJornada, { type DiaJornada } from './ModalMinhaJornada';
+import ModalProntuarioPaciente from './ModalProntuarioPaciente';
 import type { UsuarioSessao } from '../services/auth';
 
 
@@ -769,145 +770,143 @@ export default function GradeAgenda({
 
       {/* Barra de Seleção de Profissional (IK-81 CA01) */}
       <div className="px-6 py-3 border-b border-gray/10 bg-white flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-            <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-            </svg>
-            Filtrar Profissional:
-          </span>
-
-          {/* Botão de Dropdown que abre a lista com os profissionais empilhados */}
-          <div className="relative" ref={filtroDropdownRef}>
-            <button
-              type="button"
-              onClick={() => setFiltroDropdownAberto(prev => !prev)}
-              aria-expanded={filtroDropdownAberto}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 border shadow-xs ${
-                profissionalSelecionadoId === null
-                  ? 'bg-primary text-white border-primary shadow-sm font-bold'
-                  : 'bg-white border-gray/20 hover:bg-light-gray text-dark font-bold'
-              }`}
-            >
-              {profissionalSelecionadoId === null ? (
-                <>
-                  <span className="text-sm">👥</span>
-                  <span>Todos da Clínica</span>
-                </>
-              ) : (
-                <>
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-primary text-secondary notranslate" translate="no">
-                    {obterIniciais(profissionalAtivo?.nome || '')}
-                  </span>
-                  <span>{profissionalAtivo?.nome || 'Profissional Selecionado'}</span>
-                </>
-              )}
-              <svg
-                className={`w-3.5 h-3.5 ml-1 transition-transform duration-200 ${
-                  filtroDropdownAberto ? 'rotate-180' : ''
-                } ${profissionalSelecionadoId === null ? 'text-white' : 'text-gray-500'}`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+        {usuarioLogado?.perfil !== 'PROFISSIONAL' ? (
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+              <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
-            </button>
+              Filtrar Profissional:
+            </span>
 
-            {/* Menu suspenso com todos os profissionais um em baixo do outro */}
-            {filtroDropdownAberto && (
-              <div className="absolute left-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-gray/15 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
-                <div className="px-3.5 py-1 text-[10px] font-extrabold text-gray-400 uppercase tracking-wider">
-                  Selecione o profissional
-                </div>
-
-                <div className="max-h-72 overflow-y-auto flex flex-col gap-1 px-1.5 mt-1">
-                  {/* Opção Todos da Clínica */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      selecionarProfissional(null);
-                      setFiltroDropdownAberto(false);
-                    }}
-                    className={`w-full px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center justify-between text-left ${
-                      profissionalSelecionadoId === null
-                        ? 'bg-primary text-white font-bold shadow-xs'
-                        : 'text-dark hover:bg-light-gray'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <span className="w-6 h-6 rounded-full flex items-center justify-center bg-white/20 text-xs">👥</span>
-                      <span>Todos da Clínica</span>
+            {/* Botão de Dropdown que abre a lista com os profissionais empilhados */}
+            <div className="relative" ref={filtroDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setFiltroDropdownAberto(prev => !prev)}
+                aria-expanded={filtroDropdownAberto}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 border shadow-xs ${
+                  profissionalSelecionadoId === null
+                    ? 'bg-primary text-white border-primary shadow-sm font-bold'
+                    : 'bg-white border-gray/20 hover:bg-light-gray text-dark font-bold'
+                }`}
+              >
+                {profissionalSelecionadoId === null ? (
+                  <>
+                    <span className="text-sm">👥</span>
+                    <span>Todos da Clínica</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-primary text-secondary notranslate" translate="no">
+                      {obterIniciais(profissionalAtivo?.nome || '')}
                     </span>
-                    {profissionalSelecionadoId === null && (
-                      <svg className="w-4 h-4 text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </button>
+                    <span>{profissionalAtivo?.nome || 'Profissional Selecionado'}</span>
+                  </>
+                )}
+                <svg
+                  className={`w-3.5 h-3.5 ml-1 transition-transform duration-200 ${
+                    filtroDropdownAberto ? 'rotate-180' : ''
+                  } ${profissionalSelecionadoId === null ? 'text-white' : 'text-gray-500'}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
 
-                  <div className="border-b border-gray/10 my-1"></div>
+              {/* Menu suspenso com todos os profissionais um em baixo do outro */}
+              {filtroDropdownAberto && (
+                <div className="absolute left-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-gray/15 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="px-3.5 py-1 text-[10px] font-extrabold text-gray-400 uppercase tracking-wider">
+                    Selecione o profissional
+                  </div>
 
-                  {/* Lista de profissionais um em baixo do outro */}
-                  {profissionais.map(prof => {
-                    const isAtivo = profissionalSelecionadoId === prof.id;
-                    return (
-                      <button
-                        key={prof.id}
-                        type="button"
-                        onClick={() => {
-                          selecionarProfissional(prof.id);
-                          setFiltroDropdownAberto(false);
-                        }}
-                        className={`w-full px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center justify-between text-left ${
-                          isAtivo
-                            ? 'bg-secondary/25 text-primary-dark font-extrabold ring-1 ring-secondary/50'
-                            : 'text-dark hover:bg-light-gray'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 truncate">
-                          <span
-                            className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold notranslate ${
-                              isAtivo ? 'bg-primary text-secondary' : 'bg-gray-200 text-gray-700'
-                            }`}
-                            translate="no"
-                          >
-                            {obterIniciais(prof.nome)}
-                          </span>
-                          <div className="truncate">
-                            <div className="truncate font-semibold">{prof.nome}</div>
-                            {prof.especialidade && (
-                              <div className="text-[10px] text-gray-500 truncate font-normal">
-                                {prof.especialidade}
-                              </div>
-                            )}
+                  <div className="max-h-72 overflow-y-auto flex flex-col gap-1 px-1.5 mt-1">
+                    {/* Opção Todos da Clínica */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selecionarProfissional(null);
+                        setFiltroDropdownAberto(false);
+                      }}
+                      className={`w-full px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center justify-between text-left ${
+                        profissionalSelecionadoId === null
+                          ? 'bg-primary text-white font-bold shadow-xs'
+                          : 'text-dark hover:bg-light-gray'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <span className="w-6 h-6 rounded-full flex items-center justify-center bg-white/20 text-xs">👥</span>
+                        <span>Todos da Clínica</span>
+                      </span>
+                      {profissionalSelecionadoId === null && (
+                        <svg className="w-4 h-4 text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </button>
+
+                    <div className="border-b border-gray/10 my-1"></div>
+
+                    {/* Lista de profissionais um em baixo do outro */}
+                    {profissionais.map(prof => {
+                      const isAtivo = profissionalSelecionadoId === prof.id;
+                      return (
+                        <button
+                          key={prof.id}
+                          type="button"
+                          onClick={() => {
+                            selecionarProfissional(prof.id);
+                            setFiltroDropdownAberto(false);
+                          }}
+                          className={`w-full px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center justify-between text-left ${
+                            isAtivo
+                              ? 'bg-secondary/25 text-primary-dark font-extrabold ring-1 ring-secondary/50'
+                              : 'text-dark hover:bg-light-gray'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 truncate">
+                            <span
+                              className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold notranslate ${
+                                isAtivo ? 'bg-primary text-secondary' : 'bg-gray-200 text-gray-700'
+                              }`}
+                              translate="no"
+                            >
+                              {obterIniciais(prof.nome)}
+                            </span>
+                            <div className="truncate">
+                              <div className="truncate font-semibold">{prof.nome}</div>
+                              {prof.especialidade && (
+                                <div className="text-[10px] text-gray-500 truncate font-normal">
+                                  {prof.especialidade}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
 
-                        {isAtivo && (
-                          <svg className="w-4 h-4 text-primary flex-shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </button>
-                    );
-                  })}
+                          {isAtivo && (
+                            <svg className="w-4 h-4 text-primary flex-shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-
-          {usuarioLogado?.perfil === 'PROFISSIONAL' && usuarioLogado.profissional_id && Number(profissionalSelecionadoId) !== Number(usuarioLogado.profissional_id) && (
-            <button
-              type="button"
-              onClick={() => selecionarProfissional(Number(usuarioLogado.profissional_id))}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-secondary/25 text-primary-dark border border-secondary/40 hover:bg-secondary/35 transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <span>🩺</span>
-              <span>Minha Agenda</span>
-            </button>
-          )}
-        </div>
+        ) : (
+          <div className="flex items-center gap-2 text-xs text-gray">
+            <span className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary font-bold">
+              🩺 Modo Consultório
+            </span>
+            <span>Clique em um paciente agendado na grade para abrir o prontuário clínico e a linha do tempo.</span>
+          </div>
+        )}
 
         {/* Alternador de Modo de Visualização quando profissional específico está selecionado */}
         {profissionalSelecionadoId && (
@@ -974,14 +973,16 @@ export default function GradeAgenda({
               <span className="text-gray-600 text-[10px] uppercase font-bold block">Bloqueios</span>
               <span className="font-extrabold text-gray-800 text-sm">{resumoProfissional?.bloqueios_total ?? bloqueios.length}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => selecionarProfissional(null)}
-              className="text-xs text-gray hover:text-dark px-2.5 py-1.5 rounded-lg hover:bg-white/60 transition-colors border border-dashed border-gray/30 cursor-pointer"
-              title="Voltar para a visão geral de todos os profissionais"
-            >
-              ✕ Fechar filtro
-            </button>
+            {usuarioLogado?.perfil !== 'PROFISSIONAL' && (
+              <button
+                type="button"
+                onClick={() => selecionarProfissional(null)}
+                className="text-xs text-gray hover:text-dark px-2.5 py-1.5 rounded-lg hover:bg-white/60 transition-colors border border-dashed border-gray/30 cursor-pointer"
+                title="Voltar para a visão geral de todos os profissionais"
+              >
+                ✕ Fechar filtro
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1209,8 +1210,8 @@ export default function GradeAgenda({
         </div>
       </div>
 
-      {/* Painel de detalhes do agendamento selecionado */}
-      {agendamentoSelecionado && (
+      {/* Painel de detalhes do agendamento selecionado (Admin e Recepção) */}
+      {agendamentoSelecionado && usuarioLogado?.perfil !== 'PROFISSIONAL' && (
         <div className="fixed bottom-6 right-6 z-50 w-80 bg-white rounded-2xl shadow-2xl border border-gray/15 overflow-hidden animate-in slide-in-from-bottom-4 duration-200">
           <div className="bg-dark text-white px-5 py-4 flex items-center justify-between">
             <div>
@@ -1260,7 +1261,7 @@ export default function GradeAgenda({
             </div>
 
             {/* Botão de Reagendamento (IK-85) */}
-            {usuarioLogado?.perfil !== 'PROFISSIONAL' && !['Cancelado', 'No_Show', 'Concluído', 'Realizado', 'Em Atendimento'].includes(agendamentoSelecionado.status) && (
+            {!['Cancelado', 'No_Show', 'Concluído', 'Realizado', 'Em Atendimento'].includes(agendamentoSelecionado.status) && (
               <button
                 onClick={() => {
                   setReagendarData(agendamentoSelecionado.data || dataSelecionada);
@@ -1320,11 +1321,7 @@ export default function GradeAgenda({
                 {atualizandoStatus ? 'Validando...' : 'Validar chegada'}
               </button>
             )}
-            {usuarioLogado?.perfil === 'PROFISSIONAL' && (!usuarioLogado.profissional_id || Number(agendamentoSelecionado.profissional_id) !== Number(usuarioLogado.profissional_id)) ? (
-              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-semibold text-center">
-                Somente leitura: você só pode alterar o status dos atendimentos da sua própria agenda.
-              </div>
-            ) : FLUXO_STATUS[agendamentoSelecionado.status].length > 0 ? (
+            {FLUXO_STATUS[agendamentoSelecionado.status].length > 0 ? (
               <div>
                 <p className="text-[10px] uppercase font-bold text-gray mb-2">Avançar status para:</p>
                 <div className="flex flex-col gap-1.5">
@@ -1667,6 +1664,31 @@ export default function GradeAgenda({
           isOpen={isHistoricoAgendamentoOpen}
           onClose={() => setIsHistoricoAgendamentoOpen(false)}
           agendamentoId={agendamentoSelecionado.id}
+        />
+      )}
+
+      {/* Modal Completo de Prontuário e Linha do Tempo ao selecionar paciente na Grade (Perfil PROFISSIONAL) */}
+      {agendamentoSelecionado && usuarioLogado?.perfil === 'PROFISSIONAL' && agendamentoSelecionado.paciente_id && (
+        <ModalProntuarioPaciente
+          isOpen={true}
+          onClose={() => setAgendamentoSelecionado(null)}
+          pacienteId={agendamentoSelecionado.paciente_id}
+          pacienteNome={agendamentoSelecionado.paciente_nome}
+          agendamentoInicialId={agendamentoSelecionado.id}
+          statusAgendamentoAtual={agendamentoSelecionado.status}
+          transicoesPermitidas={
+            (FLUXO_STATUS[agendamentoSelecionado.status] || []).filter(novoStatus =>
+              !(novoStatus === 'Na Recepção' && agendamentoSelecionado.exige_validacao_chegada && !podeValidarChegada)
+            )
+          }
+          atualizandoStatus={atualizandoStatus}
+          onAtualizarStatus={novoStatus =>
+            void atualizarStatus(agendamentoSelecionado.id, { status: novoStatus as StatusAgendamento })
+          }
+          onSaved={() => {
+            void buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
+            onRefresh?.();
+          }}
         />
       )}
 

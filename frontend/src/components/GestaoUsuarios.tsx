@@ -1,15 +1,16 @@
 import Swal from 'sweetalert2';
 import { apiFetch } from '../api';
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
-import { PERFIL_LABELS, type PerfilUsuario } from '../services/auth';
-import CampoSenha from './CampoSenha';
-
+import { gerarLoginPreview, PERFIL_LABELS, SENHA_PADRAO_INICIAL, type PerfilUsuario } from '../services/auth';
 
 interface UsuarioItem {
   id: number;
   nome: string;
+  login?: string | null;
   email: string;
   perfil: PerfilUsuario;
+  primeiro_acesso?: boolean;
+  precisa_trocar_senha?: boolean;
   profissional_id?: number | null;
   profissional_nome?: string | null;
   profissional_especialidade?: string | null;
@@ -18,11 +19,9 @@ interface UsuarioItem {
   criado_em?: string;
 }
 
-interface ProfissionalOpcao {
+interface CategoriaEspecialidade {
   id: number;
   nome: string;
-  especialidade?: string;
-  ativo?: number | boolean;
 }
 
 interface GestaoUsuariosProps {
@@ -33,7 +32,7 @@ interface GestaoUsuariosProps {
 
 export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfissionaisChange }: GestaoUsuariosProps) {
   const [usuarios, setUsuarios] = useState<UsuarioItem[]>([]);
-  const [profissionais, setProfissionais] = useState<ProfissionalOpcao[]>([]);
+  const [especialidades, setEspecialidades] = useState<CategoriaEspecialidade[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState('');
@@ -42,15 +41,17 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
-  const [perfil, setPerfil] = useState<PerfilUsuario>('RECEPCAO');
-  const [profissionalId, setProfissionalId] = useState<string>('novo');
+  const [perfil, setPerfil] = useState<PerfilUsuario>('PROFISSIONAL');
   const [especialidade, setEspecialidade] = useState('');
-  const [senha, setSenha] = useState('');
+  const [criandoNovaEspecialidade, setCriandoNovaEspecialidade] = useState(false);
+  const [novaEspecialidadeNome, setNovaEspecialidadeNome] = useState('');
+  const [salvandoEspecialidade, setSalvandoEspecialidade] = useState(false);
+  const [resetarSenhaPadrao, setResetarSenhaPadrao] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
   const carregarDados = useCallback(() => {
-    return Promise.all([apiFetch('/api/usuarios'), apiFetch('/api/profissionais')])
-      .then(async ([resUsers, resProfs]) => {
+    return Promise.all([apiFetch('/api/usuarios'), apiFetch('/api/categorias')])
+      .then(async ([resUsers, resCats]) => {
         const jsonUsers = await resUsers.json();
         if (!resUsers.ok || !jsonUsers.sucesso) {
           throw new Error(jsonUsers.erro || 'Não foi possível carregar usuários.');
@@ -58,10 +59,10 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
         setErro(null);
         setUsuarios(jsonUsers.dados || []);
 
-        if (resProfs.ok) {
-          const jsonProfs = await resProfs.json();
-          if (jsonProfs.sucesso && Array.isArray(jsonProfs.dados)) {
-            setProfissionais(jsonProfs.dados);
+        if (resCats.ok) {
+          const jsonCats = await resCats.json();
+          if (jsonCats.sucesso && Array.isArray(jsonCats.dados)) {
+            setEspecialidades(jsonCats.dados);
           }
         }
       })
@@ -79,10 +80,11 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
     setEditandoId(null);
     setNome('');
     setEmail('');
-    setPerfil('RECEPCAO');
-    setProfissionalId('novo');
+    setPerfil('PROFISSIONAL');
     setEspecialidade('');
-    setSenha('');
+    setCriandoNovaEspecialidade(false);
+    setNovaEspecialidadeNome('');
+    setResetarSenhaPadrao(false);
   }
 
   function iniciarEdicao(u: UsuarioItem) {
@@ -90,29 +92,65 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
     setNome(u.nome);
     setEmail(u.email);
     setPerfil(u.perfil);
-    setProfissionalId(u.profissional_id ? String(u.profissional_id) : 'novo');
     setEspecialidade(u.profissional_especialidade || '');
-    setSenha('');
+    setCriandoNovaEspecialidade(false);
+    setNovaEspecialidadeNome('');
+    setResetarSenhaPadrao(false);
+  }
+
+  async function handleCriarNovaEspecialidade() {
+    const nomeLimpo = novaEspecialidadeNome.trim();
+    if (!nomeLimpo) {
+      onNotify?.('Digite o nome da nova especialidade.', 'error');
+      return;
+    }
+    setSalvandoEspecialidade(true);
+    try {
+      const res = await apiFetch('/api/categorias', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome: nomeLimpo }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.sucesso) {
+        throw new Error(json.erro || 'Não foi possível criar a especialidade.');
+      }
+      await carregarDados();
+      setEspecialidade(json.dados?.nome || nomeLimpo);
+      setNovaEspecialidadeNome('');
+      setCriandoNovaEspecialidade(false);
+      onNotify?.(`Especialidade "${nomeLimpo}" criada com sucesso!`, 'success');
+    } catch (err) {
+      onNotify?.(err instanceof Error ? err.message : 'Erro ao criar especialidade.', 'error');
+    } finally {
+      setSalvandoEspecialidade(false);
+    }
   }
 
   async function handleSalvar(e: FormEvent) {
     e.preventDefault();
+    const espFinal = criandoNovaEspecialidade ? novaEspecialidadeNome.trim() : especialidade.trim();
+    if (perfil === 'PROFISSIONAL' && !espFinal) {
+      onNotify?.('Selecione ou crie uma especialidade para o profissional.', 'error');
+      return;
+    }
     setSalvando(true);
     try {
-      const url = editandoId
-        ? `/api/usuarios/${editandoId}`
-        : `/api/usuarios`;
+      const url = editandoId ? `/api/usuarios/${editandoId}` : `/api/usuarios`;
       const method = editandoId ? 'PUT' : 'POST';
-      const body: Record<string, string | number | null> = {
+      const body: Record<string, string | number | boolean | null> = {
         nome: nome.trim(),
         email: email.trim(),
         perfil,
       };
       if (perfil === 'PROFISSIONAL') {
-        body.especialidade = especialidade.trim() || 'Especialista';
-        body.profissional_id = profissionalId !== 'novo' ? Number(profissionalId) : null;
+        body.especialidade = espFinal;
       }
-      if (senha) body.senha = senha;
+      if (!editandoId) {
+        body.usar_senha_padrao = true;
+      } else if (resetarSenhaPadrao) {
+        body.resetar_senha_padrao = true;
+      }
 
       const res = await apiFetch(url, {
         method,
@@ -124,12 +162,11 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
       if (!res.ok || !json.sucesso) {
         throw new Error(json.erro || 'Falha ao salvar usuário.');
       }
+      const loginGerado = json.dados?.login || gerarLoginPreview(nome);
       onNotify?.(
         editandoId
-          ? 'Usuário atualizado com sucesso!'
-          : perfil === 'PROFISSIONAL'
-          ? 'Usuário e cadastro de profissional criados e vinculados com sucesso!'
-          : 'Usuário criado com sucesso!',
+          ? `Usuário atualizado! Login: ${loginGerado}`
+          : `Usuário cadastrado! Login: "${loginGerado}" | Senha inicial: ${SENHA_PADRAO_INICIAL}`,
         'success'
       );
       limparFormulario();
@@ -185,11 +222,14 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
     }
   }
 
+  const loginPreview = gerarLoginPreview(nome);
+
   const filtrados = usuarios.filter(u => {
     const q = busca.trim().toLowerCase();
     if (!q) return true;
     return (
       u.nome.toLowerCase().includes(q) ||
+      (u.login || '').toLowerCase().includes(q) ||
       u.email.toLowerCase().includes(q) ||
       u.perfil.toLowerCase().includes(q) ||
       (u.profissional_especialidade || '').toLowerCase().includes(q)
@@ -204,7 +244,7 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
           {editandoId ? 'Editar Usuário' : 'Novo Usuário'}
         </h2>
         <p className="text-xs text-gray mb-4">
-          Defina o perfil de acesso para controlar as permissões no sistema.
+          O usuário de login é gerado automaticamente no formato <strong>nome.ultimonome</strong>.
         </p>
 
         <form onSubmit={handleSalvar} autoComplete="off" className="space-y-3.5">
@@ -215,9 +255,9 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
               onChange={e => setPerfil(e.target.value as PerfilUsuario)}
               className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
             >
-              <option value="ADMIN">Administrador (acesso total)</option>
-              <option value="RECEPCAO">Recepção (agenda, pacientes e painel)</option>
               <option value="PROFISSIONAL">Profissional (agenda clínica individual)</option>
+              <option value="RECEPCAO">Recepção (agenda, pacientes e painel)</option>
+              <option value="ADMIN">Administrador (acesso total)</option>
             </select>
           </div>
 
@@ -232,6 +272,12 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
               placeholder={perfil === 'PROFISSIONAL' ? 'Ex.: Dr. Ulisses Higo' : 'Ex.: Maria Oliveira'}
               className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
+            {loginPreview && (
+              <div className="mt-1.5 px-3 py-1.5 rounded-lg bg-primary/5 border border-primary/20 flex items-center justify-between text-xs">
+                <span className="text-gray font-medium">Usuário de login:</span>
+                <strong className="font-mono text-primary">{loginPreview}</strong>
+              </div>
+            )}
           </div>
 
           <div>
@@ -251,63 +297,102 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
           {perfil === 'PROFISSIONAL' && (
             <div className="p-3.5 rounded-xl bg-secondary/10 border border-secondary/30 space-y-3">
               <div>
-                <label className="block text-xs font-bold text-primary-dark mb-1">
-                  Especialidade Clínica *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={especialidade}
-                  onChange={e => setEspecialidade(e.target.value)}
-                  placeholder="Ex.: Terapeuta Ortomolecular, Acupunturista..."
-                  className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
-                />
-              </div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-primary-dark">
+                    Especialidade *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCriandoNovaEspecialidade(prev => !prev);
+                      setNovaEspecialidadeNome('');
+                    }}
+                    className="text-[11px] font-bold text-primary hover:underline cursor-pointer"
+                  >
+                    {criandoNovaEspecialidade ? 'Selecionar existente' : '+ Nova especialidade'}
+                  </button>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-primary-dark mb-1">
-                  Vínculo na Grade de Horários (1:1)
-                </label>
-                <select
-                  value={profissionalId}
-                  onChange={e => setProfissionalId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-gray/25 text-xs text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
-                >
-                  <option value="novo">+ Criar novo cadastro de profissional na grade</option>
-                  {profissionais.map(p => {
-                    const usuarioVinculado = usuarios.find(
-                      u => Number(u.profissional_id) === Number(p.id) && u.id !== editandoId
-                    );
-                    return (
-                      <option key={p.id} value={String(p.id)} disabled={Boolean(usuarioVinculado)}>
-                        {p.nome} ({p.especialidade || 'Especialista'})
-                        {usuarioVinculado ? ` — Já vinculado a ${usuarioVinculado.nome}` : ''}
+                {!criandoNovaEspecialidade ? (
+                  <select
+                    required
+                    value={especialidade}
+                    onChange={e => {
+                      if (e.target.value === '__nova__') {
+                        setCriandoNovaEspecialidade(true);
+                      } else {
+                        setEspecialidade(e.target.value);
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  >
+                    <option value="">Selecione a especialidade...</option>
+                    {especialidades.map(esp => (
+                      <option key={esp.id} value={esp.nome}>
+                        {esp.nome}
                       </option>
-                    );
-                  })}
-                </select>
-                <span className="text-[10px] text-gray mt-1 block">
-                  Cada login de profissional fica vinculado exclusivamente à sua própria coluna na agenda.
-                </span>
+                    ))}
+                    {especialidade && !especialidades.some(e => e.nome === especialidade) && (
+                      <option value={especialidade}>{especialidade}</option>
+                    )}
+                    <option value="__nova__">+ Criar nova especialidade...</option>
+                  </select>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={novaEspecialidadeNome}
+                        onChange={e => setNovaEspecialidadeNome(e.target.value)}
+                        placeholder="Nome da nova especialidade..."
+                        className="flex-1 px-3 py-2 rounded-xl border border-gray/25 text-xs text-dark bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      />
+                      <button
+                        type="button"
+                        disabled={salvandoEspecialidade}
+                        onClick={() => void handleCriarNovaEspecialidade()}
+                        className="px-3 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark cursor-pointer disabled:opacity-50"
+                      >
+                        {salvandoEspecialidade ? '...' : 'Criar'}
+                      </button>
+                    </div>
+                    <span className="text-[10px] text-gray block">
+                      Você pode clicar em "Criar" agora ou salvar o usuário diretamente com o nome digitado.
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-bold text-dark mb-1">
-              {editandoId ? 'Nova senha (opcional)' : 'Senha inicial'}
+          {!editandoId ? (
+            <div className="p-3 rounded-xl bg-light-gray/60 border border-gray/15 text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-dark">🔑 Senha inicial padrão:</span>
+                <code className="px-2 py-0.5 rounded bg-white border border-gray/20 font-mono font-bold text-primary">
+                  {SENHA_PADRAO_INICIAL}
+                </code>
+              </div>
+              <p className="text-[11px] text-gray">
+                O usuário entrará com o login <strong>{loginPreview || 'nome.ultimonome'}</strong> e a senha padrão acima, sendo solicitado a definir uma nova senha pessoal no primeiro acesso.
+              </p>
+            </div>
+          ) : (
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={resetarSenhaPadrao}
+                onChange={e => setResetarSenhaPadrao(e.target.checked)}
+                className="mt-0.5 rounded border-amber-300 text-primary focus:ring-primary"
+              />
+              <span>
+                <strong className="text-amber-900 block">Redefinir para a senha padrão ({SENHA_PADRAO_INICIAL})</strong>
+                <span className="text-[11px] text-amber-800">
+                  O usuário deverá criar uma nova senha no próximo login.
+                </span>
+              </span>
             </label>
-            <CampoSenha
-              name="novo-usuario-senha"
-              autoComplete="new-password"
-              required={!editandoId}
-              minLength={6}
-              value={senha}
-              onChange={e => setSenha(e.target.value)}
-              placeholder={editandoId ? 'Deixe em branco para manter' : 'Mínimo 6 caracteres'}
-              className="w-full px-3 py-2 rounded-xl border border-gray/25 text-sm text-dark focus:outline-none focus:ring-2 focus:ring-primary/40"
-            />
-          </div>
+          )}
 
           <div className="flex gap-2 pt-1">
             <button
@@ -334,15 +419,15 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
       <div className="lg:col-span-2 bg-white rounded-2xl border border-gray/15 shadow-sm p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-bold text-dark">Usuários Cadastrados</h2>
+            <h2 className="text-base font-bold text-dark">Usuários e Profissionais Cadastrados</h2>
             <p className="text-xs text-gray">{usuarios.length} usuário(s) registrado(s)</p>
           </div>
           <input
             type="search"
             value={busca}
             onChange={e => setBusca(e.target.value)}
-            placeholder="Buscar por nome, e-mail ou perfil..."
-            className="px-3.5 py-2 rounded-xl border border-gray/25 text-xs text-dark w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-primary/40"
+            placeholder="Buscar por nome, usuário, e-mail ou especialidade..."
+            className="px-3.5 py-2 rounded-xl border border-gray/25 text-xs text-dark w-full sm:w-72 focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
 
@@ -353,7 +438,7 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
           <div className="divide-y divide-gray/15">
             {filtrados.map(u => {
               const ativo = Boolean(u.ativo);
-              const profInativo = u.perfil === 'PROFISSIONAL' && u.profissional_id && (u.profissional_ativo === 0 || u.profissional_ativo === false);
+              const loginExibicao = u.login || gerarLoginPreview(u.nome);
               return (
                 <div key={u.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="space-y-1">
@@ -365,28 +450,25 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${ativo ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-100 text-zinc-600 border-zinc-300'}`}>
                         {ativo ? 'Ativo' : 'Inativo'}
                       </span>
-                      {profInativo && (
+                      {(u.primeiro_acesso || u.precisa_trocar_senha) && (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
-                          Agenda Inativa na Clínica
+                          Senha padrão (1º acesso pendente)
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-gray font-mono">{u.email}</p>
-                    {u.perfil === 'PROFISSIONAL' && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray">
+                      <span className="inline-flex items-center gap-1 font-mono bg-light-gray px-2 py-0.5 rounded-md text-dark font-semibold">
+                        👤 {loginExibicao}
+                      </span>
+                      <span>•</span>
+                      <span className="font-mono">{u.email}</span>
+                    </div>
+                    {u.perfil === 'PROFISSIONAL' && u.profissional_especialidade && (
                       <div className="flex items-center gap-1.5 pt-0.5">
-                        {u.profissional_id ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary-dark bg-secondary/20 px-2.5 py-0.5 rounded-lg border border-secondary/40">
-                            <span>🩺</span>
-                            <span>
-                              Agenda vinculada: <strong>{u.profissional_nome || u.nome}</strong>
-                              {u.profissional_especialidade ? ` • ${u.profissional_especialidade}` : ''}
-                            </span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-lg border border-amber-200">
-                            ⚠️ Sem agenda vinculada (clique em Editar para vincular)
-                          </span>
-                        )}
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary-dark bg-secondary/20 px-2.5 py-0.5 rounded-lg border border-secondary/40">
+                          <span>🩺</span>
+                          <span>Especialidade: <strong>{u.profissional_especialidade}</strong></span>
+                        </span>
                       </div>
                     )}
                   </div>
@@ -413,8 +495,11 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
                       </button>
                     )}
                     {u.id !== usuarioLogadoId && (
-                      <button type="button" onClick={() => void excluirUsuario(u)}
-                        className="rounded-lg px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50">
+                      <button
+                        type="button"
+                        onClick={() => void excluirUsuario(u)}
+                        className="rounded-lg px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 cursor-pointer"
+                      >
                         Excluir
                       </button>
                     )}

@@ -21,6 +21,7 @@ const versaoBase = '2026-11-22-comunicacoes';
 const versaoAuditoria = '2026-11-23-auditoria-clinica-e-reagendamento';
 const versaoRevisoes = '2026-11-23-revisoes-clinica';
 const versaoCheckin = '2026-11-23-validacao-checkin-recepcao';
+const versaoProntuarioELogin = '2026-11-24-prontuario-consulta-e-login-usuario';
 const trava = createHash('sha256').update(`ikigai:migracao:${esquema}`).digest('hex');
 
 async function colunas(tabela: string) {
@@ -59,7 +60,7 @@ async function migrarBase(schema: string) {
   ]]);
 }
 
-async function criarTabelaDoSchema(schema: string, tabela: 'paciente_evolucao' | 'revisao_clinica') {
+async function criarTabelaDoSchema(schema: string, tabela: 'paciente_evolucao' | 'revisao_clinica' | 'prontuario_consulta') {
   const padrao = new RegExp(`^CREATE TABLE IF NOT EXISTS ${tabela} \\([\\s\\S]*?;$`, 'm');
   const definicao = schema.match(padrao)?.[0];
   if (!definicao) throw new Error(`Tabela ${tabela} ausente na definição do banco.`);
@@ -101,6 +102,26 @@ try {
             AND h.status_novo = 'Na Recepção' AND h.data_alteracao = a.data_hora_checkin
             AND u.perfil IN ('ADMIN', 'RECEPCAO') AND u.atualizado_em < h.data_alteracao
         )`);
+  });
+  await aplicarVersao(versaoProntuarioELogin, async () => {
+    const usuarioCols = await colunas('usuario');
+    if (!usuarioCols.has('login')) {
+      await conexao.query('ALTER TABLE usuario ADD COLUMN login VARCHAR(100) NULL UNIQUE AFTER nome');
+    }
+    if (!usuarioCols.has('precisa_trocar_senha')) {
+      await conexao.query('ALTER TABLE usuario ADD COLUMN precisa_trocar_senha BOOLEAN NOT NULL DEFAULT FALSE AFTER senha_hash');
+    }
+    const pacienteCols = await colunas('paciente');
+    if (!pacienteCols.has('rg')) {
+      await conexao.query('ALTER TABLE paciente ADD COLUMN rg VARCHAR(30) NULL AFTER cpf');
+    }
+    if (!pacienteCols.has('filiacao')) {
+      await conexao.query('ALTER TABLE paciente ADD COLUMN filiacao VARCHAR(255) NULL AFTER sexo');
+    }
+    if (!pacienteCols.has('naturalidade')) {
+      await conexao.query('ALTER TABLE paciente ADD COLUMN naturalidade VARCHAR(120) NULL AFTER filiacao');
+    }
+    await criarTabelaDoSchema(schema, 'prontuario_consulta');
   });
   console.log('Estrutura atualizada. Dados existentes preservados.');
 } finally {

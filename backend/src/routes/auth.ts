@@ -4,7 +4,7 @@ import type { RowDataPacket } from 'mysql2';
 import rateLimit from 'express-rate-limit';
 import pool, { executarTransacao } from '../config/database.js';
 import { COOKIE_TOKEN_NAME, DURACAO_SESSAO_SEGUNDOS, exigirAutenticacao, extrairToken,
-  identificarSessao, verificarSenha, type UsuarioAutenticado } from '../middleware/auth.js';
+  gerarHashSenha, identificarSessao, verificarSenha, type UsuarioAutenticado } from '../middleware/auth.js';
 
 const router = Router();
 const hashSimulado = `${randomBytes(16).toString('hex')}:${randomBytes(64).toString('hex')}`;
@@ -28,13 +28,19 @@ router.post('/login', limitarLogin, async (req, res) => {
       res.status(403).json({ sucesso: false, erro: 'O login exige conexão HTTPS.' });
       return;
     }
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const identificadorBruto = typeof req.body?.login === 'string' && req.body.login.trim()
+      ? req.body.login
+      : (typeof req.body?.email === 'string' ? req.body.email : '');
+    const identificador = identificadorBruto.trim().toLowerCase();
     const senha = typeof req.body?.senha === 'string' ? req.body.senha : '';
-    if (!email || !senha) {
-      res.status(400).json({ sucesso: false, erro: 'E-mail e senha são obrigatórios.' });
+    if (!identificador || !senha) {
+      res.status(400).json({ sucesso: false, erro: 'Usuário e senha são obrigatórios.' });
       return;
     }
-    const [[credencial]] = await pool.query<RowDataPacket[]>('SELECT id_usuario, senha_hash FROM usuario WHERE email = ?', [email]);
+    const [[credencial]] = await pool.query<RowDataPacket[]>(
+      'SELECT id_usuario, senha_hash FROM usuario WHERE email = ? OR login = ? LIMIT 1',
+      [identificador, identificador]
+    );
     const senhaValida = await verificarSenha(senha, credencial?.senha_hash ?? hashSimulado);
     if (!senhaValida || !credencial) {
       res.status(401).json({ sucesso: false, erro: 'E-mail ou senha inválidos.' });
@@ -43,12 +49,13 @@ router.post('/login', limitarLogin, async (req, res) => {
     const token = randomBytes(32).toString('base64url');
     const usuario = await executarTransacao(async conexao => {
       const [rows] = await conexao.query<(RowDataPacket & UsuarioAutenticado & { senha_hash: string, ativo: number, profissional_ativo: number | null })[]>(
-        `SELECT u.id_usuario AS id, u.nome, u.email, u.perfil, u.senha_hash, u.ativo,
+        `SELECT u.id_usuario AS id, u.nome, u.login, u.email, u.perfil, u.senha_hash,
+           u.precisa_trocar_senha, u.ativo,
            u.id_profissional AS profissional_id, p.nome AS profissional_nome,
            p.especialidade_principal AS profissional_especialidade, p.ativo AS profissional_ativo
          FROM usuario u LEFT JOIN profissional p ON p.id_profissional = u.id_profissional
-         WHERE u.email = ? FOR UPDATE`,
-        [email]
+         WHERE u.id_usuario = ? FOR UPDATE`,
+        [credencial.id_usuario]
       );
       const atual = rows[0];
       if (!atual?.ativo || atual.id !== credencial.id_usuario || atual.senha_hash !== credencial.senha_hash ||
@@ -60,9 +67,17 @@ router.post('/login', limitarLogin, async (req, res) => {
         'INSERT INTO sessao_usuario (identificador, id_usuario, expira_em) VALUES (?, ?, TIMESTAMPADD(SECOND, ?, UTC_TIMESTAMP()))',
         [identificarSessao(token), atual.id, DURACAO_SESSAO_SEGUNDOS]
       );
-      return { id: atual.id, nome: atual.nome, email: atual.email, perfil: atual.perfil,
-        profissional_id: atual.profissional_id, profissional_nome: atual.profissional_nome,
-        profissional_especialidade: atual.profissional_especialidade };
+      return {
+        id: atual.id,
+        nome: atual.nome,
+        login: atual.login,
+        email: atual.email,
+        perfil: atual.perfil,
+        primeiro_acesso: Boolean(atual.precisa_trocar_senha),
+        profissional_id: atual.profissional_id,
+        profissional_nome: atual.profissional_nome,
+        profissional_especialidade: atual.profissional_especialidade,
+      };
     });
     if (!usuario) {
       res.status(401).json({ sucesso: false, erro: 'E-mail ou senha inválidos.' });
@@ -72,6 +87,37 @@ router.post('/login', limitarLogin, async (req, res) => {
     res.json({ sucesso: true, dados: { usuario } });
   } catch {
     res.status(503).json({ sucesso: false, erro: 'Serviço de autenticação indisponível.' });
+  }
+});
+
+router.post('/trocar-senha', exigirAutenticacao, async (req, res) => {
+  try {
+    const novaSenha = typeof req.body?.nova_senha === 'string' ? req.body.nova_senha : '';
+    const confirmarSenha = typeof req.body?.confirmar_senha === 'string' ? req.body.confirmar_senha : novaSenha;
+    if (!novaSenha || novaSenha.length < 6) {
+      res.status(400).json({ sucesso: false, erro: 'A nova senha deve ter pelo menos 6 caracteres.' });
+      return;
+    }
+    if (novaSenha !== confirmarSenha) {
+      res.status(400).json({ sucesso: false, erro: 'A confirmação da senha não confere.' });
+      return;
+    }
+    if (novaSenha === 'Ikigai@123') {
+      res.status(400).json({ sucesso: false, erro: 'Escolha uma senha diferente da senha padrão inicial.' });
+      return;
+    }
+    const hash = await gerarHashSenha(novaSenha);
+    await pool.query(
+      'UPDATE usuario SET senha_hash = ?, precisa_trocar_senha = 0 WHERE id_usuario = ?',
+      [hash, req.usuario!.id]
+    );
+    res.json({
+      sucesso: true,
+      mensagem: 'Senha definida com sucesso!',
+      dados: { primeiro_acesso: false },
+    });
+  } catch {
+    res.status(500).json({ sucesso: false, erro: 'Não foi possível atualizar a senha.' });
   }
 });
 

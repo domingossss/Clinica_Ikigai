@@ -11,8 +11,10 @@ export type PerfilUsuario = 'ADMIN' | 'RECEPCAO' | 'PROFISSIONAL';
 export interface UsuarioAutenticado {
   id: number;
   nome: string;
+  login?: string | null;
   email: string;
   perfil: PerfilUsuario;
+  primeiro_acesso?: boolean;
   profissional_id?: number | null;
   profissional_nome?: string | null;
   profissional_especialidade?: string | null;
@@ -65,7 +67,8 @@ export async function consultarSessao(req: Request): Promise<UsuarioAutenticado 
   const token = extrairToken(req);
   if (!token) return null;
   const [rows] = await pool.query<(RowDataPacket & UsuarioAutenticado)[]>(
-    `SELECT u.id_usuario AS id, u.nome, u.email, u.perfil, u.id_profissional AS profissional_id,
+    `SELECT u.id_usuario AS id, u.nome, u.login, u.email, u.perfil,
+       u.precisa_trocar_senha, u.id_profissional AS profissional_id,
        p.nome AS profissional_nome, p.especialidade_principal AS profissional_especialidade
      FROM sessao_usuario s JOIN usuario u ON u.id_usuario = s.id_usuario
      LEFT JOIN profissional p ON p.id_profissional = u.id_profissional
@@ -73,7 +76,11 @@ export async function consultarSessao(req: Request): Promise<UsuarioAutenticado 
        AND (u.perfil <> 'PROFISSIONAL' OR p.ativo = 1)`,
     [identificarSessao(token)]
   );
-  return rows[0] ?? null;
+  if (!rows[0]) return null;
+  return {
+    ...rows[0],
+    primeiro_acesso: Boolean(rows[0].precisa_trocar_senha),
+  };
 }
 
 export async function exigirAutenticacao(req: Request, res: Response, next: NextFunction): Promise<void> {

@@ -4,6 +4,7 @@ import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Swal from 'sweetalert2';
 import ModalHistoricoPaciente from './ModalHistoricoPaciente';
+import ModalProntuarioPaciente from './ModalProntuarioPaciente';
 import type { UsuarioSessao } from '../services/auth';
 
 interface Paciente {
@@ -75,6 +76,9 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
   const [enderecoSuggestions, setEnderecoSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  // Modal Completo de Prontuário e Linha do Tempo Vertical
+  const [prontuarioPaciente, setProntuarioPaciente] = useState<Paciente | null>(null);
 
   // Sistema de Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -720,15 +724,15 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                     filteredPacientes.map(p => (
                       <tr key={p.id} className="hover:bg-light-gray/40 transition-colors">
                         <td className="px-4 py-4">
-                          {admin ? <button
+                          {(admin || isProfissional) ? <button
                             type="button"
-                            onClick={() => handleAbrirHistorico(p)}
+                            onClick={() => isProfissional ? setProntuarioPaciente(p) : handleAbrirHistorico(p)}
                             className="text-left font-bold text-dark hover:text-primary transition-colors cursor-pointer group flex items-center gap-1.5"
-                            title="Clique para ver o histórico de atendimentos deste paciente"
+                            title={isProfissional ? 'Clique para abrir o prontuário completo e a linha do tempo' : 'Clique para ver o histórico de atendimentos deste paciente'}
                           >
                             <span>{p.nome_completo}</span>
                             <span className="opacity-0 group-hover:opacity-100 text-[10px] bg-secondary/15 text-primary-dark font-semibold px-1.5 py-0.5 rounded transition-opacity">
-                              Ver Histórico
+                              {isProfissional ? 'Abrir Prontuário' : 'Ver Histórico'}
                             </span>
                           </button> : <span>{p.nome_completo}</span>}
                         </td>
@@ -741,6 +745,17 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                           {new Date(p.criado_em).toLocaleDateString('pt-BR')}
                         </td>
                         <td className="px-4 py-4 text-right flex items-center justify-end gap-2">
+                          {(isProfissional || admin) && (
+                            <button
+                              type="button"
+                              onClick={() => setProntuarioPaciente(p)}
+                              title="Abrir Prontuário Completo e Linha do Tempo Vertical"
+                              className="px-2.5 py-1.5 bg-primary/10 hover:bg-primary hover:text-white text-primary text-xs font-bold rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                            >
+                              <span>📋</span>
+                              <span>Prontuário</span>
+                            </button>
+                          )}
                           {admin && <button
                             onClick={() => handleAbrirHistorico(p)}
                             title="Visualizar histórico de atendimentos (IK-77)"
@@ -750,9 +765,9 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                           </button>}
-                          {usuarioLogado && <button
+                          {usuarioLogado && !isProfissional && <button
                             onClick={() => handleEditClick(p)}
-                            title={isProfissional ? 'Registrar evolução clínica' : 'Editar paciente'}
+                            title="Editar paciente"
                             className="p-1.5 bg-light-gray hover:bg-primary/15 text-gray hover:text-primary rounded-lg transition-colors cursor-pointer"
                           >
                             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -794,6 +809,17 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
         pacienteNome={historicoPaciente?.nome_completo}
         onNovoAgendamento={onNovoAgendamento}
       />
+
+      {/* Modal Completo de Prontuário e Linha do Tempo Vertical */}
+      {prontuarioPaciente && (
+        <ModalProntuarioPaciente
+          isOpen={true}
+          onClose={() => setProntuarioPaciente(null)}
+          pacienteId={prontuarioPaciente.id}
+          pacienteNome={prontuarioPaciente.nome_completo}
+          onSaved={() => void carregarPacientes(true)}
+        />
+      )}
     </div>
   );
 }

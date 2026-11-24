@@ -909,26 +909,6 @@ export default function ServicosAgendamentos({
               </span>
             </button>
 
-                        {isAdmin && <button
-              type="button"
-              onClick={() => setSubAba('profissionais')}
-              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
-                subAba === 'profissionais'
-                  ? 'bg-white text-primary shadow-xs font-extrabold'
-                  : 'text-gray hover:text-dark hover:bg-white/50'
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-              Profissionais & Terapeutas
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                subAba === 'profissionais' ? 'bg-primary/10 text-primary' : 'bg-gray/10 text-gray'
-              }`}>
-                {profissionais.length}
-              </span>
-            </button>}
-
             {isAdmin && <button
               type="button"
               onClick={() => {
@@ -954,17 +934,6 @@ export default function ServicosAgendamentos({
           </div>
 
           <div className="flex items-center gap-3 px-3 text-xs text-gray font-medium flex-wrap">
-            {isAdmin && (
-              <a
-                href="/dashboard"
-                className="px-3.5 py-2 rounded-xl bg-dark text-white text-xs font-bold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-xs"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-                Dashboard de Indicadores
-              </a>
-            )}
             <span className="flex h-2 w-2 relative">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>

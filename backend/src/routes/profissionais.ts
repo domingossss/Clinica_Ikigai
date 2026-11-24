@@ -220,13 +220,50 @@ router.delete('/profissionais/:id', async (req: Request, res: Response): Promise
 // ENDPOINTS: VINCULAÇÃO DE PROCEDIMENTOS AO PROFISSIONAL (IK-80)
 // ============================================================================
 
+function validarEscopoProfissional(req: Request, idProfissional: number) {
+  if (req.usuario?.perfil === 'PROFISSIONAL') {
+    if (!req.usuario.profissional_id || Number(req.usuario.profissional_id) !== Number(idProfissional)) {
+      throw new ErroOperacao(403, 'Você só pode gerenciar os procedimentos da sua própria agenda.');
+    }
+  }
+}
+
+async function resolverEspecialidadeProcedimento(
+  conexao: any,
+  idProfissional: number,
+  categoriaIdRaw: unknown,
+  novaCategoriaRaw: unknown
+): Promise<number> {
+  const novaCategoria = sanitizarTexto(typeof novaCategoriaRaw === 'string' ? novaCategoriaRaw : '').trim();
+  if (novaCategoria) {
+    await conexao.query('INSERT IGNORE INTO especialidade (nome, ativo) VALUES (?, 1)', [novaCategoria]);
+    const [catRows]: any = await conexao.query('SELECT id_especialidade FROM especialidade WHERE nome = ? LIMIT 1', [novaCategoria]);
+    if (catRows.length) return Number(catRows[0].id_especialidade);
+  }
+  if (categoriaIdRaw !== undefined && categoriaIdRaw !== null && categoriaIdRaw !== '') {
+    const catId = idPositivo(categoriaIdRaw);
+    const [catRows]: any = await conexao.query('SELECT id_especialidade FROM especialidade WHERE id_especialidade = ? LIMIT 1', [catId]);
+    if (!catRows.length) throw new ErroOperacao(404, 'Especialidade/Categoria não encontrada.');
+    return catId;
+  }
+  const [profs]: any = await conexao.query(
+    'SELECT especialidade_principal FROM profissional WHERE id_profissional = ? LIMIT 1',
+    [idProfissional]
+  );
+  const nomeEsp = sanitizarTexto(profs[0]?.especialidade_principal || 'Geral').trim() || 'Geral';
+  await conexao.query('INSERT IGNORE INTO especialidade (nome, ativo) VALUES (?, 1)', [nomeEsp]);
+  const [catRows]: any = await conexao.query('SELECT id_especialidade FROM especialidade WHERE nome = ? LIMIT 1', [nomeEsp]);
+  return Number(catRows[0].id_especialidade);
+}
+
 /**
  * GET /api/profissionais/:id/procedimentos
  * CA01: Retorna todos os procedimentos cadastrados na clínica indicando quais estão vinculados ao profissional.
  */
 router.get('/profissionais/:id/procedimentos', async (req: Request, res: Response): Promise<any> => {
   try {
-    const { id } = req.params;
+    const id = idPositivo(req.params.id);
+    validarEscopoProfissional(req, id);
 
     // Verificar se o profissional existe
     const [profs]: any = await pool.query('SELECT id, nome, especialidade FROM profissionais WHERE id = ?', [id]);
@@ -248,12 +285,12 @@ router.get('/profissionais/:id/procedimentos', async (req: Request, res: Respons
       LEFT JOIN especialidade e ON p.id_especialidade = e.id_especialidade
       LEFT JOIN profissional_procedimento pp 
         ON p.id_procedimento = pp.id_procedimento AND pp.id_profissional = ?
-      WHERE p.ativo = 1
+      WHERE p.ativo = 1 OR pp.id_profissional IS NOT NULL
       ORDER BY p.nome ASC
     `, [id]);
 
     const vinculados = rows.filter((r: any) => r.vinculado === 1);
-    const procedimento_ids = vinculados.map((r: any) => r.id);
+    const procedimento_ids = vinculados.filter((r: any) => r.ativo === 1).map((r: any) => r.id);
 
     return res.status(200).json({
       sucesso: true,
@@ -274,11 +311,11 @@ router.get('/profissionais/:id/procedimentos', async (req: Request, res: Respons
 /**
  * PUT /api/profissionais/:id/procedimentos
  * CA01 & CA02: Atualiza a lista completa de procedimentos vinculados ao profissional.
- * Permite selecionar um ou mais procedimentos ativos e salvar, ou remover vínculos.
  */
 router.put('/profissionais/:id/procedimentos', async (req: Request, res: Response): Promise<any> => {
   try {
     const id = idPositivo(req.params.id);
+    validarEscopoProfissional(req, id);
     const lista = req.body.procedimentos ?? req.body.procedimento_ids;
     if (!Array.isArray(lista)) throw new ErroOperacao(400, 'Informe uma lista de procedimentos.');
     const procIds = [...new Set(lista.map(idPositivo))];
@@ -298,13 +335,65 @@ router.put('/profissionais/:id/procedimentos', async (req: Request, res: Respons
     return res.json({ sucesso: true, mensagem: 'Vínculos salvos com sucesso!', dados: { id_profissional: id, procedimentos: procIds } });
   } catch (erro) { return responderFalha(res, erro); }
 });
+
 /**
  * POST /api/profissionais/:id/procedimentos
- * CA01: Adiciona vínculo pontual de um procedimento ao profissional.
+ * Permite ao profissional criar um novo procedimento já vinculado automaticamente à sua agenda,
+ * ou vincular um procedimento existente por procedimento_id/servico_id.
  */
 router.post('/profissionais/:id/procedimentos', async (req: Request, res: Response): Promise<any> => {
   try {
     const id = idPositivo(req.params.id);
+    validarEscopoProfissional(req, id);
+
+    // Modo 1: Criação de novo procedimento pelo profissional (com vínculo automático)
+    if (typeof req.body?.nome === 'string' && req.body.nome.trim()) {
+      const nomeSanitizado = sanitizarTexto(req.body.nome).trim();
+      if (!nomeSanitizado) throw new ErroOperacao(400, 'Informe um nome válido para o procedimento.');
+      const duracaoVal = Number(req.body.duracao_minutos ?? 60);
+      if (!Number.isSafeInteger(duracaoVal) || duracaoVal <= 0 || duracaoVal > 1440 || duracaoVal % 5 !== 0) {
+        throw new ErroOperacao(400, 'A duração deve ser um múltiplo de 5 minutos (entre 5 e 1440).');
+      }
+      const precoVal = req.body.preco !== undefined && req.body.preco !== '' ? Number(req.body.preco) : 0;
+      if (!Number.isFinite(precoVal) || precoVal < 0 || precoVal > 99999999.99) {
+        throw new ErroOperacao(400, 'Informe um valor válido para o procedimento.');
+      }
+
+      const criado = await transacaoAgenda([id], async conexao => {
+        const categoriaId = await resolverEspecialidadeProcedimento(
+          conexao,
+          id,
+          req.body.categoria_id,
+          req.body.nova_categoria
+        );
+        const [ins]: any = await conexao.query(
+          'INSERT INTO procedimento (id_especialidade, nome, duracao_minutos, preco, ativo) VALUES (?, ?, ?, ?, 1)',
+          [categoriaId, nomeSanitizado, duracaoVal, precoVal]
+        );
+        const novoId = Number(ins.insertId);
+        await conexao.query(
+          'INSERT IGNORE INTO profissional_procedimento (id_profissional, id_procedimento) VALUES (?, ?)',
+          [id, novoId]
+        );
+        return {
+          id: novoId,
+          nome: nomeSanitizado,
+          categoria_id: categoriaId,
+          duracao_minutos: duracaoVal,
+          preco: precoVal,
+          ativo: 1,
+          vinculado: 1,
+        };
+      });
+
+      return res.status(201).json({
+        sucesso: true,
+        mensagem: 'Procedimento criado e vinculado automaticamente à sua agenda!',
+        dados: criado,
+      });
+    }
+
+    // Modo 2: Vincular procedimento existente por ID
     const procedimento = idPositivo(req.body.procedimento_id ?? req.body.servico_id);
     await transacaoAgenda([id], async conexao => {
       const [rows] = await conexao.query<any[]>('SELECT id_procedimento FROM procedimento WHERE id_procedimento = ? AND ativo = 1 FOR SHARE', [procedimento]);
@@ -314,6 +403,90 @@ router.post('/profissionais/:id/procedimentos', async (req: Request, res: Respon
     return res.json({ sucesso: true, mensagem: 'Vínculo salvo com sucesso!' });
   } catch (erro) { return responderFalha(res, erro); }
 });
+
+/**
+ * PUT & PATCH /api/profissionais/:id/procedimentos/:procedimentoId
+ * Permite ao profissional editar ou ativar/inativar um procedimento vinculado à sua agenda.
+ */
+const atualizarProcedimentoDoProfissional = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = idPositivo(req.params.id);
+    const procedimentoId = idPositivo(req.params.procedimentoId);
+    validarEscopoProfissional(req, id);
+
+    const atualizado = await transacaoAgenda([id], async conexao => {
+      const [vinculo]: any = await conexao.query(
+        'SELECT 1 FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ? LIMIT 1',
+        [id, procedimentoId]
+      );
+      if (!vinculo.length) {
+        throw new ErroOperacao(404, 'Este procedimento não está vinculado à sua agenda.');
+      }
+
+      const [atuais]: any = await conexao.query(
+        'SELECT id_procedimento, id_especialidade, nome, duracao_minutos, preco, ativo FROM procedimento WHERE id_procedimento = ? FOR UPDATE',
+        [procedimentoId]
+      );
+      if (!atuais.length) throw new ErroOperacao(404, 'Procedimento não encontrado.');
+      const atual = atuais[0];
+
+      const nomeFinal = req.body.nome !== undefined
+        ? sanitizarTexto(String(req.body.nome)).trim()
+        : atual.nome;
+      if (!nomeFinal) throw new ErroOperacao(400, 'O nome do procedimento é obrigatório.');
+
+      const duracaoFinal = req.body.duracao_minutos !== undefined
+        ? Number(req.body.duracao_minutos)
+        : Number(atual.duracao_minutos);
+      if (!Number.isSafeInteger(duracaoFinal) || duracaoFinal <= 0 || duracaoFinal > 1440 || duracaoFinal % 5 !== 0) {
+        throw new ErroOperacao(400, 'A duração deve ser um múltiplo de 5 minutos.');
+      }
+
+      const precoFinal = req.body.preco !== undefined
+        ? Number(req.body.preco)
+        : Number(atual.preco);
+      if (!Number.isFinite(precoFinal) || precoFinal < 0 || precoValInvalido(precoFinal)) {
+        throw new ErroOperacao(400, 'O preço informado é inválido.');
+      }
+
+      const ativoFinal = req.body.ativo !== undefined
+        ? (req.body.ativo === 1 || req.body.ativo === true ? 1 : 0)
+        : Number(atual.ativo);
+
+      const categoriaFinal = (req.body.categoria_id !== undefined || req.body.nova_categoria !== undefined)
+        ? await resolverEspecialidadeProcedimento(conexao, id, req.body.categoria_id, req.body.nova_categoria)
+        : Number(atual.id_especialidade);
+
+      await conexao.query(
+        'UPDATE procedimento SET id_especialidade = ?, nome = ?, duracao_minutos = ?, preco = ?, ativo = ? WHERE id_procedimento = ?',
+        [categoriaFinal, nomeFinal, duracaoFinal, precoFinal, ativoFinal, procedimentoId]
+      );
+
+      return {
+        id: procedimentoId,
+        categoria_id: categoriaFinal,
+        nome: nomeFinal,
+        duracao_minutos: duracaoFinal,
+        preco: precoFinal,
+        ativo: ativoFinal,
+      };
+    });
+
+    return res.json({
+      sucesso: true,
+      mensagem: 'Procedimento atualizado com sucesso!',
+      dados: atualizado,
+    });
+  } catch (erro) { return responderFalha(res, erro); }
+};
+
+function precoValInvalido(v: number) {
+  return v > 99999999.99;
+}
+
+router.put('/profissionais/:id/procedimentos/:procedimentoId', atualizarProcedimentoDoProfissional);
+router.patch('/profissionais/:id/procedimentos/:procedimentoId', atualizarProcedimentoDoProfissional);
+
 /**
  * DELETE /api/profissionais/:id/procedimentos/:procedimentoId
  * CA02: Remove vínculo pontual de um procedimento do profissional.
@@ -321,6 +494,7 @@ router.post('/profissionais/:id/procedimentos', async (req: Request, res: Respon
 router.delete('/profissionais/:id/procedimentos/:procedimentoId', async (req: Request, res: Response): Promise<any> => {
   try {
     const id = idPositivo(req.params.id);
+    validarEscopoProfissional(req, id);
     const procedimento = idPositivo(req.params.procedimentoId);
     await transacaoAgenda([id], async conexao => {
       const [resultado]: any = await conexao.query('DELETE FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?', [id, procedimento]);

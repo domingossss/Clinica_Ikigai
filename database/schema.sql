@@ -103,8 +103,11 @@ CREATE TABLE IF NOT EXISTS paciente (
     versao INT NOT NULL DEFAULT 0,
     nome VARCHAR(150) NOT NULL,
     cpf VARCHAR(14) NULL UNIQUE,
+    rg VARCHAR(30) NULL,
     data_nascimento DATE NULL DEFAULT NULL,
     sexo ENUM('Feminino', 'Masculino', 'Outro') NOT NULL DEFAULT 'Outro',
+    filiacao VARCHAR(255) NULL,
+    naturalidade VARCHAR(120) NULL,
     telefone VARCHAR(20) NULL,
     whatsapp VARCHAR(20) NULL,
     email VARCHAR(120) NULL,
@@ -530,8 +533,10 @@ CREATE TABLE IF NOT EXISTS agenda_capacidade_snapshot (
 CREATE TABLE IF NOT EXISTS usuario (
     id_usuario INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
+    login VARCHAR(100) NULL UNIQUE,
     email VARCHAR(150) NOT NULL UNIQUE,
     senha_hash VARCHAR(255) NOT NULL,
+    precisa_trocar_senha BOOLEAN NOT NULL DEFAULT FALSE,
     perfil ENUM('ADMIN', 'RECEPCAO', 'PROFISSIONAL') NOT NULL DEFAULT 'RECEPCAO',
     id_profissional INT NULL UNIQUE,
     ativo BOOLEAN NOT NULL DEFAULT TRUE,
@@ -546,6 +551,48 @@ SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE usuario ADD 
 PREPARE ikigai_stmt FROM @ikigai_ddl;
 EXECUTE ikigai_stmt;
 DEALLOCATE PREPARE ikigai_stmt;
+
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE usuario ADD COLUMN login VARCHAR(100) NULL UNIQUE AFTER nome') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuario' AND COLUMN_NAME = 'login');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;
+
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE usuario ADD COLUMN precisa_trocar_senha BOOLEAN NOT NULL DEFAULT FALSE AFTER senha_hash') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuario' AND COLUMN_NAME = 'precisa_trocar_senha');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;
+
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE paciente ADD COLUMN rg VARCHAR(30) NULL AFTER cpf') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'paciente' AND COLUMN_NAME = 'rg');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;
+
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE paciente ADD COLUMN filiacao VARCHAR(255) NULL AFTER sexo') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'paciente' AND COLUMN_NAME = 'filiacao');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;
+
+SET @ikigai_ddl = (SELECT IF(COUNT(*) > 0, 'SELECT 1', 'ALTER TABLE paciente ADD COLUMN naturalidade VARCHAR(120) NULL AFTER filiacao') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'paciente' AND COLUMN_NAME = 'naturalidade');
+PREPARE ikigai_stmt FROM @ikigai_ddl;
+EXECUTE ikigai_stmt;
+DEALLOCATE PREPARE ikigai_stmt;
+
+CREATE TABLE IF NOT EXISTS prontuario_consulta (
+    id_prontuario INT AUTO_INCREMENT PRIMARY KEY,
+    id_agendamento INT NOT NULL UNIQUE,
+    paciente_uuid VARCHAR(36) NOT NULL,
+    id_profissional INT NOT NULL,
+    anamnese TEXT NULL,
+    exame_fisico TEXT NULL,
+    hipoteses_diagnosticas TEXT NULL,
+    prescricoes TEXT NULL,
+    evolucao TEXT NULL,
+    exames_laudos TEXT NULL,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_prontuario_agendamento FOREIGN KEY (id_agendamento) REFERENCES agendamento (id_agendamento) ON DELETE CASCADE,
+    INDEX idx_prontuario_paciente_prof (paciente_uuid, id_profissional)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS sessao_usuario (
     identificador BINARY(32) PRIMARY KEY,

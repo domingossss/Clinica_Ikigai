@@ -5,10 +5,49 @@ import { sanitizarTexto } from '../middleware/security.js';
 import { gerarHashSenha, type PerfilUsuario } from '../middleware/auth.js';
 
 const router = Router();
+export const SENHA_PADRAO_USUARIO = 'Ikigai@123';
+
+export function gerarLoginBase(nome: string): string {
+  const ignorar = new Set(['dr', 'dra', 'dr.', 'dra.', 'terapeuta', 'prof', 'prof.', 'de', 'da', 'do', 'dos', 'das', 'e']);
+  const partes = nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(p => p.length > 0 && !ignorar.has(p));
+
+  if (partes.length === 0) return 'usuario.ikigai';
+  if (partes.length === 1) return partes[0];
+  return `${partes[0]}.${partes[partes.length - 1]}`;
+}
+
+async function resolverLoginUnico(
+  conexao: PoolConnection,
+  nome: string,
+  usuarioIdIgnorar: number | null = null
+): Promise<string> {
+  const base = gerarLoginBase(nome).slice(0, 85);
+  let candidato = base;
+  let sufixo = 2;
+  while (true) {
+    const [existentes] = await conexao.query<RowDataPacket[]>(
+      'SELECT id_usuario FROM usuario WHERE login = ? AND id_usuario <> ? LIMIT 1',
+      [candidato, usuarioIdIgnorar ?? 0]
+    );
+    if (!existentes.length) return candidato;
+    candidato = `${base}${sufixo}`;
+    sufixo++;
+  }
+}
+
 async function vincularProfissional(conexao: PoolConnection, req: Request, usuario: ReturnType<typeof lerUsuario>, id: number | null, profissionalAtual: number | null = null) {
   if (usuario.perfil !== 'PROFISSIONAL') return null;
   const alvo: unknown = req.body?.profissional_id ?? profissionalAtual;
   const especialidade = sanitizarTexto(typeof req.body?.especialidade === 'string' ? req.body.especialidade : '').trim();
+  if (especialidade) {
+    await conexao.query('INSERT IGNORE INTO especialidade (nome, ativo) VALUES (?, 1)', [especialidade]);
+  }
   if (alvo === null) {
     const [novo] = await conexao.query<ResultSetHeader>(
       'INSERT INTO profissional (nome, email, especialidade_principal, ativo) VALUES (?, ?, ?, 1)',
@@ -34,14 +73,19 @@ function lerUsuario(req: Request, novo: boolean) {
   const nome = sanitizarTexto(req.body?.nome);
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const perfil = String(req.body?.perfil ?? (novo ? 'RECEPCAO' : '')).toUpperCase() as PerfilUsuario;
-  const senha = req.body?.senha ?? '';
+  const senhaInformada = req.body?.senha ?? '';
+  const usarSenhaPadrao = (novo && (senhaInformada === '' || senhaInformada === undefined || req.body?.usar_senha_padrao === true)) ||
+    (!novo && req.body?.resetar_senha_padrao === true);
+  const senha = usarSenhaPadrao ? SENHA_PADRAO_USUARIO : senhaInformada;
+  const precisaTrocarSenha = usarSenhaPadrao || Boolean(req.body?.primeiro_acesso || req.body?.precisa_trocar_senha);
+
   if (nome.length < 2 || nome.length > 150) throw new ErroOperacao(400, 'Nome deve ter entre 2 e 150 caracteres.');
   if (email.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ErroOperacao(400, 'E-mail inválido.');
   if (!perfis.includes(perfil)) throw new ErroOperacao(400, 'Perfil inválido.');
   if (typeof senha !== 'string' || ((novo || senha) && senha.length < 6)) {
     throw new ErroOperacao(400, 'A senha deve ter pelo menos 6 caracteres.');
   }
-  return { nome, email, perfil, senha };
+  return { nome, email, perfil, senha, precisaTrocarSenha };
 }
 
 function responderErro(res: Response, erro: unknown) {
@@ -80,49 +124,73 @@ async function editarComoAdmin<T>(req: Request, id: number | null, operacao: (co
 router.get('/', async (_req, res) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT u.id_usuario AS id, u.nome, u.email, u.perfil, u.ativo,
+      `SELECT u.id_usuario AS id, u.nome, u.login, u.email, u.perfil, u.ativo,
+              u.precisa_trocar_senha AS primeiro_acesso,
               u.id_profissional AS profissional_id, p.nome AS profissional_nome,
               p.especialidade_principal AS profissional_especialidade, p.ativo AS profissional_ativo,
               DATE_FORMAT(u.criado_em, '%Y-%m-%dT%H:%i:%s') AS criado_em
        FROM usuario u LEFT JOIN profissional p ON p.id_profissional = u.id_profissional ORDER BY u.nome ASC`
     );
-    res.json({ sucesso: true, dados: rows });
+    const dados = rows.map(row => ({
+      ...row,
+      login: row.login || gerarLoginBase(String(row.nome || '')),
+      primeiro_acesso: Boolean(row.primeiro_acesso),
+    }));
+    res.json({ sucesso: true, dados });
   } catch (erro) { responderErro(res, erro); }
 });
 
 router.post('/', async (req, res) => {
   try {
-    const { nome, email, senha, perfil } = lerUsuario(req, true);
+    const { nome, email, senha, perfil, precisaTrocarSenha } = lerUsuario(req, true);
     const hash = await gerarHashSenha(senha);
     const dados = await editarComoAdmin(req, null, async conexao => {
-      const profissional_id = await vincularProfissional(conexao, req, { nome, email, senha, perfil }, null);
+      const profissional_id = await vincularProfissional(conexao, req, { nome, email, senha, perfil, precisaTrocarSenha }, null);
+      const login = await resolverLoginUnico(conexao, nome, null);
       const [resultado] = await conexao.query<ResultSetHeader>(
-        'INSERT INTO usuario (nome, email, senha_hash, perfil, id_profissional, ativo) VALUES (?, ?, ?, ?, ?, 1)', [nome, email, hash, perfil, profissional_id]
+        'INSERT INTO usuario (nome, login, email, senha_hash, precisa_trocar_senha, perfil, id_profissional, ativo) VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
+        [nome, login, email, hash, precisaTrocarSenha ? 1 : 0, perfil, profissional_id]
       );
-      return { id: resultado.insertId, profissional_id };
+      return { id: resultado.insertId, profissional_id, login };
     });
-    res.status(201).json({ sucesso: true, mensagem: 'Usuário criado com sucesso.', dados: { ...dados, nome, email, perfil, ativo: 1 } });
+    res.status(201).json({
+      sucesso: true,
+      mensagem: 'Usuário criado com sucesso.',
+      dados: { ...dados, nome, email, perfil, primeiro_acesso: precisaTrocarSenha, ativo: 1 },
+    });
   } catch (erro) { responderErro(res, erro); }
 });
 
 router.put('/:id', async (req, res) => {
   try {
     const id = lerId(req);
-    const { nome, email, senha, perfil } = lerUsuario(req, false);
+    const { nome, email, senha, perfil, precisaTrocarSenha } = lerUsuario(req, false);
     if (req.usuario?.id === id && perfil !== 'ADMIN') throw new ErroOperacao(409, 'Não é possível remover seu próprio perfil de administrador.');
     const hash = senha ? await gerarHashSenha(senha) : null;
-    const profissional_id = await editarComoAdmin(req, id, async conexao => {
+    const resultado = await editarComoAdmin(req, id, async conexao => {
       const [[anterior]] = await conexao.query<RowDataPacket[]>(
-        'SELECT perfil, id_profissional FROM usuario WHERE id_usuario = ?', [id]);
-      const vinculo = await vincularProfissional(conexao, req, { nome, email, senha, perfil }, id, anterior.id_profissional);
+        'SELECT nome, login, perfil, id_profissional, precisa_trocar_senha FROM usuario WHERE id_usuario = ?', [id]);
+      const vinculo = await vincularProfissional(conexao, req, { nome, email, senha, perfil, precisaTrocarSenha }, id, anterior.id_profissional);
+      const login = (!anterior.login || anterior.nome !== nome)
+        ? await resolverLoginUnico(conexao, nome, id)
+        : String(anterior.login);
+      const novoPrecisaTrocar = req.body?.resetar_senha_padrao === true
+        ? 1
+        : (hash ? 0 : Number(anterior.precisa_trocar_senha || 0));
       const revogarSessao = anterior.perfil === 'PROFISSIONAL' &&
         (anterior.id_profissional === null || anterior.id_profissional !== vinculo);
-      await conexao.query('UPDATE usuario SET nome = ?, email = ?, perfil = ?, id_profissional = ?, senha_hash = COALESCE(?, senha_hash) WHERE id_usuario = ?',
-        [nome, email, perfil, vinculo, hash, id]);
+      await conexao.query(
+        'UPDATE usuario SET nome = ?, login = ?, email = ?, perfil = ?, id_profissional = ?, precisa_trocar_senha = ?, senha_hash = COALESCE(?, senha_hash) WHERE id_usuario = ?',
+        [nome, login, email, perfil, vinculo, novoPrecisaTrocar, hash, id]
+      );
       if (hash || revogarSessao) await conexao.query('DELETE FROM sessao_usuario WHERE id_usuario = ?', [id]);
-      return vinculo;
+      return { profissional_id: vinculo, login, primeiro_acesso: Boolean(novoPrecisaTrocar) };
     });
-    res.json({ sucesso: true, mensagem: 'Usuário atualizado com sucesso.', dados: { id, nome, email, perfil, profissional_id } });
+    res.json({
+      sucesso: true,
+      mensagem: 'Usuário atualizado com sucesso.',
+      dados: { id, nome, email, perfil, ...resultado },
+    });
   } catch (erro) { responderErro(res, erro); }
 });
 

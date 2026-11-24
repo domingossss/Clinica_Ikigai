@@ -8,6 +8,7 @@ import GradeAgenda from './GradeAgenda';
 import GestaoUsuarios from './GestaoUsuarios';
 import Inicio from './Inicio';
 import Comunicacoes from './Comunicacoes';
+import MeusProcedimentosProfissional from './MeusProcedimentosProfissional';
 import { PERFIL_LABELS, type UsuarioSessao } from '../services/auth';
 
 const IndicadoresDashboard = lazy(() => import('../indicadores/main'));
@@ -46,12 +47,13 @@ function dataHoje(): string {
   return `${y}-${m}-${d}`;
 }
 
-type AbaAgenda = 'inicio' | 'grade' | 'cadastro' | 'servicos' | 'usuarios' | 'comunicacao' | 'indicadores';
+type AbaAgenda = 'inicio' | 'grade' | 'cadastro' | 'procedimentos' | 'servicos' | 'usuarios' | 'comunicacao' | 'indicadores';
 
 const ROTA_POR_ABA: Record<AbaAgenda, string> = {
   inicio: '/inicio',
   grade: '/agendamentos',
   cadastro: '/pacientes',
+  procedimentos: '/procedimentos',
   servicos: '/servicos',
   usuarios: '/usuarios',
   comunicacao: '/comunicacao',
@@ -247,7 +249,7 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
                   : 'text-gray hover:text-dark hover:bg-white/50'
               }`}
             >
-              Grade de Horários
+              {usuario?.perfil === 'PROFISSIONAL' ? 'Minha Agenda' : 'Grade de Horários'}
             </button>
             {usuario && (
               <button
@@ -259,7 +261,20 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
                     : 'text-gray hover:text-dark hover:bg-white/50'
                 }`}
               >
-                Pacientes
+                {usuario?.perfil === 'PROFISSIONAL' ? 'Meus Pacientes' : 'Pacientes'}
+              </button>
+            )}
+            {usuario?.perfil === 'PROFISSIONAL' && (
+              <button
+                onClick={() => selecionarAba('procedimentos')}
+                aria-current={currentTab === 'procedimentos' ? 'page' : undefined}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  currentTab === 'procedimentos'
+                    ? 'bg-white text-primary font-extrabold shadow-sm'
+                    : 'text-gray hover:text-dark hover:bg-white/50'
+                }`}
+              >
+                Meus Procedimentos
               </button>
             )}
             {usuario?.perfil === 'ADMIN' && (
@@ -395,6 +410,14 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
           <CadastroPacientes
             onNovoAgendamento={usuario?.perfil !== 'PROFISSIONAL' ? handleAbrirAgendamentoParaPaciente : undefined}
             usuarioLogado={usuario}
+          />
+        )}
+
+        {currentTab === 'procedimentos' && usuario?.perfil === 'PROFISSIONAL' && (
+          <MeusProcedimentosProfissional
+            usuario={usuario}
+            onUpdated={fetchDashboardData}
+            onNotify={showToast}
           />
         )}
 

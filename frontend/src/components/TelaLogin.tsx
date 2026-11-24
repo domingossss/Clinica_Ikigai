@@ -46,16 +46,16 @@ export default function TelaLogin({ onLoginSuccess }: TelaLoginProps) {
 
           <div>
             <label htmlFor="login-email" className="block text-xs font-bold text-dark mb-1.5">
-              E-mail
+              Usuário (nome.ultimonome)
             </label>
             <input
               id="login-email"
-              type="email"
+              type="text"
               required
               autoComplete="username"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="seu.email@clinicaikigai.com.br"
+              placeholder="Ex.: ulisses.higo"
               className="w-full px-3.5 py-2.5 rounded-xl border border-gray/25 text-sm text-dark focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
           </div>
