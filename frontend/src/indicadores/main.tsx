@@ -78,34 +78,48 @@ export default function IndicadoresDashboard() {
   }
 
   return (
-    <div ref={containerRef} className="dashboard-wrapper">
-      <div className="wrap">
-        <header>
-          <div className="brand">
-            <img className="brand-logo" src="/logo.png" alt="Logo da Clínica Ikigai" />
-            <div className="brand-copy">
-              <h1>Dashboard de Métricas</h1>
-              <p>Clínica Ikigai · saúde integrativa com agendamento por chatbot de IA</p>
-            </div>
-          </div>
-          <div className="ctl">
-            <label>
-              Período
-              <select id="per" aria-label="Período" defaultValue="30">
-                <option value="7">Últimos 7 dias</option>
-                <option value="30">Últimos 30 dias</option>
-                <option value="90">Últimos 90 dias</option>
-                <option value="180">Últimos 6 meses</option>
-                <option value="365">Últimos 12 meses</option>
-              </select>
-            </label>
-            <label>
-              Especialidade
-              <select id="esp" aria-label="Especialidade"></select>
-            </label>
-          </div>
-        </header>
+    <div ref={containerRef} className="dashboard-wrapper bg-white rounded-2xl shadow-premium border border-gray/10 overflow-hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-6 py-4 border-b border-gray/10 bg-light-gray/30">
+        <div>
+          <h2 className="text-base font-bold text-dark flex items-center gap-2">
+            <span className="p-1.5 bg-primary/10 rounded-lg text-primary text-xs font-bold">
+              KPIs
+            </span>
+            Indicadores e Métricas da Clínica
+          </h2>
+          <p className="text-xs text-gray mt-0.5">
+            Acompanhamento operacional, ocupação, satisfação e agendamento por IA
+          </p>
+        </div>
 
+        <div className="ctl flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-bold text-dark">
+            <span>Período:</span>
+            <select
+              id="per"
+              aria-label="Período"
+              defaultValue="30"
+              className="rounded-xl border border-gray/20 bg-white px-3 py-1.5 text-xs font-semibold text-dark focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="7">Últimos 7 dias</option>
+              <option value="30">Últimos 30 dias</option>
+              <option value="90">Últimos 90 dias</option>
+              <option value="180">Últimos 6 meses</option>
+              <option value="365">Últimos 12 meses</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs font-bold text-dark">
+            <span>Especialidade:</span>
+            <select
+              id="esp"
+              aria-label="Especialidade"
+              className="rounded-xl border border-gray/20 bg-white px-3 py-1.5 text-xs font-semibold text-dark focus:outline-none focus:ring-2 focus:ring-primary/30"
+            ></select>
+          </label>
+        </div>
+      </div>
+
+      <div className="wrap p-6">
         <p className="note">
           Dados operacionais reais calculados a partir dos agendamentos no banco de dados da clínica; respostas da pesquisa são registradas neste navegador. Cada indicador informa sua fonte. As variações comparam com o período anterior de mesmo tamanho.
         </p>

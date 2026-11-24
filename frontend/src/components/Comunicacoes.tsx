@@ -15,8 +15,8 @@ type Mensagem = {
 };
 type Consulta = { atendimento: Atendimento | null; dados: Mensagem[]; proxima: boolean; provedor: string | null };
 
-const campo = 'rounded-xl border border-gray/25 bg-white px-3 py-2.5 text-sm font-normal text-dark focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/15';
-const botao = 'rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary-dark cursor-pointer disabled:cursor-not-allowed disabled:opacity-50';
+const campo = 'w-full rounded-xl border border-gray/25 bg-white px-3 py-2 text-xs font-normal text-dark focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20';
+const botao = 'rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary-dark transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50';
 async function lerResposta<T>(resposta: Response, mensagem: string): Promise<T> {
   const dados = await resposta.json().catch(() => null);
   if (!resposta.ok || !dados || typeof dados !== 'object') {
@@ -155,122 +155,342 @@ export default function Comunicacoes({ buscaUrl, onNavegar }: Props) {
   const atendimento = consulta?.atendimento;
   const podeConfirmar = !!atendimento?.contatoFinal && ['Agendado', 'Confirmado', 'Reagendado'].includes(atendimento.status);
   const provedor = consulta?.provedor;
-  return <div className="space-y-6">
-    <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border-t-4 border-secondary bg-primary px-6 py-7 text-white shadow-premium sm:px-8">
-      <h1 className="text-3xl font-bold tracking-tight">Comunicação com pacientes</h1>
-      <div className="flex flex-wrap items-center gap-2">
-        {numeroAtendimento && (
-          <button
-            type="button"
-            onClick={() => aplicarFiltros({ agendamento: '', pagina: '' })}
-            className="rounded-xl border border-white/30 px-4 py-2.5 text-sm font-bold hover:bg-white/10 cursor-pointer"
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* COLUNA ESQUERDA: Busca de Agendamento e Filtro de Estado */}
+      <div className="lg:col-span-1 space-y-6">
+        <section className="bg-white rounded-2xl shadow-premium border border-gray/10 p-6 space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-dark flex items-center gap-2">
+              <span className="p-1.5 bg-primary/10 rounded-lg text-primary text-xs font-bold">
+                Canais
+              </span>
+              Comunicação com Pacientes
+            </h2>
+            <p className="text-xs text-gray mt-1">
+              Pesquise agendamentos e filtre o status de confirmações e lembretes enviados.
+            </p>
+          </div>
+
+          <form onSubmit={buscar} className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-dark mb-1">
+                Buscar agendamento
+                <input
+                  className={`${campo} mt-1`}
+                  type="search"
+                  name="termo"
+                  required
+                  maxLength={150}
+                  defaultValue={numeroAtendimento}
+                  placeholder="Nome, CPF, telefone ou nº do agendamento"
+                />
+              </label>
+            </div>
+            <button className={`${botao} w-full`} disabled={buscando}>
+              {buscando ? 'Buscando…' : 'Buscar'}
+            </button>
+          </form>
+
+          {erroBusca && (
+            <p role="alert" className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800">
+              {erroBusca}
+            </p>
+          )}
+
+          {busca && (
+            <div aria-live="polite" className="pt-2 border-t border-gray/10 space-y-2">
+              <h3 className="text-xs font-bold text-dark uppercase tracking-wider">
+                Agendamentos encontrados
+              </h3>
+              {!busca.dados.length ? (
+                <p className="text-xs text-gray py-2">Nenhum agendamento encontrado.</p>
+              ) : (
+                <ul className="divide-y divide-gray/10 max-h-64 overflow-y-auto rounded-xl border border-gray/10 bg-light-gray/20">
+                  {busca.dados.map(item => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        onClick={() => aplicarFiltros({ agendamento: String(item.id), pagina: '' })}
+                        className="w-full text-left block py-2.5 px-3 hover:bg-white transition-colors cursor-pointer"
+                      >
+                        <strong className="text-xs font-bold text-primary block">
+                          {item.paciente} · #{item.id}
+                        </strong>
+                        <p className="text-[11px] text-dark mt-0.5">
+                          {horario(item.ocorrencia)} · <span className="font-semibold">{item.status}</span>
+                        </p>
+                        <p className="text-[11px] text-gray">
+                          {item.procedimento} · {item.profissional}
+                        </p>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {busca.temMais && (
+                <p className="text-[11px] text-gray">
+                  Mostrando os primeiros 20 resultados. Refine a busca para encontrar outro atendimento.
+                </p>
+              )}
+            </div>
+          )}
+
+          <form
+            className="pt-4 border-t border-gray/10 space-y-3"
+            onSubmit={e => {
+              e.preventDefault();
+              const estadoForm = String(new FormData(e.currentTarget).get('estado') || '');
+              aplicarFiltros({ estado: estadoForm, pagina: '' });
+            }}
           >
-            Limpar atendimento #{numeroAtendimento}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => onNavegar('/agendamentos')}
-          className="rounded-xl border border-white/30 px-4 py-2.5 text-sm font-bold hover:bg-white/10 cursor-pointer"
-        >
-          Voltar à agenda
-        </button>
-      </div>
-    </header>
-    <section className="space-y-4 rounded-2xl border border-gray/10 bg-white p-5 shadow-premium sm:p-6">
-      <form onSubmit={buscar} className="grid items-end gap-3 sm:grid-cols-[1fr_auto]">
-        <label className="grid min-w-0 gap-1.5 text-sm font-semibold">Buscar agendamento
-          <input className={campo} type="search" name="termo" required maxLength={150}
-            defaultValue={numeroAtendimento} placeholder="Nome, CPF, telefone ou número do agendamento" />
-        </label>
-        <button className={botao} disabled={buscando}>{buscando ? 'Buscando…' : 'Buscar'}</button>
-      </form>
-      {erroBusca && <p role="alert" className="text-sm text-red-800">{erroBusca}</p>}
-      {busca && <div aria-live="polite">
-        <h2 className="font-bold text-primary">Agendamentos encontrados</h2>
-        {!busca.dados.length && <p className="mt-2 text-sm text-gray">Nenhum agendamento encontrado.</p>}
-        <ul className="divide-y divide-gray/10">
-          {busca.dados.map(item => <li key={item.id}>
+            <div>
+              <label className="block text-xs font-bold text-dark mb-1">
+                Estado da mensagem
+                <select key={estadoFiltro} name="estado" className={`${campo} mt-1`} defaultValue={estadoFiltro}>
+                  <option value="">Todos</option>
+                  {Object.entries(rotulos).map(([id, titulo]) => (
+                    <option key={id} value={id}>
+                      {titulo}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <button className="w-full rounded-xl border border-gray/25 bg-light-gray/60 px-3.5 py-2 text-xs font-bold text-dark hover:bg-light-gray transition-all cursor-pointer">
+              Filtrar histórico
+            </button>
+          </form>
+
+          <div className="pt-3 border-t border-gray/10 flex flex-col gap-2">
+            {numeroAtendimento && (
+              <button
+                type="button"
+                onClick={() => aplicarFiltros({ agendamento: '', pagina: '' })}
+                className="w-full rounded-xl border border-gray/25 px-3 py-2 text-xs font-bold text-gray hover:text-dark hover:bg-light-gray transition-colors cursor-pointer"
+              >
+                Limpar atendimento #{numeroAtendimento}
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => aplicarFiltros({ agendamento: String(item.id), pagina: '' })}
-              className="w-full text-left block rounded-lg py-3 px-2 hover:bg-light-gray cursor-pointer"
+              onClick={() => onNavegar('/agendamentos')}
+              className="w-full rounded-xl border border-gray/25 px-3 py-2 text-xs font-bold text-dark hover:bg-light-gray transition-colors cursor-pointer"
             >
-              <strong className="text-primary">{item.paciente} · #{item.id}</strong>
-              <p className="text-sm">{horario(item.ocorrencia)} · {item.status}</p>
-              <p className="text-sm text-gray">{item.procedimento} · {item.profissional}</p>
+              Voltar à agenda
             </button>
-          </li>)}
-        </ul>
-        {busca.temMais && <p className="text-sm text-gray">Mostrando os primeiros 20 resultados. Refine a busca para encontrar outro atendimento.</p>}
-      </div>}
-    </section>
-    <form
-      className="flex flex-wrap items-end gap-3 rounded-2xl border border-gray/10 bg-white p-5 shadow-premium sm:p-6"
-      onSubmit={e => {
-        e.preventDefault();
-        const estadoForm = String(new FormData(e.currentTarget).get('estado') || '');
-        aplicarFiltros({ estado: estadoForm, pagina: '' });
-      }}
-    >
-      <label className="grid min-w-0 gap-1.5 text-sm font-semibold">Estado da mensagem
-        <select key={estadoFiltro} name="estado" className={campo} defaultValue={estadoFiltro}>
-          <option value="">Todos</option>
-          {Object.entries(rotulos).map(([id, titulo]) => <option key={id} value={id}>{titulo}</option>)}
-        </select>
-      </label>
-      <button className={botao}>Filtrar histórico</button>
-    </form>
-    {erro && <p role="alert">{erro} <button className="underline cursor-pointer" onClick={() => setRevisao(v => v + 1)}>Tentar novamente</button></p>}
-    {numeroInvalido && <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-800">Informe um número de agendamento válido. O telefone fica no cadastro do paciente.</p>}
-    {!numeroInvalido && !erro && !consulta && <p role="status">Consultando mensagens…</p>}
-    {provedor === 'simulado' && <p className="rounded-xl border border-secondary/30 bg-secondary-light px-4 py-3 text-sm font-semibold text-primary-dark">Os envios pelo simulador são registrados apenas para teste.</p>}
-    {atendimento && <section className="space-y-3 rounded-2xl border border-gray/10 bg-white p-5 shadow-premium sm:p-6">
-      <h2 className="font-bold">{atendimento.paciente} · Atendimento #{atendimento.id}</h2>
-      <p>{horario(atendimento.ocorrencia)} · {atendimento.status}</p>
-      <p>{atendimento.contatoFinal ? 'WhatsApp cadastrado com final ' + atendimento.contatoFinal : 'Atualize o WhatsApp no cadastro do paciente.'}</p>
-      <div className="flex flex-wrap items-center gap-3">
-        {podeConfirmar && <button type="button" className={botao} disabled={abrindoWhatsApp}
-          onClick={() => void abrirWhatsApp(atendimento)}>
-          {abrindoWhatsApp ? 'Abrindo WhatsApp…' : 'Enviar confirmação pelo WhatsApp'}
-        </button>}
-        {podeConfirmar && linkWhatsApp?.buscaUrl === buscaUrl && <a className="text-sm font-semibold text-primary underline"
-          href={linkWhatsApp.href} target="_blank" rel="noopener noreferrer" onClick={() => setLinkWhatsApp(null)}>
-          Abrir conversa no WhatsApp
-        </a>}
-        {provedor && <button className="rounded-xl border border-primary px-4 py-2.5 text-sm font-bold text-primary hover:bg-light-gray disabled:opacity-50"
-          disabled={enviando || !podeConfirmar} onClick={() => void enviar(atendimento)}>
-          {provedor === 'simulado' ? 'Simular confirmação' : 'Solicitar confirmação pelo sistema'}
-        </button>}
+          </div>
+        </section>
       </div>
-      {podeConfirmar && <p className="text-sm text-gray">A conversa abre com a mensagem pronta. Revise e clique em Enviar no WhatsApp.</p>}
-      {atendimento.contatoFinal && !podeConfirmar && <p className="text-sm text-gray">O status deste atendimento não permite solicitar confirmação.</p>}
-    </section>}
-    {aviso && <p role="status">{aviso}</p>}
-    {consulta && <section className="space-y-4 rounded-2xl border border-gray/10 bg-white p-5 shadow-premium sm:p-6">
-      <div className="flex items-center justify-between"><h2 className="text-xl font-bold text-primary">Histórico de mensagens</h2>
-        <button className="text-sm underline cursor-pointer" onClick={() => setRevisao(v => v + 1)}>Atualizar</button>
+
+      {/* COLUNA DIREITA: Detalhes do Atendimento Selecionado e Histórico de Mensagens */}
+      <div className="lg:col-span-2 space-y-6">
+        {erro && (
+          <div role="alert" className="p-4 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-800 flex items-center justify-between">
+            <span>{erro}</span>
+            <button className="font-bold underline cursor-pointer" onClick={() => setRevisao(v => v + 1)}>
+              Tentar novamente
+            </button>
+          </div>
+        )}
+
+        {numeroInvalido && (
+          <p role="alert" className="rounded-2xl bg-red-50 border border-red-200 p-4 text-xs text-red-800">
+            Informe um número de agendamento válido. O telefone fica no cadastro do paciente.
+          </p>
+        )}
+
+        {provedor === 'simulado' && (
+          <div className="rounded-2xl border border-secondary/30 bg-secondary-light/60 px-4 py-3 text-xs font-semibold text-primary-dark">
+            Os envios pelo simulador são registrados apenas para teste.
+          </div>
+        )}
+
+        {aviso && (
+          <div role="status" className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-xs font-semibold text-primary-dark">
+            {aviso}
+          </div>
+        )}
+
+        {atendimento && (
+          <section className="bg-white rounded-2xl shadow-premium border border-gray/10 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray/10 bg-light-gray/30 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold text-dark">
+                  {atendimento.paciente} · Atendimento #{atendimento.id}
+                </h2>
+                <p className="text-xs text-gray mt-0.5">
+                  {horario(atendimento.ocorrencia)} · <span className="font-semibold text-dark">{atendimento.status}</span>
+                </p>
+              </div>
+              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-light-gray text-dark border border-gray/15">
+                {atendimento.contatoFinal
+                  ? 'WhatsApp cadastrado com final ' + atendimento.contatoFinal
+                  : 'Atualize o WhatsApp no cadastro do paciente.'}
+              </span>
+            </div>
+
+            <div className="p-6 space-y-3">
+              <div className="flex flex-wrap items-center gap-2.5">
+                {podeConfirmar && (
+                  <button
+                    type="button"
+                    className={botao}
+                    disabled={abrindoWhatsApp}
+                    onClick={() => void abrirWhatsApp(atendimento)}
+                  >
+                    {abrindoWhatsApp ? 'Abrindo WhatsApp…' : 'Enviar confirmação pelo WhatsApp'}
+                  </button>
+                )}
+                {podeConfirmar && linkWhatsApp?.buscaUrl === buscaUrl && (
+                  <a
+                    className="text-xs font-bold text-primary underline"
+                    href={linkWhatsApp.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setLinkWhatsApp(null)}
+                  >
+                    Abrir conversa no WhatsApp
+                  </a>
+                )}
+                {provedor && (
+                  <button
+                    className="rounded-xl border border-primary px-3.5 py-2 text-xs font-bold text-primary hover:bg-light-gray transition-all cursor-pointer disabled:opacity-50"
+                    disabled={enviando || !podeConfirmar}
+                    onClick={() => void enviar(atendimento)}
+                  >
+                    {provedor === 'simulado' ? 'Simular confirmação' : 'Solicitar confirmação pelo sistema'}
+                  </button>
+                )}
+              </div>
+              {podeConfirmar && (
+                <p className="text-xs text-gray">
+                  A conversa abre com a mensagem pronta. Revise e clique em Enviar no WhatsApp.
+                </p>
+              )}
+              {atendimento.contatoFinal && !podeConfirmar && (
+                <p className="text-xs text-gray">
+                  O status deste atendimento não permite solicitar confirmação.
+                </p>
+              )}
+            </div>
+          </section>
+        )}
+
+        <section className="bg-white rounded-2xl shadow-premium border border-gray/10 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray/10 bg-light-gray/30 flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-bold text-dark">Histórico de mensagens</h2>
+              <p className="text-xs text-gray mt-0.5">
+                Registro de confirmações e lembretes automáticos
+              </p>
+            </div>
+            <button
+              type="button"
+              className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-gray/20 bg-white text-dark hover:bg-light-gray transition-all cursor-pointer"
+              onClick={() => setRevisao(v => v + 1)}
+            >
+              Atualizar
+            </button>
+          </div>
+
+          {!numeroInvalido && !erro && !consulta ? (
+            <p role="status" className="p-8 text-center text-xs text-gray font-semibold">
+              Consultando mensagens…
+            </p>
+          ) : consulta ? (
+            <div className="p-6 space-y-4">
+              {!consulta.dados.length ? (
+                <p className="rounded-xl bg-light-gray/50 p-6 text-xs text-gray text-center">
+                  Nenhuma mensagem para os filtros selecionados.
+                </p>
+              ) : (
+                <ul className="divide-y divide-gray/10">
+                  {consulta.dados.map(m => (
+                    <li className="space-y-1.5 py-3.5 first:pt-0 last:pb-0" key={m.id}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => aplicarFiltros({ agendamento: String(m.id_agendamento), pagina: '' })}
+                          className="text-xs font-bold text-primary hover:underline cursor-pointer text-left"
+                        >
+                          {m.paciente} · Atendimento #{m.id_agendamento}
+                        </button>
+                        <span
+                          className={
+                            'inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold border ' +
+                            (m.estado === 'FALHA'
+                              ? 'bg-red-50 text-red-800 border-red-200'
+                              : m.estado === 'ENTREGUE'
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : 'bg-secondary-light/60 text-primary-dark border-secondary/30')
+                          }
+                        >
+                          {rotulos[m.estado]}
+                        </span>
+                      </div>
+                      <p className="text-xs text-dark">
+                        {horario(m.ocorrencia)} ·{' '}
+                        <span className="font-semibold">
+                          {m.tipo === 'LEMBRETE' ? 'Lembrete' : 'Confirmação'}
+                        </span>{' '}
+                        por {m.canal === 'WHATSAPP' ? 'WhatsApp' : m.canal}
+                      </p>
+                      <p className="text-[11px] text-gray">
+                        Tentativa {m.tentativa} em {new Date(m.criado_em).toLocaleString('pt-BR')}
+                        {m.provedor === 'simulado' ? ' · Simulação' : ''}
+                      </p>
+                      {m.erro && <p className="text-xs text-red-700 font-medium">{m.erro}</p>}
+                      {atendimento &&
+                        m.tipo === 'CONFIRMACAO' &&
+                        m.estado === 'FALHA' &&
+                        m.ultima_tentativa === 1 &&
+                        atendimento.ocorrencia === m.ocorrencia && (
+                          <button
+                            type="button"
+                            className="text-xs font-bold text-primary underline cursor-pointer"
+                            disabled={enviando || !provedor || !podeConfirmar}
+                            onClick={() => void enviar(atendimento, m.id)}
+                          >
+                            Tentar confirmação novamente
+                          </button>
+                        )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {(pagina > 1 || consulta.proxima) && (
+                <nav aria-label="Páginas do histórico" className="flex items-center justify-between pt-3 border-t border-gray/10">
+                  <div>
+                    {pagina > 1 && (
+                      <button
+                        type="button"
+                        className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-gray/20 hover:bg-light-gray cursor-pointer"
+                        onClick={() => aplicarFiltros({ pagina: pagina > 2 ? String(pagina - 1) : '' })}
+                      >
+                        Página anterior
+                      </button>
+                    )}
+                  </div>
+                  <div>
+                    {consulta.proxima && (
+                      <button
+                        type="button"
+                        className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-gray/20 hover:bg-light-gray cursor-pointer"
+                        onClick={() => aplicarFiltros({ pagina: String(pagina + 1) })}
+                      >
+                        Próxima página
+                      </button>
+                    )}
+                  </div>
+                </nav>
+              )}
+            </div>
+          ) : null}
+        </section>
       </div>
-      {!consulta.dados.length && <p className="rounded-xl bg-light-gray p-5 text-sm text-gray">Nenhuma mensagem para os filtros selecionados.</p>}
-      <ul className="divide-y divide-gray/10">{consulta.dados.map(m => <li className="space-y-2 py-4" key={m.id}>
-        <button
-          type="button"
-          onClick={() => aplicarFiltros({ agendamento: String(m.id_agendamento), pagina: '' })}
-          className="font-semibold text-primary hover:underline cursor-pointer text-left"
-        >
-          {m.paciente} · Atendimento #{m.id_agendamento}
-        </button>
-        <p>{horario(m.ocorrencia)} · {m.tipo === 'LEMBRETE' ? 'Lembrete' : 'Confirmação'} por {m.canal === 'WHATSAPP' ? 'WhatsApp' : m.canal}</p>
-        <span className={'inline-flex rounded-full px-3 py-1 text-xs font-semibold ' + (m.estado === 'FALHA' ? 'bg-red-50 text-red-800' : m.estado === 'ENTREGUE' ? 'bg-emerald-50 text-emerald-800' : 'bg-secondary-light text-primary-dark')}>{rotulos[m.estado]}</span>
-        <p className="text-sm">Tentativa {m.tentativa} em {new Date(m.criado_em).toLocaleString('pt-BR')}{m.provedor === 'simulado' ? ' · Simulação' : ''}</p>
-        {m.erro && <p>{m.erro}</p>}
-        {atendimento && m.tipo === 'CONFIRMACAO' && m.estado === 'FALHA' && m.ultima_tentativa === 1 && atendimento.ocorrencia === m.ocorrencia &&
-          <button type="button" className="underline cursor-pointer" disabled={enviando || !provedor || !podeConfirmar} onClick={() => void enviar(atendimento, m.id)}>Tentar confirmação novamente</button>}
-      </li>)}</ul>
-      <nav aria-label="Páginas do histórico" className="flex gap-4">
-        {pagina > 1 && <button type="button" className="underline cursor-pointer" onClick={() => aplicarFiltros({ pagina: pagina > 2 ? String(pagina - 1) : '' })}>Página anterior</button>}
-        {consulta.proxima && <button type="button" className="underline cursor-pointer" onClick={() => aplicarFiltros({ pagina: String(pagina + 1) })}>Próxima página</button>}
-      </nav>
-    </section>}
-  </div>;
+    </div>
+  );
 }
