@@ -1,3 +1,4 @@
+import { aplicarMascaraCPF, aplicarMascaraTelefone } from '../utils/formatacao';
 import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -122,22 +123,6 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
   useClinicUpdates(() => { void carregarPacientes(true); }, ['pacientes']);
 
   // Máscaras Dinâmicas
-  const aplicarMascaraCPF = (value: string) => {
-    const limpo = value.replace(/\D/g, '').slice(0, 11);
-    if (limpo.length <= 3) return limpo;
-    if (limpo.length <= 6) return `${limpo.slice(0, 3)}.${limpo.slice(3)}`;
-    if (limpo.length <= 9) return `${limpo.slice(0, 3)}.${limpo.slice(3, 6)}.${limpo.slice(6)}`;
-    return `${limpo.slice(0, 3)}.${limpo.slice(3, 6)}.${limpo.slice(6, 9)}-${limpo.slice(9)}`;
-  };
-
-  const aplicarMascaraTelefone = (value: string) => {
-    const limpo = value.replace(/\D/g, '').slice(0, 11);
-    if (limpo.length <= 2) return limpo;
-    if (limpo.length <= 6) return `(${limpo.slice(0, 2)}) ${limpo.slice(2)}`;
-    if (limpo.length <= 10) return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 6)}-${limpo.slice(6)}`;
-    return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 7)}-${limpo.slice(7)}`;
-  };
-
   // Tratar inputs
   const handleInputChange = (field: string, val: string) => {
     let formattedVal = val;
@@ -358,7 +343,13 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
       const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, versao: editingVersion })
+        body: JSON.stringify({
+          nome_completo: form.nome_completo, cpf: form.cpf, telefone: form.telefone, endereco: form.endereco,
+          ...((admin || isProfissional) && editingPacienteId ? {
+            etapa_tratamento: form.etapa_tratamento, historico_clinico: form.historico_clinico, observacoes: form.observacoes,
+          } : {}),
+          versao: editingVersion,
+        })
       });
       const data = await res.json();
 
@@ -404,6 +395,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
   // Formatar Telefone para exibição na tabela
   const formatarTelefoneExibicao = (tel: string) => {
     if (!tel) return 'Não informado';
+    if (tel.startsWith('+')) return tel;
     if (tel.length === 11) {
       return `(${tel.slice(0, 2)}) ${tel.slice(2, 7)}-${tel.slice(7)}`;
     }
@@ -593,7 +585,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                 )}
 
                 {/* Campos Clínicos (Etapa do Tratamento, Histórico Clínico e Observações) */}
-                {(isProfissional || editingPacienteId) && (
+                {(isProfissional || (admin && editingPacienteId)) && (
                   <div className="space-y-3 pt-2 border-t border-gray/10">
                     <div>
                       <label className="block text-xs font-bold text-dark mb-1">Etapa do Tratamento</label>

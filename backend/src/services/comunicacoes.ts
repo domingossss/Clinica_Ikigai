@@ -1,6 +1,8 @@
-import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
-import pool, { ErroOperacao } from '../config/database.js';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import pool, { ErroOperacao, executarTransacao } from '../config/database.js';
 import { obterProvedor, type PedidoMensagem, type ProvedorMensagens, type ResultadoEnvio } from './provedorMensagens.js';
+
+import { numeroWhatsApp } from './telefone.js';
 
 type Tipo = PedidoMensagem['tipo'];
 const statusElegiveis = ['Agendado', 'Confirmado', 'Reagendado'];
@@ -8,19 +10,6 @@ const formatoOcorrencia = "DATE_FORMAT(a.data_hora_agendamento, '%Y-%m-%d %H:%i:
 const consultaAtendimento = `SELECT a.id_agendamento AS id, p.nome AS paciente, p.whatsapp,
   a.status, ${formatoOcorrencia} AS ocorrencia FROM agendamento a
   JOIN paciente p ON p.id_paciente = a.id_paciente WHERE a.id_agendamento = ?`;
-
-async function transacao<T>(operacao: (db: PoolConnection) => Promise<T>) {
-  const db = await pool.getConnection();
-  try {
-    await db.beginTransaction();
-    const valor = await operacao(db);
-    await db.commit();
-    return valor;
-  } catch (erro) {
-    try { await db.rollback(); } catch { db.destroy(); }
-    throw erro;
-  } finally { db.release(); }
-}
 
 export function janelaLembrete(agora = new Date()) {
   const minutos = Number(process.env.LEMBRETE_ANTECEDENCIA_MINUTOS?.trim() || 1440);
@@ -33,12 +22,6 @@ export function janelaLembrete(agora = new Date()) {
   return { inicio: formato.format(agora), fim: formato.format(agora.getTime() + minutos * 60000) };
 }
 
-function numeroWhatsApp(valor: unknown) {
-  if (typeof valor !== 'string' || !/^[+\d() .-]+$/.test(valor)) return null;
-  const numero = valor.replace(/\D/g, '');
-  return /^[1-9]\d{9,14}$/.test(numero) ? numero : null;
-}
-
 function elegivel(atendimento: RowDataPacket, tipo: Tipo, agora?: Date) {
   if (!statusElegiveis.includes(atendimento.status)) return false;
   if (tipo === 'CONFIRMACAO') return true;
@@ -46,16 +29,35 @@ function elegivel(atendimento: RowDataPacket, tipo: Tipo, agora?: Date) {
   return janela && atendimento.ocorrencia > janela.inicio && atendimento.ocorrencia <= janela.fim;
 }
 
-export async function consultarAtendimento(id: number) {
+async function obterAtendimento(id: number) {
   const [rows] = await pool.query<RowDataPacket[]>(consultaAtendimento, [id]);
   if (!rows.length) throw new ErroOperacao(404, 'Atendimento não encontrado.');
-  const { paciente, ocorrencia, status, whatsapp } = rows[0];
+  return rows[0];
+}
+
+export async function consultarAtendimento(id: number) {
+  const { paciente, ocorrencia, status, whatsapp } = await obterAtendimento(id);
   const numero = numeroWhatsApp(whatsapp);
   return { id, paciente, ocorrencia, status, contatoFinal: numero?.slice(-4) ?? null };
 }
 
+export async function prepararConfirmacaoWhatsApp(id: number, ocorrencia: string) {
+  const atendimento = await obterAtendimento(id);
+  if (atendimento.ocorrencia !== ocorrencia || !elegivel(atendimento, 'CONFIRMACAO')) {
+    throw new ErroOperacao(409, 'O horário ou o status do atendimento mudou. Atualize a consulta.');
+  }
+  const numero = numeroWhatsApp(atendimento.whatsapp);
+  if (!numero) throw new ErroOperacao(422, 'Atualize o WhatsApp no cadastro do paciente.');
+
+  const [data, hora] = ocorrencia.split(' ');
+  const dia = data.split('-').reverse().join('/');
+  const mensagem = `Olá! Aqui é da Clínica Ikigai. Podemos confirmar sua presença no atendimento de ${dia} às ${hora.slice(0, 5)}? ` +
+    'Por favor, responda a esta mensagem para confirmar ou avisar se precisar reagendar.';
+  return `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`;
+}
+
 async function registrar(id: number, tipo: Tipo, ocorrencia: string, anterior: number | null, provedor: ProvedorMensagens, agora?: Date) {
-  return transacao(async db => {
+  return executarTransacao(async db => {
     const [rows] = await db.query<RowDataPacket[]>(consultaAtendimento + ' FOR UPDATE', [id]);
     if (!rows.length) throw new ErroOperacao(404, 'Atendimento não encontrado.');
     const atendimento = rows[0];
@@ -77,7 +79,7 @@ async function registrar(id: number, tipo: Tipo, ocorrencia: string, anterior: n
 
 async function processar(id: number, provedor: ProvedorMensagens, agora?: Date) {
   // O registro incerto impede um segundo envio após interrupção entre submissão e gravação do resultado.
-  const pedido = await transacao(async db => {
+  const pedido = await executarTransacao(async db => {
     const [ids] = await db.query<RowDataPacket[]>('SELECT id_agendamento FROM comunicacao_agendamento WHERE id = ?', [id]);
     if (!ids.length) return;
     const [atendimentos] = await db.query<RowDataPacket[]>(consultaAtendimento + ' FOR UPDATE', [ids[0].id_agendamento]);

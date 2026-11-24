@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS agendamento (
     tipo_atendimento ENUM('Primeira_Consulta', 'Retorno') NOT NULL DEFAULT 'Primeira_Consulta',
     modalidade_pagamento ENUM('Particular', 'Convenio') NOT NULL DEFAULT 'Particular',
     data_hora_checkin DATETIME NULL,
+    checkin_recepcao TINYINT(1) NOT NULL DEFAULT 0,
     data_hora_inicio_atendimento DATETIME NULL,
     minutos_atraso INT NOT NULL DEFAULT 0,
     valor_cobrado DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -270,6 +271,8 @@ CREATE TABLE IF NOT EXISTS historico_status_agendamento (
     alterado_por VARCHAR(150) NOT NULL DEFAULT 'Sistema',
     id_usuario INT NULL,
     tipo_evento ENUM('CRIACAO','REAGENDAMENTO','CANCELAMENTO','STATUS') NULL,
+    ocorrencia_anterior DATETIME NULL,
+    ocorrencia_nova DATETIME NULL,
     data_alteracao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_historico_agendamento
         FOREIGN KEY (id_agendamento) REFERENCES agendamento (id_agendamento)
@@ -560,3 +563,21 @@ CREATE TABLE IF NOT EXISTS expediente_clinica (
   intervalo_inicio TIME NULL,
   intervalo_fim TIME NULL
 ) ENGINE=InnoDB;
+
+-- A evolução clínica é versionada na mesma transação que atualiza o paciente.
+CREATE TABLE IF NOT EXISTS paciente_evolucao (
+    paciente_uuid VARCHAR(36) NOT NULL,
+    versao INT NOT NULL,
+    autor_id INT NOT NULL,
+    autor_nome VARCHAR(150) NOT NULL,
+    anterior JSON NOT NULL,
+    posterior JSON NOT NULL,
+    registrado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (paciente_uuid, versao),
+    CONSTRAINT fk_evolucao_paciente FOREIGN KEY (paciente_uuid) REFERENCES paciente (uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS revisao_clinica (
+    recurso VARCHAR(32) PRIMARY KEY,
+    revisao BIGINT UNSIGNED NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

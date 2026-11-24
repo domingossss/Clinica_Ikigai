@@ -1,7 +1,11 @@
 ﻿import crypto from 'node:crypto';
+import { promisify } from 'node:util';
+
 import type { Request, Response, NextFunction } from 'express';
 import type { RowDataPacket } from 'mysql2';
 import pool from '../config/database.js';
+
+const scrypt = promisify(crypto.scrypt);
 
 export type PerfilUsuario = 'ADMIN' | 'RECEPCAO' | 'PROFISSIONAL';
 export interface UsuarioAutenticado {
@@ -39,15 +43,15 @@ export function identificarSessao(token: string): Buffer {
   return crypto.createHmac('sha256', segredo).update(token).digest();
 }
 
-export function gerarHashSenha(senha: string): string {
+export async function gerarHashSenha(senha: string): Promise<string> {
   const salt = crypto.randomBytes(16).toString('hex');
-  return salt + ':' + crypto.scryptSync(senha, salt, 64).toString('hex');
+  return salt + ':' + ((await scrypt(senha, salt, 64)) as Buffer).toString('hex');
 }
 
-export function verificarSenha(senha: string, hashArmazenado: string): boolean {
+export async function verificarSenha(senha: string, hashArmazenado: string): Promise<boolean> {
   const [salt, hashHex] = hashArmazenado.split(':');
   if (!salt || !/^[a-f0-9]{128}$/i.test(hashHex || '')) return false;
-  return crypto.timingSafeEqual(Buffer.from(hashHex, 'hex'), crypto.scryptSync(senha, salt, 64));
+  return crypto.timingSafeEqual(Buffer.from(hashHex, 'hex'), (await scrypt(senha, salt, 64)) as Buffer);
 }
 
 export function extrairToken(req: Request): string | null {

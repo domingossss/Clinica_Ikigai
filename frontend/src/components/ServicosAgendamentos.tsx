@@ -1,8 +1,15 @@
+import { obterIniciais } from '../utils/formatacao';
 import GradeClinica from './GradeClinica';
+import ModalVinculosProcedimentos from './ModalVinculosProcedimentos';
+import { procedimentoAtivo } from '../utils/servicos';
+import type { DiaJornada } from './ModalMinhaJornada';
 import { apiFetch } from '../api';
+import { useDialogAcessivel } from '../hooks/useDialogAcessivel';
 import { useClinicUpdates } from '../services/clinicUpdates';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import Swal from 'sweetalert2';
+
+export type { DiaJornada } from './ModalMinhaJornada';
 
 interface Categoria {
   id: number;
@@ -32,16 +39,6 @@ interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
-export interface DiaJornada {
-  dia_semana: number;
-  dia_nome: string;
-  ativo: number | boolean;
-  horario_inicio: string;
-  horario_fim: string;
-  intervalo_inicio: string | null;
-  intervalo_fim: string | null;
-}
-
 export interface ExcecaoItem {
   id: number;
   data: string;
@@ -60,15 +57,6 @@ interface ServicosAgendamentosProps {
   isAdmin?: boolean;
 }
 
-
-function obterIniciais(nome: string): string {
-  if (!nome) return 'PR';
-  const limpo = nome.trim();
-  const partes = limpo.split(/\s+/).filter(p => !['dr.', 'dra.', 'drª', 'dr', 'dra'].includes(p.toLowerCase()));
-  if (partes.length === 0) return limpo.substring(0, 2).toUpperCase();
-  if (partes.length === 1) return partes[0].substring(0, 2).toUpperCase();
-  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
-}
 
 export default function ServicosAgendamentos({
   onProfissionaisAtualizados,
@@ -101,7 +89,7 @@ export default function ServicosAgendamentos({
   // Estados para Jornada e Intervalos (IK-14)
   const [modalJornadaProf, setModalJornadaProf] = useState<ProfissionalItem | null>(null);
   const [jornadaDias, setJornadaDias] = useState<DiaJornada[]>([]);
-  const [carregandoJornada, setCarregandoJornada] = useState(false);
+  const [estadoJornada, setEstadoJornada] = useState<'carregando' | 'erro' | 'pronto'>('carregando');
   const [salvandoJornada, setSalvandoJornada] = useState(false);
 
   // Estados para Exceções de Disponibilidade (IK-83)
@@ -130,6 +118,7 @@ export default function ServicosAgendamentos({
   const [modalVinculosProf, setModalVinculosProf] = useState<ProfissionalItem | null>(null);
   const [modalSelectedProcs, setModalSelectedProcs] = useState<number[]>([]);
   const [modalTermoBusca, setModalTermoBusca] = useState<string>('');
+  const [estadoVinculos, setEstadoVinculos] = useState<'carregando' | 'erro' | 'pronto'>('carregando');
   const [salvandoVinculos, setSalvandoVinculos] = useState<boolean>(false);
 
   // Toasts
@@ -144,6 +133,8 @@ export default function ServicosAgendamentos({
   }, []);
 
   const consultas = useRef<Record<string, AbortController>>({});
+  const removendoVinculo = useRef(false);
+  const [remocaoEmCurso, setRemocaoEmCurso] = useState(false);
   const iniciarConsulta = useCallback((chave: string) => {
     consultas.current[chave]?.abort();
     const controller = new AbortController();
@@ -171,33 +162,22 @@ export default function ServicosAgendamentos({
     }).finally(() => { if (!controller.signal.aborted) setLoadingServicos(false); });
   }, [iniciarConsulta, showToast]);
 
-  // Carregar vínculos de procedimentos para a lista de profissionais (IK-80)
-  const carregarVinculosProfissionais = useCallback(async (profs: ProfissionalItem[], signal: AbortSignal) => {
-    const mapa: Record<number, number[]> = {};
-    await Promise.all(profs.map(async prof => {
-      const res = await apiFetch('/api/profissionais/' + prof.id + '/procedimentos', { signal });
-      const data = await res.json();
-      if (!res.ok || !data.sucesso || !Array.isArray(data.procedimento_ids)) throw new Error(data.erro || 'Não foi possível consultar os vínculos.');
-      mapa[prof.id] = data.procedimento_ids;
-    }));
-    return mapa;
-  }, []);
-
   // Carregar dados de Profissionais
   const carregarProfissionais = useCallback(() => {
     const controller = iniciarConsulta('profissionais');
-    return apiFetch('/api/profissionais', { signal: controller.signal }).then(async res => {
+    return apiFetch('/api/profissionais?incluir=procedimentos', { signal: controller.signal }).then(async res => {
       const data = await res.json();
       if (!res.ok || !data.sucesso || !Array.isArray(data.dados)) throw new Error(data.erro || 'Falha ao consultar profissionais.');
-      const vinculos = await carregarVinculosProfissionais(data.dados, controller.signal);
+      const profissionais = data.dados as (ProfissionalItem & { procedimento_ids: number[] })[];
+      if (profissionais.some(prof => !Array.isArray(prof.procedimento_ids))) throw new Error('Não foi possível consultar os vínculos.');
       if (controller.signal.aborted) return;
-      setProfissionais(data.dados);
-      setVinculosPorProfissional(vinculos);
+      setProfissionais(profissionais);
+      setVinculosPorProfissional(Object.fromEntries(profissionais.map(prof => [prof.id, prof.procedimento_ids])));
     }).catch((erro: unknown) => {
       if (controller.signal.aborted) return;
       showToast(erro instanceof Error ? erro.message : 'Não foi possível atualizar os profissionais.', 'error');
     }).finally(() => { if (!controller.signal.aborted) setLoadingProfissionais(false); });
-  }, [iniciarConsulta, carregarVinculosProfissionais, showToast]);
+  }, [iniciarConsulta, showToast]);
 
   useEffect(() => {
     const pendentes = consultas.current;
@@ -611,45 +591,55 @@ export default function ServicosAgendamentos({
   // IK-80: AÇÕES DE VINCULAÇÃO DE PROCEDIMENTOS
   // ==========================================
   const abrirModalVincularProcedimentos = async (p: ProfissionalItem) => {
+    const consulta = iniciarConsulta('modal-vinculos');
     setModalVinculosProf(p);
     setModalTermoBusca('');
+    setModalSelectedProcs([]);
+    setEstadoVinculos('carregando');
     try {
-      const res = await apiFetch(`/api/profissionais/${p.id}/procedimentos`);
+      const res = await apiFetch(`/api/profissionais/${p.id}/procedimentos`, { signal: consulta.signal });
       const data = await res.json();
-      if (data.sucesso && Array.isArray(data.procedimento_ids)) {
-        setModalSelectedProcs(data.procedimento_ids);
-        setVinculosPorProfissional(prev => ({ ...prev, [p.id]: data.procedimento_ids }));
-      } else {
-        setModalSelectedProcs(vinculosPorProfissional[p.id] || []);
-      }
+      if (consulta.signal.aborted) return;
+      if (!res.ok || !data.sucesso || !Array.isArray(data.procedimento_ids)) throw new Error();
+      setModalSelectedProcs(data.procedimento_ids);
+      setVinculosPorProfissional(prev => ({ ...prev, [p.id]: data.procedimento_ids }));
+      setEstadoVinculos('pronto');
     } catch {
-      setModalSelectedProcs(vinculosPorProfissional[p.id] || []);
+      if (!consulta.signal.aborted) setEstadoVinculos('erro');
     }
   };
-
 
   // ==========================================
   // IK-14: JORNADA E INTERVALOS
   // ==========================================
   const abrirModalJornada = async (p: ProfissionalItem) => {
+    const consulta = iniciarConsulta('modal-jornada');
     setModalJornadaProf(p);
-    setCarregandoJornada(true);
+    setJornadaDias([]);
+    setEstadoJornada('carregando');
     try {
-      const res = await apiFetch(`/api/profissionais/${p.id}/jornada`);
+      const res = await apiFetch(`/api/profissionais/${p.id}/jornada`, { signal: consulta.signal });
       const data = await res.json();
-      if (data.sucesso && Array.isArray(data.dados)) {
-        setJornadaDias(data.dados);
-      }
-    } catch (err) {
-      console.error(err);
-      showToast('Erro ao carregar jornada do profissional.', 'error');
-    } finally {
-      setCarregandoJornada(false);
+      if (consulta.signal.aborted) return;
+      if (!res.ok || !data.sucesso || !Array.isArray(data.dados) || !data.dados.length) throw new Error();
+      setJornadaDias(data.dados);
+      setEstadoJornada('pronto');
+    } catch {
+      if (!consulta.signal.aborted) setEstadoJornada('erro');
     }
   };
 
+  const fecharModalJornada = () => {
+    consultas.current['modal-jornada']?.abort();
+    setModalJornadaProf(null);
+    setJornadaDias([]);
+  };
+
+  const tituloJornada = useId();
+  const dialogoJornada = useDialogAcessivel(Boolean(modalJornadaProf), fecharModalJornada, salvandoJornada);
+
   const handleSalvarJornada = async () => {
-    if (!modalJornadaProf) return;
+    if (!modalJornadaProf || estadoJornada !== 'pronto' || salvandoJornada) return;
     setSalvandoJornada(true);
     try {
       const res = await apiFetch(`/api/profissionais/${modalJornadaProf.id}/jornada`, {
@@ -761,6 +751,7 @@ export default function ServicosAgendamentos({
   };
 
   const fecharModalVinculos = () => {
+    consultas.current['modal-vinculos']?.abort();
     setModalVinculosProf(null);
     setModalSelectedProcs([]);
     setModalTermoBusca('');
@@ -773,7 +764,7 @@ export default function ServicosAgendamentos({
   };
 
   const handleSelecionarTodosProcedimentos = () => {
-    setModalSelectedProcs(servicos.map(s => s.id));
+    setModalSelectedProcs(prev => servicos.filter(servico => procedimentoAtivo(servico) || prev.includes(servico.id)).map(servico => servico.id));
   };
 
   const handleLimparTodosProcedimentos = () => {
@@ -781,7 +772,7 @@ export default function ServicosAgendamentos({
   };
 
   const handleSalvarVinculos = async () => {
-    if (!modalVinculosProf) return;
+    if (!modalVinculosProf || estadoVinculos !== 'pronto' || salvandoVinculos) return;
     setSalvandoVinculos(true);
 
     try {
@@ -812,10 +803,23 @@ export default function ServicosAgendamentos({
   };
 
   const handleDesvincularRapido = async (prof: ProfissionalItem, procId: number) => {
+    if (removendoVinculo.current) return;
+    removendoVinculo.current = true;
+    setRemocaoEmCurso(true);
     const servico = servicos.find(s => s.id === procId);
     const nomeProc = servico?.nome || `Procedimento #${procId}`;
 
     try {
+      const confirmacao = await Swal.fire({
+        title: 'Remover vínculo?',
+        text: `${prof.nome} deixará de oferecer ${nomeProc} para novos agendamentos.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Remover vínculo',
+        cancelButtonText: 'Cancelar',
+        focusCancel: true,
+      });
+      if (!confirmacao.isConfirmed) return;
       const res = await apiFetch(`/api/profissionais/${prof.id}/procedimentos/${procId}`, {
         method: 'DELETE'
       });
@@ -832,6 +836,9 @@ export default function ServicosAgendamentos({
       }
     } catch {
       showToast('Erro de conexão ao remover vínculo.', 'error');
+    } finally {
+      removendoVinculo.current = false;
+      setRemocaoEmCurso(false);
     }
   };
 
@@ -1462,7 +1469,9 @@ export default function ServicosAgendamentos({
                                         handleDesvincularRapido(prof, p.id);
                                       }}
                                       className="text-gray-400 hover:text-red-500 rounded-full cursor-pointer transition-colors"
-                                      title="Remover este vínculo (CA02)"
+                                      disabled={remocaoEmCurso}
+                                      aria-label={`Remover vínculo com ${p.nome}`}
+                                      title="Remover vínculo"
                                     >
                                       ×
                                     </button>
@@ -1673,156 +1682,22 @@ export default function ServicosAgendamentos({
         </div>
       )}
 
-      {/* IK-80: Modal de Vinculação de Procedimentos ao Profissional (CA01 & CA02) */}
       {modalVinculosProf && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-premium max-w-xl w-full p-6 border border-gray/10 flex flex-col max-h-[85vh]">
-            {/* Cabeçalho */}
-            <div className="flex items-start justify-between pb-4 border-b border-gray/10">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary-dark text-secondary flex items-center justify-center font-extrabold text-sm shadow-sm flex-shrink-0">
-                  {obterIniciais(modalVinculosProf.nome)}
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-dark flex items-center gap-2">
-                    Vincular Procedimentos
-                  </h3>
-                  <p className="text-xs text-gray mt-0.5">
-                    Defina quais procedimentos <strong className="text-dark">{modalVinculosProf.nome}</strong> está habilitado a realizar.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={fecharModalVinculos}
-                className="text-gray hover:text-dark p-1.5 rounded-lg hover:bg-light-gray transition-colors cursor-pointer"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Barra de Filtro e Ações Rápidas */}
-            <div className="py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-b border-gray/10">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  placeholder="Buscar procedimento..."
-                  value={modalTermoBusca}
-                  onChange={e => setModalTermoBusca(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-primary focus:outline-none"
-                />
-                <svg className="w-4 h-4 text-gray-400 absolute left-2.5 top-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-
-              <div className="flex items-center gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={handleSelecionarTodosProcedimentos}
-                  className="text-primary hover:underline font-semibold cursor-pointer"
-                >
-                  Selecionar todos
-                </button>
-                <span className="text-gray-300">|</span>
-                <button
-                  type="button"
-                  onClick={handleLimparTodosProcedimentos}
-                  className="text-gray-500 hover:text-red-500 hover:underline font-semibold cursor-pointer"
-                >
-                  Limpar todos
-                </button>
-              </div>
-            </div>
-
-            {/* Lista de Procedimentos com Checkboxes */}
-            <div className="flex-1 overflow-y-auto py-3 space-y-2 max-h-[380px] pr-1">
-              {(() => {
-                const procedimentosFiltrados = servicos.filter(s =>
-                  s.nome.toLowerCase().includes(modalTermoBusca.toLowerCase()) ||
-                  (s.categoria_nome && s.categoria_nome.toLowerCase().includes(modalTermoBusca.toLowerCase()))
-                );
-
-                if (procedimentosFiltrados.length === 0) {
-                  return (
-                    <div className="text-center py-8 text-xs text-gray-500">
-                      Nenhum procedimento encontrado com o termo informado.
-                    </div>
-                  );
-                }
-
-                return procedimentosFiltrados.map(proc => {
-                  const isChecked = modalSelectedProcs.includes(proc.id);
-
-                  return (
-                    <label
-                      key={proc.id}
-                      className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${
-                        isChecked
-                          ? 'bg-primary/5 border-primary/40 ring-1 ring-primary/20'
-                          : 'bg-white hover:bg-gray-50 border-gray-200'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleProcInModal(proc.id)}
-                          className="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary cursor-pointer"
-                        />
-                        <div>
-                          <div className="text-xs font-bold text-dark flex items-center gap-2">
-                            <span>{proc.nome}</span>
-                            <span className="text-[10px] bg-secondary/20 text-primary-dark font-semibold px-1.5 py-0.2 rounded border border-secondary/30">
-                              {proc.categoria_nome}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-gray-500 mt-0.5">
-                            Duração: {proc.duracao_minutos} min • R$ {proc.preco ? Number(proc.preco).toFixed(2) : '0.00'}
-                          </div>
-                        </div>
-                      </div>
-
-                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
-                        isChecked ? 'bg-emerald-100 text-emerald-800' : 'text-gray-400'
-                      }`}>
-                        {isChecked ? 'Vinculado' : 'Não vinculado'}
-                      </span>
-                    </label>
-                  );
-                });
-              })()}
-            </div>
-
-            {/* Rodapé do Modal com contador e botões */}
-            <div className="mt-3 pt-3 border-t border-gray/10 flex items-center justify-between gap-3">
-              <span className="text-xs text-gray-600 font-medium">
-                <strong className="text-dark">{modalSelectedProcs.length}</strong> de {servicos.length} procedimento(s) selecionado(s)
-              </span>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={fecharModalVinculos}
-                  disabled={salvandoVinculos}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-100 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSalvarVinculos}
-                  disabled={salvandoVinculos}
-                  className="px-5 py-2 bg-primary hover:bg-primary-dark text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {salvandoVinculos ? 'Salvando...' : 'Salvar Vínculos'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ModalVinculosProcedimentos
+          nomeProfissional={modalVinculosProf.nome}
+          procedimentos={servicos.filter(servico => procedimentoAtivo(servico) || (vinculosPorProfissional[modalVinculosProf.id] ?? []).includes(servico.id))}
+          busca={modalTermoBusca}
+          selecionados={modalSelectedProcs}
+          salvando={salvandoVinculos}
+          estado={estadoVinculos}
+          onRecarregar={() => abrirModalVincularProcedimentos(modalVinculosProf)}
+          onBuscar={setModalTermoBusca}
+          onSelecionarTodos={handleSelecionarTodosProcedimentos}
+          onLimpar={handleLimparTodosProcedimentos}
+          onAlternarProcedimento={handleToggleProcInModal}
+          onSalvar={handleSalvarVinculos}
+          onFechar={fecharModalVinculos}
+        />
       )}
     
       {/* ========================================================================= */}
@@ -1996,10 +1871,11 @@ export default function ServicosAgendamentos({
       {/* ========================================================================= */}
       {modalJornadaProf && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-dark/40 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl border border-gray/10 max-w-2xl w-full p-6 max-h-[90vh] flex flex-col">
+          <div ref={dialogoJornada} role="dialog" aria-modal="true" aria-labelledby={tituloJornada} tabIndex={-1}
+            className="bg-white rounded-2xl shadow-2xl border border-gray/10 max-w-2xl w-full p-6 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-gray/10 pb-4 mb-4">
               <div>
-                <h3 className="text-base font-bold text-dark flex items-center gap-2">
+                <h3 id={tituloJornada} className="text-base font-bold text-dark flex items-center gap-2">
                   <span className="p-1 bg-primary/10 rounded-lg text-primary text-xs font-bold">IK-14</span>
                   Expediente e Intervalos: {modalJornadaProf.nome}
                 </h3>
@@ -2009,16 +1885,19 @@ export default function ServicosAgendamentos({
               </div>
               <button
                 type="button"
-                onClick={() => setModalJornadaProf(null)}
+                aria-label="Fechar jornada do profissional"
+                onClick={fecharModalJornada}
+                disabled={salvandoJornada}
                 className="text-gray hover:text-dark p-1 text-lg font-bold"
               >
                 ✕
               </button>
             </div>
 
-            {carregandoJornada ? (
-              <div className="py-12 text-center text-xs text-gray">Carregando jornada do profissional...</div>
-            ) : (
+            {estadoJornada === 'carregando' && <div role="status" className="py-12 text-center text-xs text-gray">Carregando jornada do profissional...</div>}
+            {estadoJornada === 'erro' && <p role="alert" className="py-4 text-sm">Não foi possível carregar a jornada.{' '}
+              <button type="button" className="underline" onClick={() => abrirModalJornada(modalJornadaProf)}>Tentar novamente</button></p>}
+            {estadoJornada === 'pronto' && (
               <div className="flex-1 overflow-y-auto divide-y divide-gray/10 pr-1 space-y-3">
                 {jornadaDias.map((d, idx) => (
                   <div key={d.dia_semana} className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2046,6 +1925,7 @@ export default function ServicosAgendamentos({
                           <span className="text-[11px] text-gray">Jornada:</span>
                           <input
                             type="time"
+                            aria-label={`Início do expediente em ${d.dia_nome}`}
                             value={d.horario_inicio || '08:00'}
                             onChange={e => {
                               const v = e.target.value;
@@ -2056,6 +1936,7 @@ export default function ServicosAgendamentos({
                           <span className="text-gray">às</span>
                           <input
                             type="time"
+                            aria-label={`Fim do expediente em ${d.dia_nome}`}
                             value={d.horario_fim || '18:00'}
                             onChange={e => {
                               const v = e.target.value;
@@ -2069,6 +1950,7 @@ export default function ServicosAgendamentos({
                           <span className="text-[11px] text-amber-700 font-semibold">Almoço:</span>
                           <input
                             type="time"
+                            aria-label={`Início do intervalo em ${d.dia_nome}`}
                             value={d.intervalo_inicio || '12:00'}
                             onChange={e => {
                               const v = e.target.value;
@@ -2079,6 +1961,7 @@ export default function ServicosAgendamentos({
                           <span className="text-gray">às</span>
                           <input
                             type="time"
+                            aria-label={`Fim do intervalo em ${d.dia_nome}`}
                             value={d.intervalo_fim || '13:00'}
                             onChange={e => {
                               const v = e.target.value;
@@ -2099,14 +1982,15 @@ export default function ServicosAgendamentos({
             <div className="flex items-center justify-end gap-2 border-t border-gray/10 pt-4 mt-4">
               <button
                 type="button"
-                onClick={() => setModalJornadaProf(null)}
+                onClick={fecharModalJornada}
+                disabled={salvandoJornada}
                 className="px-4 py-2 text-xs font-bold text-gray-700 bg-gray/10 hover:bg-gray/20 rounded-xl"
               >
                 Cancelar
               </button>
               <button
                 type="button"
-                disabled={salvandoJornada}
+                disabled={salvandoJornada || estadoJornada !== 'pronto'}
                 onClick={handleSalvarJornada}
                 className="px-5 py-2 text-xs font-bold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/10 cursor-pointer"
               >

@@ -1,7 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import type { RowDataPacket } from 'mysql2/promise';
 import pool, { ErroOperacao } from '../config/database.js';
-import { confirmar, consultarAtendimento } from '../services/comunicacoes.js';
+import { confirmar, consultarAtendimento, prepararConfirmacaoWhatsApp } from '../services/comunicacoes.js';
 import { obterProvedor } from '../services/provedorMensagens.js';
 
 const router = Router();
@@ -79,12 +79,26 @@ function telefoneAlternativo(numero: string) {
   return numero;
 }
 
+function horarioConsultado(ocorrencia: unknown) {
+  if (typeof ocorrencia !== 'string' || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(ocorrencia)) {
+    throw new ErroOperacao(400, 'Informe o horário consultado.');
+  }
+  return ocorrencia;
+}
+
+router.get('/:agendamentoId/confirmacao/whatsapp', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const link = await prepararConfirmacaoWhatsApp(inteiro(req.params.agendamentoId), horarioConsultado(req.query.ocorrencia));
+    if (req.query.formato === 'json') { res.json({ dados: { url: link } }); return; }
+    res.redirect(link);
+  } catch (erro) { responderErro(erro, res, next); }
+});
+
 router.post('/:agendamentoId/confirmacao', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = inteiro(req.params.agendamentoId);
     const { ocorrencia, tentativaAnterior } = req.body ?? {};
-    if (typeof ocorrencia !== 'string' || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(ocorrencia)) throw new ErroOperacao(400, 'Informe o horário consultado.');
-    const dados = await confirmar(id, ocorrencia, tentativaAnterior === undefined ? null : inteiro(tentativaAnterior));
+    const dados = await confirmar(id, horarioConsultado(ocorrencia), tentativaAnterior === undefined ? null : inteiro(tentativaAnterior));
     res.json({ sucesso: true, dados });
   } catch (erro) { responderErro(erro, res, next); }
 });

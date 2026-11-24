@@ -1,3 +1,10 @@
+import {
+  apagarRespostasPesquisa, carregarRespostasPesquisa, lerRespostaPesquisa, salvarRespostasPesquisa,
+  surveyFormHtml, SURVEY_SOURCES, SURVEY_STORAGE_KEY,
+} from './pesquisa.js';
+import { escaparTextoHtml } from './renderizacao.js';
+import { atendimentosComAtrasoRegistrado, calcularOcupacao, contarDiasDeFuncionamento, indexarCapacidade, resumirConversas } from './metricas.js';
+
 /* =====================================================================
  * CLÍNICA IKIGAI - DASHBOARD DE MÉTRICAS & INDICADORES (KPIs)
  * Arquivo: frontend/src/indicadores/app.js
@@ -23,74 +30,82 @@ export function initDashboard(dashData, containerEl, Chart) {
   }
 
   if (!Array.isArray(D)) D = [];
-  if (!Array.isArray(AB) || AB.length < 730) {
-    const abArr = Array(730).fill(0);
-    if (Array.isArray(AB)) AB.forEach((v, i) => { if (i < 730) abArr[i] = v; });
-    AB = abArr;
-  }
+  if (!Array.isArray(AB)) AB = [];
+  if (!Array.isArray(CHAT)) CHAT = [];
+  const capacidadePorEspecialidade = indexarCapacidade(Array.isArray(CA) ? CA : []);
 
   const AGE = ['0–17', '18–30', '31–45', '46–60', '60+'];
   const today = referencia ? new Date(referencia + 'T12:00:00') : new Date();
 
   /* ===== Cálculo dos KPIs com Dados Reais ===== */
-  const dow = d => new Date(today.getTime() - d * 864e5).getDay();
-  const cap = (a, b) => {
-    let c = 0;
-    for (let d = a; d < b; d++) {
-      const w = dow(d);
-      c += (w === 0 ? 0 : 12);
-    }
-    return c;
-  };
+  const dow = diasAtras => new Date(today.getFullYear(), today.getMonth(), today.getDate() - diasAtras).getDay();
+  const atendimentosPorDia = new Map();
+  const datasComAgendamentos = new Set();
+  for (const atendimento of D) {
+    if (!atendimentosPorDia.has(atendimento.d)) atendimentosPorDia.set(atendimento.d, []);
+    atendimentosPorDia.get(atendimento.d).push(atendimento);
+    if (atendimento.s !== 'C') datasComAgendamentos.add(atendimento.d);
+  }
+  const foiReagendado = x => Boolean(x.reagendado) || x.s === 'M';
   const avg = (l, f) => l.length ? l.reduce((s, x) => s + f(x), 0) / l.length : 0;
 
   function M(a, b, sp) {
     const defaultShare = SP.length ? (100 / SP.length) : 100;
     const share = sp < 0 ? 1 : ((SP[sp] && SP[sp][2] > 0) ? SP[sp][2] / 100 : defaultShare / 100);
-    const dy = cap(a, b) / 12;
-    const L = D.filter(x => x.d >= a && x.d < b && (sp < 0 || x.sp === sp));
+    const dy = contarDiasDeFuncionamento(a, b, capacidadePorEspecialidade.get(-1), datasComAgendamentos, dow);
+    const L = [];
+    const porEspecialidade = SP.map(() => []);
+    const revenueByTherapy = SP.map(() => 0);
+    for (let dia = a; dia < b; dia++) {
+      for (const atendimento of atendimentosPorDia.get(dia) ?? []) {
+        if (atendimento.s === 'R' && porEspecialidade[atendimento.sp]) revenueByTherapy[atendimento.sp] += atendimento.pr;
+        if (sp >= 0 && atendimento.sp !== sp) continue;
+        L.push(atendimento);
+        porEspecialidade[atendimento.sp]?.push(atendimento);
+      }
+    }
     const surveyRows = surveyResponsesInRange(a, b);
     const hasAppointments = L.length > 0;
     const f = s => L.filter(x => x.s === s);
-    const Rl = f('R'), C = f('C').length, N = f('N').length, Mm = f('M').length;
+    const Rl = f('R'), C = f('C').length, N = f('N').length, Mm = L.filter(foiReagendado).length;
     const hasRealized = Rl.length > 0;
     const rated = Rl.filter(x => x.nt != null);
     const pro = rated.filter(x => x.nt >= 9).length;
     const det = rated.filter(x => x.nt <= 6).length;
     const bot = L.filter(x => x.bot);
-    const botOk = bot.filter(x => x.s === 'R' && !x.esc).length;
-    const cp = Math.round(cap(a, b) * share);
+    const conversas = resumirConversas(CHAT, AB, a, b);
+    const ocupacao = calcularOcupacao(L, capacidadePorEspecialidade.get(sp), a, b, dow);
+    const atrasos = atendimentosComAtrasoRegistrado(Rl);
 
-    let ab = 0;
-    for (let d = a; d < b; d++) ab += (AB[d] || 0) * share;
-
+    const atrasosPorEspecialidade = SP.map(() => []);
+    for (const atendimento of atrasos) atrasosPorEspecialidade[atendimento.sp]?.push(atendimento);
     const ss = SP.map((s, i) => {
-      const l = L.filter(x => x.sp === i), r = l.filter(x => x.s === 'R'), k = l.length;
+      const l = porEspecialidade[i], r = l.filter(x => x.s === 'R'), k = l.length;
       const ra = r.filter(x => x.nt != null), pm = ra.filter(x => x.nt >= 9).length, dt = ra.filter(x => x.nt <= 6).length;
-      const q = z => k ? l.filter(x => x.s === z).length / k * 100 : null;
+      const atrasosDaEspecialidade = atrasosPorEspecialidade[i];
+      const cancelados = l.filter(x => x.s === 'C').length;
+      const faltas = l.filter(x => x.s === 'N').length;
+      const receita = r.reduce((acc, x) => acc + x.pr, 0);
       const spShare = s[2] > 0 ? s[2] : defaultShare;
       return {
-        nm: s[0], t: l.length, r: r.length, cr: q('C'), nc: (q('C') != null && q('N') != null) ? q('C') + q('N') : null, rr: q('M'), nsr: q('N'),
-        dl: r.length ? avg(r, x => x.dl) : null, tk: r.length ? avg(r, x => x.pr) : null, rv: r.reduce((acc, x) => acc + x.pr, 0),
+        nm: s[0], t: l.length, r: r.length, cr: k ? cancelados / k * 100 : null, nc: k ? (cancelados + faltas) / k * 100 : null, rr: k ? l.filter(foiReagendado).length / k * 100 : null, nsr: k ? faltas / k * 100 : null,
+        dl: atrasosDaEspecialidade.length ? avg(atrasosDaEspecialidade, x => x.dl) : null, tk: r.length ? avg(r, x => x.pr) : null, rv: receita,
         rt: r.length ? r.filter(x => x.rt).length / r.length * 100 : null,
         nps: ra.length ? (pm - dt) / ra.length * 100 : null,
         bt: k ? l.filter(x => x.bot).length / k * 100 : null,
         resp: r.length ? ra.length / r.length * 100 : null,
         o60: r.length ? r.filter(x => x.age === 4).length / r.length * 100 : null,
-        fat: (r.length && dy) ? r.reduce((acc, x) => acc + x.pr, 0) / (META_DIA * spShare / 100 * dy) * 100 : null
+        fat: (r.length && dy) ? receita / (META_DIA * spShare / 100 * dy) * 100 : null
       };
     }).filter(s => s.t > 0);
 
     const ages = AGE.map((_, i) => Rl.filter(x => x.age === i).length);
     const am = ages.indexOf(Math.max(...ages));
     const top = [...ss].sort((p, q) => q.r - p.r)[0] || { nm: '—', r: 0 };
-    const worst = [...ss].sort((p, q) => (q.cr || 0) - (p.cr || 0))[0] || { nm: '—', cr: 0 };
-    const LA = D.filter(x => x.d >= a && x.d < b);
-    const revenueByTherapy = SP.map((_, i) => LA.filter(x => x.sp === i && x.s === 'R').reduce((acc, x) => acc + x.pr, 0));
 
     return {
       a, b, revenueByTherapy, surveyRows, surveyCount: surveyRows.length, L, Rl, ss, ages,
-      n: L.length, nR: Rl.length, C, N, Mm, cp,
+      n: L.length, nR: Rl.length, C, N, Mm, ocupacao, atrasos, conversas,
       hasAppointments, hasRealized,
       rated: rated.length,
       bsh: hasAppointments ? bot.length / L.length * 100 : null,
@@ -100,10 +115,10 @@ export function initDashboard(dashData, containerEl, Chart) {
       rr: hasAppointments ? Mm / L.length * 100 : null,
       ns: hasAppointments ? N / L.length * 100 : null,
       nc: hasAppointments ? (C + N) / L.length * 100 : null,
-      oc: (hasAppointments && cp) ? Math.min(100, (L.length - C) / cp * 100) : null,
-      dl: hasRealized ? avg(Rl, x => x.dl) : null,
+      oc: ocupacao.taxa,
+      dl: atrasos.length ? avg(atrasos, x => x.dl) : null,
       cr: hasAppointments ? C / L.length * 100 : null,
-      top, worst,
+      top,
       ageTop: hasRealized ? (AGE[am] || '—') : '—',
       ageSh: hasRealized ? ages[am] / Rl.length * 100 : null,
       cv: hasRealized ? Rl.filter(x => x.cv === 'Convênio').length / Rl.length * 100 : null,
@@ -111,9 +126,8 @@ export function initDashboard(dashData, containerEl, Chart) {
       tk: hasRealized ? avg(Rl, x => x.pr) : null,
       rt: hasRealized ? Rl.filter(x => x.rt).length / Rl.length * 100 : null,
       bn: bot.length,
-      res: bot.length ? botOk / bot.length * 100 : null,
-      conv: (bot.length + ab) ? bot.length / (bot.length + ab) * 100 : null,
-      conversas: Math.round(bot.length + ab), botOk
+      res: conversas.resolucao,
+      conv: conversas.conversao,
     };
   }
 
@@ -123,37 +137,14 @@ export function initDashboard(dashData, containerEl, Chart) {
   const nf = v => (v != null && Number.isFinite(v)) ? v.toFixed(1).replace('.', ',') : 'Sem dados';
   const f2 = v => (v != null && Number.isFinite(v)) ? v.toFixed(2).replace('.', ',') : 'Sem dados';
 
+  const horas = minutos => minutos == null ? 'Sem dados' : nf(minutos / 60) + ' h';
+
   const META_DIA = 1800;
   const DN6 = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const TER = SP.length ? SP.map(s => s[0]) : ['Geral'];
 
-  const SURVEY_STORAGE_KEY = 'ikigai.patient-survey.v1';
-  const SURVEY_SOURCES = ['Indicação', 'Instagram', 'Google', 'WhatsApp', 'Facebook', 'Profissional de saúde', 'Outro'];
-  const localTimestamp = () => { const now = new Date(); return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString(); };
-  const SURVEY_RATING_FIELDS = ['schedulingEase', 'waitAcceptability', 'receptionAttention', 'professionalClarity', 'safeComfort', 'priceFairness'];
-
-  let surveyStorageError = '', surveyNotice = '', SURVEY_RESPONSES = [];
-
-  function isSurveyResponse(value) {
-    return value !== null && typeof value === 'object' && typeof value.submittedAt === 'string' && !Number.isNaN(Date.parse(value.submittedAt)) &&
-      SURVEY_RATING_FIELDS.every(key => Number.isInteger(value[key]) && value[key] >= 1 && value[key] <= 5) &&
-      typeof value.aiResolution === 'boolean' && typeof value.wouldReturn === 'boolean' &&
-      Number.isInteger(value.recommendation) && value.recommendation >= 0 && value.recommendation <= 10 &&
-      SURVEY_SOURCES.includes(value.discovery);
-  }
-
-  function loadSurveyResponses() {
-    surveyStorageError = '';
-    let raw;
-    try { raw = localStorage.getItem(SURVEY_STORAGE_KEY); }
-    catch (error) { surveyStorageError = 'Armazenamento local indisponível.'; return []; }
-    if (raw === null) return [];
-    let rows;
-    try { rows = JSON.parse(raw); }
-    catch (error) { surveyStorageError = 'Dados de pesquisa inválidos.'; return []; }
-    if (!Array.isArray(rows) || !rows.every(isSurveyResponse)) { surveyStorageError = 'Formato inválido de pesquisa.'; return []; }
-    return rows;
-  }
+  let { respostas: SURVEY_RESPONSES, erro: surveyStorageError } = carregarRespostasPesquisa();
+  let surveyNotice = null;
 
   function surveyResponsesInRange(a, b) {
     const todayStart = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
@@ -176,11 +167,8 @@ export function initDashboard(dashData, containerEl, Chart) {
     return { source: SURVEY_SOURCES[index], count: counts[index], share: counts[index] / total * 100, counts, total };
   }
 
-  SURVEY_RESPONSES = loadSurveyResponses();
-
   const E = () => '';
   const bys = f => { const g = m => TER.map(n => { const s = m.ss.find(x => x.nm === n); return s ? (f(s) || 0) : 0; }); g.n = TER; return g; };
-  const byw = f => { const g = m => [1, 2, 3, 4, 5, 6].map(w => f(m.L.filter(x => x.w === w))); g.n = DN6; return g; };
 
   const kp = (p, id, n, num, dir, unit, fmt, ok, bad, w, sub, fx, sim, cats) => [p, n, m => fmt(num(m), m), num, dir, unit, sub, id, fmt, ok, bad, w, sim, fx, cats];
   const surveyScoreFmt = value => value == null ? 'Sem dados' : `${f2(value)} / 5`;
@@ -192,12 +180,12 @@ export function initDashboard(dashData, containerEl, Chart) {
   // - Indicadores de pesquisa usam respostas locais (localStorage). Se vazias, retornam null.
   // - Indicadores que ainda não possuem módulo no banco retornam null ("Sem dados").
   const K0 = [
-    kp(0, 'ocup', 'Ocupação da agenda', m => m.oc, 1, 'pp', pc, 85, 75, .20, m => m.oc != null ? `${m.L.length - m.C} de ${m.cp} horários` : 'Sem dados suficientes', 'Horários ocupados (não cancelados) ÷ horários disponíveis'),
+    kp(0, 'ocup', 'Ocupação da agenda', m => m.oc, 1, 'pp', pc, 85, 75, .20, m => m.oc != null ? `${horas(m.ocupacao.ocupados)} de ${horas(m.ocupacao.capacidade)}` : 'Sem dados suficientes', 'Tempo ocupado (não cancelado) ÷ capacidade registrada'),
     kp(0, 'nc', 'Não comparecimento', m => m.nc, -1, 'pp', pc, 12, 18, .20, m => m.nc != null ? `${m.C + m.N} consultas perdidas · cancel. ${pc(m.cr)} · no-show ${pc(m.ns)}` : 'Sem dados suficientes', '(Cancelamentos + no-show) ÷ agendamentos'),
     kp(0, 'reag', 'Reagendamento', m => m.rr, -1, 'pp', pc, 8, 12, .10, m => m.rr != null ? `${m.Mm} de ${m.n} agendamentos` : 'Sem dados suficientes', 'Agendamentos remarcados ÷ agendamentos'),
     kp(0, 'bot', 'Participação do chatbot', m => m.bsh, 0, 'pp', pc, null, null, 0, m => m.bsh != null ? `${m.bn} de ${m.n} agendamentos` : 'Sem dados no período', 'Agendamentos feitos pelo chatbot ÷ agendamentos', 0, bys(s => s.bt)),
-    kp(0, 'res', 'Resolução sem humano', m => m.surveyCount ? surveyYesRate(m, 'aiResolution') : (m.bn ? m.res : null), 1, 'pp', surveyPercentFmt, 85, 80, .20, m => m.surveyCount ? `${m.surveyCount} respostas de pacientes` : (m.bn ? `${m.botOk} de ${m.bn} agendamentos do bot` : 'Sem dados no período'), 'Respostas "sim" à pergunta sobre resolver sem atendente humano', 0),
-    kp(0, 'conv', 'Conversão em agendamento', m => m.conversas ? m.conv : null, 1, 'pp', pc, 75, 65, .15, m => m.conversas ? `${m.bn} de ${m.conversas} conversas` : 'Sem conversas registradas', 'Conversas que viram agendamento ÷ conversas iniciadas'),
+    kp(0, 'res', 'Resolução sem humano', m => m.surveyCount ? surveyYesRate(m, 'aiResolution') : m.res, 1, 'pp', surveyPercentFmt, 85, 80, .20, m => m.surveyCount ? `${m.surveyCount} respostas de pacientes` : (m.conversas.iniciadas ? `${m.conversas.resolvidas} de ${m.conversas.iniciadas} conversas` : 'Sem dados no período'), 'Respostas positivas da pesquisa ou conversas resolvidas sem atendente humano', 0),
+    kp(0, 'conv', 'Conversão em agendamento', m => m.conv, 1, 'pp', pc, 75, 65, .15, m => m.conversas.iniciadas ? `${m.conversas.agendadas} de ${m.conversas.iniciadas} conversas` : 'Sem conversas registradas', 'Conversas que viram agendamento ÷ conversas iniciadas'),
     kp(0, 'tconf', 'Tempo para confirmar o agendamento', () => null, -1, 'min', v => v != null ? nf(v) + ' min' : 'Sem dados', 3, 6, .10, E, 'Tempo médio entre o primeiro contato e a confirmação', 1, DN6),
     kp(0, 'facilidade', 'Facilidade para agendar', m => surveyAverage(m, 'schedulingEase'), 1, 'pts', surveyScoreFmt, 4.5, 4.0, 0, m => `${m.surveyCount} respostas de pacientes`, 'Média das respostas sobre facilidade para marcar a consulta', 2),
     kp(0, 'satbot', 'Satisfação com o bot', () => null, 1, 'pts', v => v != null ? f2(v) + ' / 5' : 'Sem dados', 4.5, 4.0, .05, E, 'Nota média (0 a 5) dada ao bot no fim da conversa', 1, DN6),
@@ -265,9 +253,10 @@ export function initDashboard(dashData, containerEl, Chart) {
 
   /* ===== Gráficos e páginas de detalhe ===== */
   const $ = s => containerEl.querySelector(s);
-  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const css = v => getComputedStyle(containerEl).getPropertyValue(v).trim();
   let CH = [], c, p, A, AP, N, sp, cur = null, pan = null, PV = 'age', TR_TYPE = 'doughnut', TR_SELECTED = new Set(SP.map((_, i) => i));
-  const dn = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'], HR = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+  const diasDaSemana = [1, 2, 3, 4, 5, 6, 0];
+  const dn = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'], HR = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
   const mk = (id, cfg) => {
     const el = containerEl.querySelector('#' + id);
     if (el) CH.push(new Chart(el, cfg));
@@ -283,11 +272,10 @@ export function initDashboard(dashData, containerEl, Chart) {
   const sh = n => n.split(' ');
   const rate = (l, s) => l.length ? l.filter(x => x.s === s).length / l.length * 100 : 0;
   const pct = (l, fn) => l.length ? l.filter(fn).length / l.length * 100 : 0;
-  const byW = f => dn.map((_, i) => f1(f(c.L.filter(x => x.w === i + 1))));
+  const byW = f => diasDaSemana.map(dia => f1(f(c.L.filter(x => x.w === dia))));
   const byH = f => HR.map(h => f1(f(c.L.filter(x => x.h === h))));
-  const topS = (k, fm = pc) => { const s = [...c.ss].sort((x, y) => (y[k] || 0) - (x[k] || 0))[0]; return s && s[k] != null ? `${s.nm} (${fm(s[k])})` : 'Sem dados'; };
+  const topS = (k, fm = pc) => { const s = c.ss.filter(item => item[k] != null).sort((x, y) => y[k] - x[k])[0]; return s ? `${s.nm} (${fm(s[k])})` : 'Sem dados'; };
   const sg = (m, n) => m.ss.find(s => s.nm === n);
-  const dc = (a, b) => { const o = {}; for (let d = a; d < b; d++) { const w = dow(d); if (w) o[w] = (o[w] || 0) + 1; } return o; };
 
   function opt(o = {}) {
     const mu = css('--mute') || '#6B7280', ln = css('--line') || '#EFE6D2';
@@ -312,22 +300,22 @@ export function initDashboard(dashData, containerEl, Chart) {
     options: { maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: css('--mute') || '#6B7280', boxWidth: 12 } } }, ...(type === 'polarArea' ? { scales: { r: { grid: { color: css('--line') }, ticks: { display: false } } } } : {}) }
   });
 
-  function tr(fn, t, mi, requireSurvey = false) {
+  function tr(fn, t, mi) {
     const B = N <= 7 ? 7 : N <= 30 ? 10 : 12, z = Math.ceil(N / B), lb = [], a = [], b = [];
     for (let i = 0; i < B; i++) {
       const hi = N - i * z, lo = Math.max(0, hi - z); if (hi <= 0) break;
       const m = M(lo, hi, sp), q = M(lo + N, hi + N, sp), d = new Date(today.getTime() - (hi - 1) * 864e5);
       lb.push(String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0'));
-      a.push(m.L.length && (!requireSurvey || m.surveyCount) ? r2(fn(m)) : null);
-      b.push(q.L.length && (!requireSurvey || q.surveyCount) ? r2(fn(q)) : null);
+      a.push(r2(fn(m)));
+      b.push(r2(fn(q)));
     }
     const cfg = lc(lb, [['Atual', a, safeP(0)], ['Anterior', b, safeP(3), 1]]), mt_ = mi != null && hasF(mi);
     if (mt_) cfg.data.datasets.push({ label: 'Meta (verde)', data: lb.map(() => K[mi][9]), borderColor: css('--sg') || '#2a7f50', backgroundColor: css('--sg') || '#2a7f50', borderDash: [2, 3], pointRadius: 0, fill: false });
     return { t, h: 'Linha cheia: período atual · tracejada: período anterior' + (mt_ ? ' · pontilhada verde: meta' : ''), cfg };
   }
 
-  function rad(f, t, h) {
-    const nm = SP.map(s => s[0]), g = m => nm.map(n => { const s = sg(m, n); return s && s.t ? f1(f(s)) : 0; });
+  function rad(f, t, h, arredondar = f1) {
+    const nm = SP.map(s => s[0]), g = m => nm.map(n => { const s = sg(m, n); return arredondar(s && s.t ? f(s) : null); });
     return { t, h: h || 'Compara as terapias com atendimentos no banco', cfg: { type: 'radar', data: { labels: nm.map(sh), datasets: [rds('Atual', g(A), safeP(0)), rds('Anterior', g(AP), safeP(3))] }, options: ro() } };
   }
 
@@ -341,13 +329,15 @@ export function initDashboard(dashData, containerEl, Chart) {
   }
 
   function heat() {
-    const g = {}, dy = dc(0, N);
+    const g = {};
+    const diasPorDiaDaSemana = Array(7).fill(0);
+    for (let dia = 0; dia < N; dia++) diasPorDiaDaSemana[dow(dia)]++;
     c.L.filter(x => x.s !== 'C').forEach(x => { const k = x.w + '-' + x.h; g[k] = (g[k] || 0) + 1; });
     let h = '<div class="l"></div>' + dn.map(d => `<div class="l">${d}</div>`).join('');
     for (const hr of HR) {
       h += `<div class="l">${hr}h</div>`;
-      for (let w = 1; w <= 6; w++) {
-        const v = Math.min(2, Math.round((g[w + '-' + hr] || 0) / Math.max(1, dy[w] || 0))), r = v / 2;
+      for (const w of diasDaSemana) {
+        const v = Math.min(2, Math.round((g[w + '-' + hr] || 0) / Math.max(1, diasPorDiaDaSemana[w]))), r = v / 2;
         h += `<div style="background:rgba(${css('--rgb') || '38,43,107'},${(.06 + .9 * r).toFixed(2)});color:${r > .55 ? css('--onacc') || '#fff' : css('--ink') || '#181924'}">${v}</div>`;
       }
     }
@@ -355,8 +345,8 @@ export function initDashboard(dashData, containerEl, Chart) {
   }
 
   function fun() {
-    const f = [['Conversas iniciadas', c.conversas], ['Agendamentos feitos pelo bot', c.bn], ['Concluídos sem humano', c.botOk]];
-    return { t: 'Funil do chatbot', h: 'Da conversa iniciada até o atendimento realizado sem humano', w: 1, html: `<div class="fun">${f.map(([n, v]) => `<div><b>${n}</b> · ${v}<div class="bar"><i style="width:${(v / Math.max(1, f[0][1]) * 100).toFixed(0)}%"></i></div></div>`).join('')}</div>` };
+    const f = [['Conversas iniciadas', c.conversas.iniciadas], ['Agendamentos feitos pelo bot', c.conversas.agendadas], ['Resolvidas sem humano', c.conversas.resolvidas]];
+    return { t: 'Funil do chatbot', h: 'Resultados das conversas iniciadas no período', w: 1, html: `<div class="fun">${f.map(([n, v]) => `<div><b>${n}</b> · ${v}<div class="bar"><i style="width:${(v / Math.max(1, f[0][1]) * 100).toFixed(0)}%"></i></div></div>`).join('')}</div>` };
   }
 
   function prof() {
@@ -373,8 +363,8 @@ export function initDashboard(dashData, containerEl, Chart) {
   const DT0 = [
     () => ({
       d: 'Agendamentos remarcados para outra data, entre todos os agendamentos do período.',
-      st: [['Reagendamentos', c.hasAppointments ? `${c.Mm} (${pc(c.rr)})` : 'Sem dados'], ['Dia com mais remarcações', c.hasAppointments ? dn[maxI(byW(l => l.filter(x => x.s === 'M').length))] : 'Sem dados'], ['Terapia com maior taxa', topS('rr')]],
-      pn: [tr(m => m.rr, 'Evolução da taxa de reagendamento', KI.reag), rad(s => s.rr, 'Reagendamento por terapia'), { t: 'Reagendamento por dia da semana', h: '% dos agendamentos de cada dia', cfg: br(dn, byW(l => rate(l, 'M')), safeP(1)) }]
+      st: [['Reagendamentos', c.hasAppointments ? `${c.Mm} (${pc(c.rr)})` : 'Sem dados'], ['Dia com mais remarcações', c.hasAppointments ? dn[maxI(byW(l => l.filter(foiReagendado).length))] : 'Sem dados'], ['Terapia com maior taxa', topS('rr')]],
+      pn: [tr(m => m.rr, 'Evolução da taxa de reagendamento', KI.reag), rad(s => s.rr, 'Reagendamento por terapia'), { t: 'Reagendamento por dia da semana', h: '% dos agendamentos de cada dia', cfg: br(dn, byW(l => pct(l, foiReagendado)), safeP(1)) }]
     }),
     () => ({
       d: 'Consultas perdidas: cancelamentos somados às faltas sem aviso (no-show), sobre todos os agendamentos do período.',
@@ -387,21 +377,16 @@ export function initDashboard(dashData, containerEl, Chart) {
         { t: 'Situação final dos agendamentos', h: 'Para onde vão os agendamentos', cfg: pie(['Realizadas', 'Reagendadas', 'Canceladas', 'No-show'], [c.nR, c.Mm, c.C, c.N]) }
       ]
     }),
-    () => {
-      const defaultShare = SP.length ? (100 / SP.length) : 100;
-      const sh_ = sp < 0 ? 1 : ((SP[sp] && SP[sp][2] > 0) ? SP[sp][2] / 100 : defaultShare / 100);
-      const oc = (m, a, b) => { const o = dc(a, b); return dn.map((_, i) => f1(m.L.filter(x => x.w === i + 1 && x.s !== 'C').length / Math.max(1, 12 * sh_ * (o[i + 1] || 0)) * 100)); };
-      return {
-        d: 'Horários ocupados (não cancelados) em relação à capacidade da agenda.',
-        st: [['Horários ocupados', c.hasAppointments ? c.L.length - c.C : 'Sem dados'], ['Capacidade da agenda', c.cp], ['Horários ociosos', c.hasAppointments ? Math.max(0, c.cp - (c.L.length - c.C)) : 'Sem dados']],
-        pn: [tr(m => m.oc, 'Evolução da ocupação', KI.ocup), { t: 'Ocupação por dia da semana', h: '% da capacidade preenchida em cada dia', cfg: { type: 'radar', data: { labels: dn, datasets: [rds('Atual', oc(c, 0, N), safeP(0)), rds('Anterior', oc(p, N, 2 * N), safeP(3))] }, options: ro() } }, heat(), wk()]
-      };
-    },
+    () => ({
+      d: 'Tempo ocupado por agendamentos não cancelados em relação à capacidade registrada.',
+      st: [['Horas ocupadas', c.hasAppointments || c.ocupacao.capacidade != null ? horas(c.ocupacao.ocupados) : 'Sem dados'], ['Capacidade da agenda', horas(c.ocupacao.capacidade)], ['Horas ociosas', horas(c.ocupacao.ociosos)]],
+      pn: [tr(m => m.oc, 'Evolução da ocupação', KI.ocup), { t: 'Ocupação por dia da semana', h: '% da capacidade preenchida em cada dia', cfg: { type: 'radar', data: { labels: dn, datasets: [rds('Atual', diasDaSemana.map(dia => r2(c.ocupacao.porDiaDaSemana[dia])), safeP(0)), rds('Anterior', diasDaSemana.map(dia => r2(p.ocupacao.porDiaDaSemana[dia])), safeP(3))] }, options: ro() } }, heat(), wk()]
+    }),
     () => ({
       d: 'Minutos médios entre o horário marcado e o início real da consulta.',
-      st: [['Pontuais (até 5 min)', c.hasRealized ? pc(pct(c.Rl, x => x.dl <= 5)) : 'Sem dados'], ['Atrasos acima de 30 min', c.hasRealized ? c.Rl.filter(x => x.dl > 30).length : 'Sem dados'], ['Maior atraso médio', topS('dl', v => Math.round(v) + ' min')]],
-      pn: [tr(m => m.dl, 'Evolução do atraso médio (min)', KI.atraso), { t: 'Distribuição dos atrasos', h: 'Consultas por faixa de atraso', cfg: br(['0–5', '6–10', '11–20', '21–30', '30+ min'], [[0, 5], [6, 10], [11, 20], [21, 30], [31, 999]].map(([a, b]) => c.Rl.filter(x => x.dl >= a && x.dl <= b).length), safeP(1)) },
-      { t: 'Atraso médio por horário', h: 'O atraso se acumula ao longo do dia?', cfg: lc(HR.map(h => h + 'h'), [['Minutos', byH(l => avg(l.filter(x => x.s === 'R'), x => x.dl)), safeP(1)]]) }, rad(s => s.dl, 'Atraso médio por terapia (min)')]
+      st: [['Pontuais (até 5 min)', c.atrasos.length ? pc(pct(c.atrasos, x => x.dl <= 5)) : 'Sem dados'], ['Atrasos acima de 30 min', c.atrasos.length ? c.atrasos.filter(x => x.dl > 30).length : 'Sem dados'], ['Maior atraso médio', topS('dl', v => Math.round(v) + ' min')]],
+      pn: [tr(m => m.dl, 'Evolução do atraso médio (min)', KI.atraso), { t: 'Distribuição dos atrasos', h: 'Consultas por faixa de atraso', cfg: br(['0–5', '6–10', '11–20', '21–30', '30+ min'], [[0, 5], [6, 10], [11, 20], [21, 30], [31, 999]].map(([a, b]) => c.atrasos.length ? c.atrasos.filter(x => x.dl >= a && x.dl <= b).length : null), safeP(1)) },
+      { t: 'Atraso médio por horário', h: 'O atraso se acumula ao longo do dia?', cfg: lc(HR.map(h => h + 'h'), [['Minutos', HR.map(hora => { const amostra = c.atrasos.filter(x => x.h === hora); return amostra.length ? r2(avg(amostra, x => x.dl)) : null; }), safeP(1)]]) }, rad(s => s.dl, 'Atraso médio por terapia (min)', undefined, r2)]
     }),
     () => ({
       d: 'Ranking das terapias concluídas no período.',
@@ -409,7 +394,7 @@ export function initDashboard(dashData, containerEl, Chart) {
       pn: [
         { t: 'Ranking de terapias', h: 'Atendimentos concluídos', cfg: br([...c.ss].sort((x, y) => y.r - x.r).map(s => s.nm), [...c.ss].sort((x, y) => y.r - x.r).map(s => s.r), safeP(0), { ix: 'y' }) },
         { t: 'Participação de cada terapia', h: '% dos atendimentos concluídos', cfg: pie(c.ss.map(s => s.nm), c.ss.map(s => s.r), 'polarArea') },
-        { t: 'Terapias por dia da semana', h: 'Atendimentos concluídos, empilhados por terapia', w: 1, cfg: { type: 'bar', data: { labels: dn, datasets: SP.map((s, i) => ({ label: s[0], data: dn.map((_, j) => c.Rl.filter(x => x.sp === i && x.w === j + 1).length), backgroundColor: safeP(i) })) }, options: opt({ st: 1, lg: 1 }) } }
+        { t: 'Terapias por dia da semana', h: 'Atendimentos concluídos, empilhados por terapia', w: 1, cfg: { type: 'bar', data: { labels: dn, datasets: SP.map((s, i) => ({ label: s[0], data: diasDaSemana.map(dia => c.Rl.filter(x => x.sp === i && x.w === dia).length), backgroundColor: safeP(i) })) }, options: opt({ st: 1, lg: 1 }) } }
       ]
     }),
     () => ({
@@ -424,7 +409,7 @@ export function initDashboard(dashData, containerEl, Chart) {
       return {
         d: 'NPS calculado com as respostas registradas da pesquisa.',
         st: [['Promotores', formatShare(promoter)], ['Neutros (7–8)', formatShare(neutral)], ['Detratores', formatShare(detractor)]],
-        pn: [tr(surveyNps, 'Evolução do NPS', KI.nps, true), { t: 'Notas de recomendação', h: `${total} respostas no período (0 a 10)`, cfg: br(Array.from({ length: 11 }, (_, i) => i), Array.from({ length: 11 }, (_, i) => ratings.filter(value => value === i).length), Array.from({ length: 11 }, (_, i) => i >= 9 ? safeP(0) : i >= 7 ? safeP(3) : safeP(2))) }]
+        pn: [tr(surveyNps, 'Evolução do NPS', KI.nps), { t: 'Notas de recomendação', h: `${total} respostas no período (0 a 10)`, cfg: br(Array.from({ length: 11 }, (_, i) => i), Array.from({ length: 11 }, (_, i) => ratings.filter(value => value === i).length), Array.from({ length: 11 }, (_, i) => i >= 9 ? safeP(0) : i >= 7 ? safeP(3) : safeP(2))) }]
       };
     },
     () => {
@@ -442,68 +427,19 @@ export function initDashboard(dashData, containerEl, Chart) {
       pn: [tr(m => m.rt, 'Evolução da taxa de retorno', KI.ret), rad(s => s.rt, 'Retorno por terapia'), { t: 'Retorno por faixa etária', h: '% dos atendimentos que são retorno', cfg: br(AGE, AGE.map((_, i) => tx(c.Rl.filter(x => x.age === i), x => x.rt)), safeP(4)) }]
     }),
     () => ({
-      d: 'Agendamentos feitos pelo chatbot e concluídos sem a ajuda de um atendente humano.',
-      st: [['Agendamentos do bot', c.bn], ['Escalonados para humano', c.L.filter(x => x.bot && x.esc).length], ['Concluídos sem humano', c.botOk]],
-      pn: [tr(m => m.res, 'Evolução da resolução sem humano', KI.res), fun(), { t: 'Resolução por horário', h: '% dos agendamentos do bot concluídos sem humano', w: 1, cfg: lc(HR.map(h => h + 'h'), [['Resolução (%)', byH(l => { const b = l.filter(x => x.bot); return b.length ? b.filter(x => x.s === 'R' && !x.esc).length / b.length * 100 : 0; }), safeP(0)]]) }]
+      d: 'Conversas do chatbot resolvidas sem ajuda de um atendente humano.',
+      st: [['Conversas iniciadas', c.conversas.iniciadas], ['Resolvidas sem humano', c.conversas.resolvidas]],
+      pn: [tr(m => m.res, 'Evolução da resolução sem humano', KI.res)]
     }),
     () => ({
       d: 'Conversas iniciadas no chatbot que terminaram em um agendamento.',
-      st: [['Conversas iniciadas', c.conversas], ['Agendamentos gerados', c.bn], ['Conversas abandonadas', Math.max(0, c.conversas - c.bn)]],
+      st: [['Conversas iniciadas', c.conversas.iniciadas], ['Agendamentos gerados', c.conversas.agendadas], ['Conversas abandonadas', c.conversas.abandonadas]],
       pn: [tr(m => m.conv, 'Evolução da conversão', KI.conv), fun(), { t: 'Origem dos agendamentos', h: 'Chatbot x atendimento humano', cfg: pie(['Chatbot', 'Atendimento humano'], [c.bn, Math.max(0, c.L.length - c.bn)]) }, rad(s => s.bt, 'Uso do chatbot por terapia', '% dos agendamentos de cada terapia feitos pelo bot')]
     })
   ];
 
   const DT = {};
   ['reag', 'nc', 'ocup', 'atraso', 'top', 'perfil', 'nps', 'ticket', 'ret', 'res', 'conv'].forEach((id, i) => DT[id] = DT0[i]);
-
-  const surveyRatingOptions = '<option value="">Selecione</option>' + [1, 2, 3, 4, 5].map(value => `<option value="${value}">${value}</option>`).join('');
-  function surveyQuestionField(key, label) {
-    return `<label class="survey-field" for="survey-${key}">${label}<select id="survey-${key}" name="${key}" required aria-label="${label}">${surveyRatingOptions}</select></label>`;
-  }
-  function surveyChoiceField(key, label, options) {
-    return `<label class="survey-field" for="survey-${key}">${label}<select id="survey-${key}" name="${key}" required aria-label="${label}"><option value="">Selecione</option>${options.map(([value, text]) => `<option value="${value}">${text}</option>`).join('')}</select></label>`;
-  }
-  function surveyGroup(title, destination, fields) {
-    return `<section class="survey-group"><h4>${title}</h4><p>${destination}</p><div class="survey-fields">${fields.join('')}</div></section>`;
-  }
-  function surveyFormHtml() {
-    const status = surveyStorageError || surveyNotice;
-    return `<div class="survey-box">
-      <h3>Pesquisa anônima de experiência</h3>
-      <p class="survey-help" id="survey-help">Leva cerca de 1 minuto. Não informe dados pessoais. As respostas ficam salvas somente neste navegador e alimentam os indicadores após o envio.</p>
-      ${status ? `<p class="survey-notice${surveyStorageError ? ' error' : ''}" id="survey-notice" role="${surveyStorageError ? 'alert' : 'status'}" tabindex="-1">${status}</p>` : ''}
-      <form id="patient-survey" aria-describedby="survey-help">
-        ${surveyGroup('1. Agendamento e chatbot', 'Alimenta o dashboard de Agenda.', [
-          surveyQuestionField('schedulingEase', 'Foi fácil marcar sua consulta?'),
-          surveyChoiceField('aiResolution', 'Você conseguiu resolver tudo sem precisar de ajuda de uma pessoa?', [['true', 'Sim'], ['false', 'Não']])
-        ])}
-        ${surveyGroup('2. Tempo de espera', 'Alimenta o painel Produção/Operacional.', [
-          surveyQuestionField('waitAcceptability', 'O tempo de espera foi aceitável?')
-        ])}
-        ${surveyGroup('3. Recepção e equipe', 'Alimenta o núcleo de Pesquisa de Satisfação.', [
-          surveyQuestionField('receptionAttention', 'Como você avalia a educação e a atenção da recepção?'),
-          surveyQuestionField('professionalClarity', 'O profissional explicou tudo de forma que você entendeu?')
-        ])}
-        ${surveyGroup('4. Ambiente e acessibilidade', 'Alimenta Pesquisa de Satisfação.', [
-          surveyQuestionField('safeComfort', 'Você se sentiu seguro e confortável na clínica (acesso, rampas, piso, banheiros e sinalização)?')
-        ])}
-        ${surveyGroup('5. Preço e pagamento', 'Alimenta o painel Financeiro.', [
-          surveyQuestionField('priceFairness', 'O valor e as formas de pagamento foram claros e justos?')
-        ])}
-        ${surveyGroup('6. Fidelidade e recomendação', 'Alimenta Perfil de Clientes/Evasão.', [
-          surveyChoiceField('wouldReturn', 'Você voltaria à clínica?', [['true', 'Sim'], ['false', 'Não']]),
-          surveyChoiceField('recommendation', 'Você indicaria a clínica a um amigo ou familiar? (0 = não indicaria; 10 = indicaria com certeza)', Array.from({ length: 11 }, (_, value) => [String(value), String(value)]))
-        ])}
-        ${surveyGroup('7. Origem do paciente', 'Alimenta Redes Sociais.', [
-          surveyChoiceField('discovery', 'Como você ficou sabendo da clínica?', SURVEY_SOURCES.map(source => [source, source]))
-        ])}
-        <div class="survey-actions">
-          <button class="bk" type="submit"${surveyStorageError ? ' disabled' : ''}>Enviar respostas</button>
-          <button class="survey-clear" type="button" id="clear-survey"${SURVEY_RESPONSES.length || surveyStorageError ? '' : ' disabled'}>Apagar respostas deste navegador</button>
-        </div>
-      </form>
-    </div>`;
-  }
 
   function surveyMetricDetail(key, label, question, type) {
     return () => {
@@ -518,9 +454,11 @@ export function initDashboard(dashData, containerEl, Chart) {
     };
   }
 
-  DT.questionario = () => ({ d: 'Pesquisa para acompanhar a experiência dos pacientes.', st: [['Respostas no período', c.surveyCount], ['Armazenadas no navegador', SURVEY_RESPONSES.length]], pn: [{ t: 'Responder à pesquisa', w: 1, html: surveyFormHtml() }] });
+  DT.questionario = () => ({ d: 'Pesquisa para acompanhar a experiência dos pacientes.', st: [['Respostas no período', c.surveyCount], ['Armazenadas no navegador', SURVEY_RESPONSES.length]], pn: [{ t: 'Responder à pesquisa', w: 1, html: surveyFormHtml({ erro: surveyStorageError, aviso: surveyNotice, total: SURVEY_RESPONSES.length }) }] });
   DT.facilidade = surveyMetricDetail('schedulingEase', 'facilidade para agendar', 'Avaliação de 1 a 5 sobre a facilidade de marcar a consulta.', 'rating');
-  DT.res = surveyMetricDetail('aiResolution', 'resolução sem ajuda humana', 'Percentual de respostas "sim" sobre resolver tudo sem ajuda de atendente.', 'boolean');
+  const detalheResolucaoConversas = DT.res;
+  const detalheResolucaoPesquisa = surveyMetricDetail('aiResolution', 'resolução sem ajuda humana', 'Percentual de respostas "sim" sobre resolver tudo sem ajuda de atendente.', 'boolean');
+  DT.res = () => c.surveyCount ? detalheResolucaoPesquisa() : detalheResolucaoConversas();
   DT.resp = () => ({ d: 'Percentual de respostas da pesquisa em relação aos atendimentos do período.', st: [['Respostas', c.surveyCount], ['Atendimentos', c.nR], ['Taxa calculada', c.surveyCount ? surveyPercentFmt(K[KI.resp][3](c)) : 'Sem dados']], pn: [{ t: 'Origem das respostas', h: 'Distribuição das respostas conforme o canal de descoberta da clínica.', cfg: pie(SURVEY_SOURCES, surveySourceCounts(c)) }] });
   DT.espera = surveyMetricDetail('waitAcceptability', 'aceitação do tempo de espera', 'Avaliação de 1 a 5 sobre o tempo de espera.', 'rating');
   DT.recepcao = surveyMetricDetail('receptionAttention', 'atenção da recepção', 'Avaliação de 1 a 5 da educação e atenção da recepção.', 'rating');
@@ -545,7 +483,7 @@ export function initDashboard(dashData, containerEl, Chart) {
       pn: [{
         t: 'Distribuição da receita por terapia', h: 'A participação percentual considera apenas as terapias selecionadas.', w: 1, cfg: therapyRevenueChart(), html: `<div class="therapy-revenue">
         <div class="cv therapy-revenue-chart"><canvas id="d0"></canvas></div>
-        <div class="therapy-filter-list" aria-label="Selecionar terapias no gráfico">${TER.map((name, i) => `<label class="therapy-filter" style="--therapy-color:${safeP(i)}"><input type="checkbox" data-revenue-therapy="${i}"${TR_SELECTED.has(i) ? ' checked' : ''}><span>${name}<small data-revenue-share="${i}">${TR_SELECTED.has(i) ? ` · ${pc(selectedTotal ? (c.revenueByTherapy[i] || 0) / selectedTotal * 100 : 0)}` : ''}</small></span></label>`).join('')}</div>
+        <div class="therapy-filter-list" aria-label="Selecionar terapias no gráfico">${TER.map((name, i) => `<label class="therapy-filter" style="--therapy-color:${safeP(i)}"><input type="checkbox" data-revenue-therapy="${i}"${TR_SELECTED.has(i) ? ' checked' : ''}><span>${escaparTextoHtml(name)}<small data-revenue-share="${i}">${TR_SELECTED.has(i) ? ` · ${pc(selectedTotal ? (c.revenueByTherapy[i] || 0) / selectedTotal * 100 : 0)}` : ''}</small></span></label>`).join('')}</div>
         <p class="therapy-chart-summary" id="therapy-chart-summary" role="status" aria-live="polite">${included} de ${TER.length} terapias selecionadas · receita analisada: ${rs(selectedTotal)}.</p>
         <div class="therapy-chart-controls">
           <label for="therapy-chart-type">Tipo de gráfico<select id="therapy-chart-type"><option value="pie"${TR_TYPE === 'pie' ? ' selected' : ''}>Pizza</option><option value="doughnut"${TR_TYPE === 'doughnut' ? ' selected' : ''}>Rosca</option><option value="bar"${TR_TYPE === 'bar' ? ' selected' : ''}>Barras</option></select></label>
@@ -601,11 +539,9 @@ export function initDashboard(dashData, containerEl, Chart) {
 
   function detail() {
     const k = K[cur], d = (DT[k[7]] || GEN(cur))(), bg = hasF(cur) && k[3](c) != null ? `<span class="badge s${stat(cur, c)}"><i>${SI[stat(cur, c)]}</i>${SN[stat(cur, c)]}</span> <span class="s">${metaTxt(cur)}</span>` : '<span class="badge s3"><i>—</i>Sem dados</span>';
-    const dh = $('#dh'); if (dh) dh.innerHTML = `<div class="dh"><div><div class="t">${k[1]}</div><div class="big">${k[2](c)}</div></div><div>${bg}${dlt(k)}<div class="s">${k[6](c)}</div></div></div><p class="dd">${d.d}</p>`;
-    const ch = $('#ch'); if (ch) ch.innerHTML = d.st.map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
-    const dg = $('#dg'); if (dg) dg.innerHTML = d.pn.map((x, i) => `<div class="p${x.w ? ' w' : ''}"><h3>${x.t}</h3><div class="h">${x.h || ''}</div>${x.html || `<div class="cv${/radar|polar|bubble/.test(x.cfg.type) ? ' tall' : ''}"><canvas id="d${i}"></canvas></div>`}</div>`).join('');
-    d.pn.forEach((x, i) => x.cfg && mk('d' + i, x.cfg));
-    const s = $('#pv'); if (s) s.addEventListener('change', e => { PV = e.target.value; render(); });
+    const dh = $('#dh'); if (dh) dh.innerHTML = `<div class="dh"><div><div class="t">${k[1]}</div><div class="big">${escaparTextoHtml(k[2](c))}</div></div><div>${bg}${dlt(k)}<div class="s">${escaparTextoHtml(k[6](c))}</div></div></div><p class="dd">${escaparTextoHtml(d.d)}</p>`;
+    const ch = $('#ch'); if (ch) ch.innerHTML = d.st.map(([rotulo, valor]) => `<div><b>${escaparTextoHtml(valor)}</b><span>${escaparTextoHtml(rotulo)}</span></div>`).join('');
+    put(d.pn, '#dg', 'd');
   }
 
   const SN = ['Vermelho', 'Amarelo', 'Verde'], SI = ['✕', '!', '✓'];
@@ -613,7 +549,7 @@ export function initDashboard(dashData, containerEl, Chart) {
   const kSourceText = (k, m) => {
     const val = k[3](m);
     if (val == null) return 'Aguardando dados no banco de dados';
-    if (k[12] === 2) return m.surveyCount ? 'Pesquisa local' : 'Aguardando respostas da pesquisa';
+    if (k[12] === 2 || (k[7] === 'res' && m.surveyCount)) return 'Pesquisa local';
     return 'Calculado do banco de dados (MySQL)';
   };
   const metaTxt = i => { const k = K[i]; return `Meta ${k[4] < 0 ? '≤' : '≥'} ${fv(i, k[9])} · crítico ${k[4] < 0 ? '>' : '<'} ${fv(i, k[10])}`; };
@@ -650,12 +586,10 @@ export function initDashboard(dashData, containerEl, Chart) {
     if (withData === 0) return 'sem dados no banco';
     return `${withData} indicador${withData > 1 ? 'es' : ''} ativo${withData > 1 ? 's' : ''}`;
   };
-  const colS = s => css(['--sr', '--sy', '--sg'][s]) || '#2a7f50';
-
   function put(list, elSelector, pre) {
     const target = $(elSelector);
     if (!target) return;
-    target.innerHTML = list.map((x, i) => `<div class="p${x.w ? ' w' : ''}"><h3>${x.t}</h3><div class="h">${x.h || ''}</div>${x.html || `<div class="cv${/radar|polar|bubble/.test(x.cfg.type) ? ' tall' : ''}"><canvas id="${pre}${i}"></canvas></div>`}</div>`).join('');
+    target.innerHTML = list.map((x, i) => `<div class="p${x.w ? ' w' : ''}"><h3>${escaparTextoHtml(x.t)}</h3><div class="h">${escaparTextoHtml(x.h || '')}</div>${x.html || `<div class="cv${/radar|polar|bubble/.test(x.cfg.type) ? ' tall' : ''}"><canvas id="${pre}${i}"></canvas></div>`}</div>`).join('');
     list.forEach((x, i) => x.cfg && mk(pre + i, x.cfg));
     const s = $('#pv'); if (s) s.addEventListener('change', e => { PV = e.target.value; render(); });
   }
@@ -663,7 +597,7 @@ export function initDashboard(dashData, containerEl, Chart) {
   const GEN = i => () => {
     const k = K[i], by = typeof k[14] === 'function', nm = by ? k[14].n : (k[14] || TER), f = hasF(i), val = k[3](c);
     const hasData = val != null;
-    const vc = by ? k[14](A) : nm.map(() => 0), vp = by ? k[14](AP) : vc.map(() => 0);
+    const vc = by ? k[14](A) : nm.map(() => 0);
     const gr = nm === TER ? 'terapia' : nm === AGE ? 'faixa etária' : 'grupo';
     return {
       d: k[13],
@@ -685,7 +619,7 @@ export function initDashboard(dashData, containerEl, Chart) {
     const srcDisplay = kSourceText(k, c);
     return `<button class="kc ${f ? 's' + s : 's3'}" data-i="${i}" aria-label="Abrir análise: ${k[1]}">
       <span class="kt">${f ? `<i class="dot">${SI[s]}</i>` : `<i class="dot">—</i>`}${k[1]}</span>
-      <b class="kv">${valDisplay}</b>
+      <b class="kv">${escaparTextoHtml(valDisplay)}</b>
       <span class="km">${subDisplay}</span>
       ${hasData ? dlt(k) : '<div class="d flat">Aguardando dados no banco</div>'}
       <span class="ks">${srcDisplay}</span>
@@ -697,7 +631,7 @@ export function initDashboard(dashData, containerEl, Chart) {
     const rated = R.filter(r => r.sc !== null && Number.isFinite(r.sc));
     const all = R.flatMap(r => r.ss.map(x => ({ ...x, r, pn: pen(x) }))).filter(x => Number.isFinite(x.pn)).sort((a, b) => b.pn - a.pn);
 
-    let geral = '';
+    let geral;
     if (rated.length === 0) {
       geral = `<div class="alerta s3" role="status"><span class="dot">—</span><div><small>Visão geral da clínica</small><b>Aguardando dados operacionais</b><span>Nenhum atendimento suficiente registrado no período selecionado. Os 8 painéis serão avaliados conforme houver registros no banco de dados.</span></div></div><div class="home-spacer"></div>`;
     } else {
@@ -712,8 +646,8 @@ export function initDashboard(dashData, containerEl, Chart) {
       if (all.length > 0 && all[0].st < 2 && c.hasAppointments) {
         const t = all[0];
         const rest = all.filter(x => x.st < 2).slice(1, 5);
-        alertaEl.innerHTML = geral + `<div class="alerta s${t.st}" role="alert"><span class="dot">${SI[t.st]}</span><div><small>Maior foco de atenção agora</small><b>${K[t.i][1]} <em>· ${t?.r?.pn?.n || 'Geral'}</em></b><span>${K[t.i][2](c)} · ${metaTxt(t.i)}</span></div><button class="bk" data-i="${t.i}">Abrir análise</button></div>`
-          + (rest.length ? `<div class="rk"><span>Depois dele:</span>${rest.map((x, j) => `<button class="s${x.st}" data-i="${x.i}"><i class="dot">${SI[x.st]}</i>${j + 2}º ${K[x.i][1]} · ${K[x.i][2](c)}</button>`).join('')}</div>` : '');
+        alertaEl.innerHTML = geral + `<div class="alerta s${t.st}" role="alert"><span class="dot">${SI[t.st]}</span><div><small>Maior foco de atenção agora</small><b>${K[t.i][1]} <em>· ${t?.r?.pn?.n || 'Geral'}</em></b><span>${escaparTextoHtml(K[t.i][2](c))} · ${metaTxt(t.i)}</span></div><button class="bk" data-i="${t.i}">Abrir análise</button></div>`
+          + (rest.length ? `<div class="rk"><span>Depois dele:</span>${rest.map((x, j) => `<button class="s${x.st}" data-i="${x.i}"><i class="dot">${SI[x.st]}</i>${j + 2}º ${K[x.i][1]} · ${escaparTextoHtml(K[x.i][2](c))}</button>`).join('')}</div>` : '');
       } else {
         alertaEl.innerHTML = geral;
       }
@@ -765,7 +699,7 @@ export function initDashboard(dashData, containerEl, Chart) {
   }
 
   /* ===== Calendário ===== */
-  const MN = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'], PT = ['Início (dias 1–10)', 'Meio (dias 11–20)', 'Final (dia 21 em diante)'], DNF = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const MN = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'], PT = ['Início (dias 1–10)', 'Meio (dias 11–20)', 'Final (dia 21 em diante)'], DNF = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
   const T0 = new Date(today.getFullYear(), today.getMonth(), today.getDate()), OLD = new Date(T0.getFullYear(), T0.getMonth(), T0.getDate() - 729);
   let CMo = null;
   const fdn = i => DNF[i] + (i < 5 ? '-feira' : '');
@@ -775,7 +709,7 @@ export function initDashboard(dashData, containerEl, Chart) {
   function calendar() {
     const cyEl = $('#cy'), cmEl = $('#cm');
     if (!cyEl || !cmEl) return;
-    const Y = +cyEl.value, mt = cmEl.value, Q = MT[mt] || MT.NC, k3 = {}, W6 = [1, 2, 3, 4, 5, 6];
+    const Y = +cyEl.value, mt = cmEl.value, Q = MT[mt] || MT.NC, k3 = {};
     const pr = (l, f) => { const t = l.reduce((a, x) => a + x.t, 0); return t ? l.reduce((a, x) => a + f(x), 0) / t * 100 : 0; };
     const ag = l => Q.pc ? pr(l, Q.f) : (l.length ? l.reduce((a, x) => a + Q.f(x), 0) / l.length : 0);
     const fm = v => Q.pc ? nf(v) + '%' : nf(v), dv = x => Q.pc ? (x.t ? Q.f(x) / x.t * 100 : 0) : Q.f(x), nc = x => x.c + x.n, pts = l => [l.filter(x => x.d <= 10), l.filter(x => x.d > 10 && x.d <= 20), l.filter(x => x.d > 20)];
@@ -790,14 +724,14 @@ export function initDashboard(dashData, containerEl, Chart) {
     for (let m = 0; m < 12; m++) {
       const ds = [];
       for (let d = 1, n = new Date(Y, m + 1, 0).getDate(); d <= n; d++) {
-        const dt = new Date(Y, m, d), ok = dt >= OLD && dt <= T0 && dt.getDay() !== 0, q = (ok && k3[m * 32 + d]) || { R: 0, C: 0, N: 0, M: 0, T: 0 };
+        const dt = new Date(Y, m, d), ok = dt >= OLD && dt <= T0, q = (ok && k3[m * 32 + d]) || { R: 0, C: 0, N: 0, M: 0, T: 0 };
         ds.push({ d, w: dt.getDay(), ok, r: q.R, c: q.C, n: q.N, t: q.T });
       }
       const va = ds.filter(x => x.ok), sm = k => va.reduce((a, x) => a + x[k], 0), tR = sm('r'), tC = sm('c'), tN = sm('n'), tT = sm('t');
-      MS.push({ m, ds, va, tR, tC, tN, tT, nc: tT ? (tC + tN) / tT * 100 : 0, cr: tT ? tC / tT * 100 : 0, ns: tT ? tN / tT * 100 : 0, agg: ag(va), wd: W6.map(w => ag(va.filter(x => x.w === w))), pt: pts(va).map(ag) });
+      MS.push({ m, ds, va, tR, tC, tN, tT, nc: tT ? (tC + tN) / tT * 100 : 0, cr: tT ? tC / tT * 100 : 0, ns: tT ? tN / tT * 100 : 0, agg: ag(va), wd: diasDaSemana.map(w => ag(va.filter(x => x.w === w))), pt: pts(va).map(ag) });
     }
-    const all = MS.flatMap(x => x.va), ywd = W6.map(w => ag(all.filter(x => x.w === w))), ypt = pts(all).map(ag), yag = ag(all);
-    const wdNC = W6.map(w => pr(all.filter(x => x.w === w), nc)), wdC = W6.map(w => pr(all.filter(x => x.w === w), x => x.c)), wdN = W6.map(w => pr(all.filter(x => x.w === w), x => x.n)), ncY = pr(all, nc), ptNC = pts(all).map(l => pr(l, nc));
+    const all = MS.flatMap(x => x.va), ywd = diasDaSemana.map(w => ag(all.filter(x => x.w === w))), ypt = pts(all).map(ag), yag = ag(all);
+    const wdNC = diasDaSemana.map(w => pr(all.filter(x => x.w === w), nc)), wdC = diasDaSemana.map(w => pr(all.filter(x => x.w === w), x => x.c)), wdN = diasDaSemana.map(w => pr(all.filter(x => x.w === w), x => x.n)), ncY = pr(all, nc), ptNC = pts(all).map(l => pr(l, nc));
     const w5 = MS.filter(x => x.va.length >= 5), best = [...w5].sort((a, b) => b.agg - a.agg)[0], mNC = [...w5].sort((a, b) => b.nc - a.nc)[0];
     if (CMo === null || !MS[CMo] || !MS[CMo].va.length) CMo = Y === T0.getFullYear() ? T0.getMonth() : (best ? best.m : 0);
     const dd = (m, x) => String(x.d).padStart(2, '0') + '/' + String(m + 1).padStart(2, '0'), pd = (x, k) => x.t ? Math.round(k / x.t * 100) : 0;
@@ -816,7 +750,7 @@ export function initDashboard(dashData, containerEl, Chart) {
     ].map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
 
     const mxv = Math.max(1e-9, ...MS.flatMap(x => x.wd)), cs = v => mt === 'NC' ? `class="f${stat(KI.nc, { nc: v })}"` : `style="${hcl(v, mxv)}"`;
-    const mat = `<div class="hm heatmap-year"><div class="l"></div>${dn.map(d => `<div class="l">${d}</div>`).join('')}<div class="l">Mês</div>${MS.map(ms => `<div class="l">${MN[ms.m].slice(0, 3)}</div>` + (ms.va.length ? ms.wd.map(v => `<div ${cs(v)}>${fm(v)}</div>`).join('') + `<div ${cs(ms.agg)}><b>${fm(ms.agg)}</b></div>` : '<div class="l">–</div>'.repeat(7))).join('')}<div class="l"><b>Ano</b></div>${ywd.map(v => `<div ${cs(v)}><b>${fm(v)}</b></div>`).join('')}<div ${cs(yag)}><b>${fm(yag)}</b></div></div>`;
+    const mat = `<div class="hm heatmap-year"><div class="l"></div>${dn.map(d => `<div class="l">${d}</div>`).join('')}<div class="l">Mês</div>${MS.map(ms => `<div class="l">${MN[ms.m].slice(0, 3)}</div>` + (ms.va.length ? ms.wd.map(v => `<div ${cs(v)}>${fm(v)}</div>`).join('') + `<div ${cs(ms.agg)}><b>${fm(ms.agg)}</b></div>` : '<div class="l">–</div>'.repeat(diasDaSemana.length + 1))).join('')}<div class="l"><b>Ano</b></div>${ywd.map(v => `<div ${cs(v)}><b>${fm(v)}</b></div>`).join('')}<div ${cs(yag)}><b>${fm(yag)}</b></div></div>`;
 
     const cyrEl = $('#cyr');
     if (cyrEl) {
@@ -839,7 +773,7 @@ export function initDashboard(dashData, containerEl, Chart) {
     const cdEl = $('#cd');
     if (cdEl) {
       cdEl.innerHTML = `<div class="chips">${st.map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('')}</div>
-      <div class="grid"><div class="p w"><h3>${MN[CMo]} de ${Y}</h3><div class="h">Número grande: atendimentos realizados · NC: não comparecimento (cancelamentos + no-show ÷ agendamentos do dia) · cor segue &quot;${Q.n}&quot; · passe o mouse no dia para ver os detalhes · domingo fechado</div>${big}</div>
+      <div class="grid"><div class="p w"><h3>${MN[CMo]} de ${Y}</h3><div class="h">Número grande: atendimentos realizados · NC: não comparecimento (cancelamentos + no-show ÷ agendamentos do dia) · cor segue &quot;${Q.n}&quot; · passe o mouse no dia para ver os detalhes</div>${big}</div>
       <div class="p w"><h3>Dia a dia em ${MN[CMo]} (%)</h3><div class="h">Não comparecimento, cancelamentos e no-show sobre os agendamentos de cada dia</div><div class="cv"><canvas id="cdl"></canvas></div></div>
       <div class="p"><h3>Dia da semana: mês x média do ano</h3><div class="h">${Q.n}</div><div class="cv"><canvas id="cw"></canvas></div></div>
       <div class="p"><h3>Início, meio e final do mês</h3><div class="h">${Q.n}</div><div class="cv"><canvas id="cp"></canvas></div></div>
@@ -853,7 +787,7 @@ export function initDashboard(dashData, containerEl, Chart) {
   }
 
   function render() {
-    CH.forEach(x => { try { x.destroy(); } catch (e) { } });
+    CH.forEach(x => { try { x.destroy(); } catch { /* O gráfico pode já ter sido descartado. */ } });
     CH = [];
     const perEl = $('#per'), espEl = $('#esp');
     N = perEl ? +perEl.value : 30;
@@ -868,7 +802,7 @@ export function initDashboard(dashData, containerEl, Chart) {
 
   function go(p, i, pop) {
     pan = p; cur = i;
-    if (!pop) try { history.pushState({ p, i }, ''); } catch (e) { }
+    if (!pop) try { history.pushState({ p, i }, ''); } catch { /* A navegação interna funciona mesmo sem atualizar o histórico. */ }
     render();
     containerEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
     const b = $(i !== null ? '#bk' : '#bk2'); if (p !== null && b) b.focus();
@@ -878,7 +812,7 @@ export function initDashboard(dashData, containerEl, Chart) {
   // Inicializa selects
   const espEl = $('#esp');
   if (espEl) {
-    espEl.innerHTML = '<option value="-1">Todas</option>' + SP.map((s, i) => `<option value="${i}">${s[0]}</option>`).join('');
+    espEl.replaceChildren(new Option('Todas', '-1'), ...SP.map(([nome], i) => new Option(nome, String(i))));
   }
   const cyEl = $('#cy');
   if (cyEl) {
@@ -902,9 +836,12 @@ export function initDashboard(dashData, containerEl, Chart) {
 
     if (e.target.closest('#clear-survey')) {
       if (!confirm('Apagar todas as respostas de pesquisa salvas neste navegador?')) return;
-      try { localStorage.removeItem(SURVEY_STORAGE_KEY); }
-      catch (error) { surveyStorageError = 'Não foi possível apagar as respostas salvas.'; }
-      SURVEY_RESPONSES = []; surveyStorageError = ''; surveyNotice = 'Respostas locais apagadas.';
+      const erro = apagarRespostasPesquisa();
+      if (!erro) {
+        SURVEY_RESPONSES = [];
+        surveyStorageError = '';
+      }
+      surveyNotice = { texto: erro || 'Respostas locais apagadas.', falha: Boolean(erro) };
       render();
     }
   };
@@ -912,17 +849,17 @@ export function initDashboard(dashData, containerEl, Chart) {
   const onSubmit = e => {
     if (e.target.id !== 'patient-survey') return;
     e.preventDefault();
-    if (surveyStorageError) { surveyNotice = surveyStorageError; render(); return; }
-    const data = new FormData(e.target), row = { submittedAt: localTimestamp() };
-    for (const key of SURVEY_RATING_FIELDS) row[key] = Number(data.get(key));
-    row.aiResolution = data.get('aiResolution') === 'true';
-    row.wouldReturn = data.get('wouldReturn') === 'true';
-    row.recommendation = Number(data.get('recommendation'));
-    row.discovery = String(data.get('discovery'));
-    if (!isSurveyResponse(row)) { surveyNotice = 'Confira cada pergunta e tente novamente.'; render(); return; }
-    try { localStorage.setItem(SURVEY_STORAGE_KEY, JSON.stringify([...SURVEY_RESPONSES, row])); }
-    catch (error) { surveyStorageError = 'Não foi possível salvar as respostas neste navegador.'; }
-    SURVEY_RESPONSES.push(row); surveyNotice = 'Respostas salvas. Indicadores atualizados.'; render();
+    if (surveyStorageError) { surveyNotice = { texto: surveyStorageError, falha: true }; render(); return; }
+    const resposta = lerRespostaPesquisa(new FormData(e.target));
+    if (!resposta) {
+      surveyNotice = { texto: 'Confira cada pergunta e tente novamente.', falha: true };
+    } else {
+      const novasRespostas = [...SURVEY_RESPONSES, resposta];
+      const erro = salvarRespostasPesquisa(novasRespostas);
+      if (!erro) SURVEY_RESPONSES = novasRespostas;
+      surveyNotice = { texto: erro || 'Respostas salvas. Indicadores atualizados.', falha: Boolean(erro) };
+    }
+    render();
   };
 
   const onChange = e => {
@@ -947,8 +884,10 @@ export function initDashboard(dashData, containerEl, Chart) {
   const onKeyDown = e => { if (e.key === 'Escape' && (pan !== null || cur !== null)) back(); };
   const onStorage = e => {
     if (e.key !== SURVEY_STORAGE_KEY) return;
-    SURVEY_RESPONSES = loadSurveyResponses();
-    surveyNotice = 'As respostas foram atualizadas em outra aba.';
+    const { respostas, erro } = carregarRespostasPesquisa();
+    SURVEY_RESPONSES = respostas;
+    surveyStorageError = erro;
+    surveyNotice = erro ? null : { texto: 'As respostas foram atualizadas em outra aba.', falha: false };
     render();
   };
 
@@ -964,7 +903,7 @@ export function initDashboard(dashData, containerEl, Chart) {
 
   // Função de desmontagem (cleanup)
   return () => {
-    CH.forEach(x => { try { x.destroy(); } catch (e) { } });
+    CH.forEach(x => { try { x.destroy(); } catch { /* O gráfico pode já ter sido descartado. */ } });
     CH = [];
     containerEl.removeEventListener('click', onClick);
     containerEl.removeEventListener('submit', onSubmit);

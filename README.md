@@ -2,7 +2,7 @@
 
 ## 1. Sobre o Projeto
 
-A Clínica Ikigai é um sistema web de gestão clínica que reúne agendamento de consultas, cadastro de pacientes, configuração de serviços e profissionais e acompanhamento de indicadores. A operação da recepção e o dashboard gerencial têm páginas independentes e compartilham a mesma API e o mesmo banco de dados.
+A Clínica Ikigai é um sistema web de gestão clínica que reúne agendamento de consultas, cadastro de pacientes, configuração de serviços e profissionais e acompanhamento de indicadores. A operação da recepção e os indicadores gerenciais têm rotas próprias no painel principal e compartilham a mesma API e o mesmo banco de dados.
 
 ## 2. Tecnologias e Estrutura
 
@@ -223,7 +223,9 @@ npm run db:backup
 npm run db:migrate
 ```
 
-Prossiga com a migração somente após a conclusão do backup. O comando `db:migrate` atualiza um banco já existente; não substitui a criação inicial com `schema.sql`. A instalação de dependências não executa migrações nem cargas de dados.
+Prossiga com a migração somente após a conclusão do backup. O comando `db:migrate` atualiza um banco já existente; não substitui a criação inicial com `schema.sql`. A instalação de dependências não executa migrações nem cargas de dados. Execute a atualização com a API parada porque o MySQL confirma mudanças de estrutura separadamente. O migrador registra cada versão concluída e pode ser executado novamente para retomar uma alteração interrompida.
+
+A recepção ou a administração registra a chegada em reservas excepcionais criadas pelo próprio profissional. Esse registro autoriza o acesso ao prontuário por esse atendimento. Reservas comuns e reagendamentos feitos pela recepção ou administração autorizam o profissional responsável quando o atendimento está ativo ou foi concluído. Em outras agendas, o perfil profissional visualiza somente a ocupação dos horários. Na migração, o histórico comprova as chegadas registradas por contas da recepção ou da administração sem alterações posteriores no cadastro. Para uma reserva excepcional antiga com chegada já registrada e autoria incerta, abra o atendimento na Agenda e use **Validar chegada** após confirmar o comparecimento. A ação preserva o status e o horário registrados.
 
 ### 5. Iniciar em desenvolvimento
 

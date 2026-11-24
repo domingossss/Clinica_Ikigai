@@ -1,6 +1,8 @@
+import { useDialogAcessivel } from '../hooks/useDialogAcessivel';
+import { aplicarMascaraCPF, aplicarMascaraTelefone } from '../utils/formatacao';
 import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useId } from 'react';
 import Swal from 'sweetalert2';
 import ModalHistoricoPaciente from './ModalHistoricoPaciente';
 
@@ -90,7 +92,14 @@ function FormularioAgendamento({
 
   // Estados de Busca de Paciente
   const [termoBusca, setTermoBusca] = useState<string>('');
-  const [resultadosBusca, setResultadosBusca] = useState<PacienteItem[]>([]);
+  const [consultaPacientes, setConsultaPacientes] = useState<{
+    chave: string;
+    resultados: PacienteItem[];
+    erro?: string;
+  } | null>(null);
+  const termoPesquisado = termoBusca.trim();
+  const chaveBusca = `${excepcional}:${termoPesquisado}`;
+  const consultaAtual = consultaPacientes?.chave === chaveBusca ? consultaPacientes : null;
 
   const [mostrarDropdownBusca, setMostrarDropdownBusca] = useState<boolean>(false);
 
@@ -108,18 +117,24 @@ function FormularioAgendamento({
   const avisoServico = servicoIndisponivel ? AVISO_SERVICO_INDISPONIVEL : null;
 
   useEffect(() => {
+    if (!isOpen || termoPesquisado.length < 2 || modoPaciente !== 'busca' || !mostrarDropdownBusca) return;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
-      if (!isOpen || termoBusca.trim().length < 2) { setResultadosBusca([]); return; }
       try {
-        const res = await apiFetch((excepcional ? '/api/agenda/pacientes?busca=' : '/api/pacientes?limite=10&busca=') + encodeURIComponent(termoBusca), {signal:controller.signal});
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.erro);
-        if (!controller.signal.aborted) setResultadosBusca(json.dados.map((p: PacienteItem) => ({...p,nome:p.nome_completo || p.nome})));
-      } catch { if (!controller.signal.aborted) { setResultadosBusca([]); setErrorMessage('Não foi possível buscar pacientes.'); } }
+        const rota = excepcional ? '/api/agenda/pacientes?busca=' : '/api/pacientes?limite=10&busca=';
+        const res = await apiFetch(rota + encodeURIComponent(termoPesquisado), { signal: controller.signal });
+        if (!res.ok) throw new Error(`Busca retornou ${res.status}`);
+        const { dados } = await res.json() as { dados: PacienteItem[] };
+        const resultados = dados.map(p => ({ ...p, nome: p.nome_completo || p.nome }));
+        if (!controller.signal.aborted) setConsultaPacientes({ chave: chaveBusca, resultados });
+      } catch {
+        if (!controller.signal.aborted) {
+          setConsultaPacientes({ chave: chaveBusca, resultados: [], erro: 'Não foi possível buscar pacientes.' });
+        }
+      }
     }, 250);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [isOpen, termoBusca, excepcional]);
+  }, [isOpen, termoPesquisado, excepcional, chaveBusca, modoPaciente, mostrarDropdownBusca]);
 
   const atualizarServicosAtivos = useCallback(() => {
     consultaServicos.current?.abort();
@@ -250,26 +265,7 @@ function FormularioAgendamento({
     };
   }, [horaInicio, servicoSelecionado]);
 
-  // Filtro de Pacientes para Busca
-  const pacientesFiltrados = resultadosBusca;
-
   // Máscaras de Telefone e CPF
-  const aplicarMascaraTelefone = (valor: string) => {
-    const limpo = valor.replace(/\D/g, '').slice(0, 11);
-    if (limpo.length <= 2) return limpo;
-    if (limpo.length <= 6) return `(${limpo.slice(0, 2)}) ${limpo.slice(2)}`;
-    if (limpo.length <= 10) return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 6)}-${limpo.slice(6)}`;
-    return `(${limpo.slice(0, 2)}) ${limpo.slice(2, 7)}-${limpo.slice(7)}`;
-  };
-
-  const aplicarMascaraCPF = (valor: string) => {
-    const limpo = valor.replace(/\D/g, '').slice(0, 11);
-    if (limpo.length <= 3) return limpo;
-    if (limpo.length <= 6) return `${limpo.slice(0, 3)}.${limpo.slice(3)}`;
-    if (limpo.length <= 9) return `${limpo.slice(0, 3)}.${limpo.slice(3, 6)}.${limpo.slice(6)}`;
-    return `${limpo.slice(0, 3)}.${limpo.slice(3, 6)}.${limpo.slice(6, 9)}-${limpo.slice(9)}`;
-  };
-
   // Submeter Pré-Cadastro Rápido de Paciente
   const handleCriarPacienteRapido = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -294,7 +290,7 @@ function FormularioAgendamento({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           nome_completo: novoNome.trim(),
-          whatsapp: cleanTel,
+          whatsapp: novoWhatsapp,
           cpf: novoCpf ? novoCpf.replace(/\D/g, '') : undefined
         })
       });
@@ -314,7 +310,7 @@ function FormularioAgendamento({
           id: dataRes.dados.id,
           nome: dataRes.dados.nome || novoNome.trim(),
           nome_completo: dataRes.dados.nome_completo || novoNome.trim(),
-          whatsapp: cleanTel
+          whatsapp: dataRes.dados.whatsapp || novoWhatsapp
         };
 
         // Seleciona o novo paciente imediatamente
@@ -414,11 +410,13 @@ function FormularioAgendamento({
     }
   };
 
+  const tituloDialogo = useId();
+  const dialogo = useDialogAcessivel(isOpen, onClose, submitting || salvandoPaciente);
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div 
+      <div ref={dialogo} role="dialog" aria-modal="true" aria-labelledby={tituloDialogo} tabIndex={-1}
         className="bg-white rounded-2xl shadow-2xl border border-gray-200 max-w-xl w-full max-h-[92vh] flex flex-col overflow-hidden text-gray-900 animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
       >
@@ -431,11 +429,12 @@ function FormularioAgendamento({
               </svg>
             </div>
             <div>
-              <h3 className="text-base font-bold text-gray-900">{iniciouAgendamento ? 'Novo Agendamento' : 'Consultar horários disponíveis'}</h3>
+              <h3 id={tituloDialogo} className="text-base font-bold text-gray-900">{iniciouAgendamento ? 'Novo Agendamento' : 'Consultar horários disponíveis'}</h3>
             </div>
           </div>
           <button
             onClick={onClose}
+            disabled={submitting || salvandoPaciente}
             className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
             title="Fechar"
           >
@@ -537,9 +536,11 @@ function FormularioAgendamento({
                 <div className="relative">
                   <input
                     type="text"
+                    aria-label="Buscar paciente"
                     placeholder={excepcional ? 'Buscar paciente por nome' : 'Digite nome ou telefone para buscar...'}
                     value={termoBusca}
                     onChange={e => {
+                      if (e.target.value.trim() !== termoPesquisado) setConsultaPacientes(null);
                       setTermoBusca(e.target.value);
                       setMostrarDropdownBusca(true);
                     }}
@@ -552,26 +553,31 @@ function FormularioAgendamento({
                 </div>
 
                 {/* Lista Suspensa de Sugestões */}
-                {mostrarDropdownBusca && termoBusca.length >= 2 && (
+                {mostrarDropdownBusca && termoPesquisado.length >= 2 && (
                   <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden max-h-48 overflow-y-auto">
-                    {pacientesFiltrados.length > 0 ? (
-                      pacientesFiltrados.map(p => (
-                        <div
+                    {!consultaAtual ? (
+                      <p role="status" className="p-3 text-center text-xs text-gray-500">Buscando pacientes…</p>
+                    ) : consultaAtual.erro ? (
+                      <p role="alert" className="p-3 text-center text-xs text-red-700">{consultaAtual.erro}</p>
+                    ) : consultaAtual.resultados.length > 0 ? (
+                      consultaAtual.resultados.map(p => (
+                        <button
+                          type="button"
                           key={p.id}
                           onClick={() => {
                             setSelectedPaciente(p);
                             setMostrarDropdownBusca(false);
                           }}
-                          className="px-3.5 py-2 hover:bg-blue-50 cursor-pointer flex items-center justify-between border-b border-gray-100 last:border-none transition-colors"
+                          className="w-full text-left px-3.5 py-2 hover:bg-blue-50 cursor-pointer flex items-center justify-between border-b border-gray-100 last:border-none transition-colors"
                         >
-                          <div>
-                            <p className="text-xs font-semibold text-gray-900">{p.nome || p.nome_completo}</p>
-                            <p className="text-[10px] text-gray-500">{p.whatsapp && aplicarMascaraTelefone(p.whatsapp)}</p>
-                          </div>
+                          <span>
+                            <span className="block text-xs font-semibold text-gray-900">{p.nome || p.nome_completo}</span>
+                            <span className="block text-[10px] text-gray-500">{p.whatsapp && aplicarMascaraTelefone(p.whatsapp)}</span>
+                          </span>
                           <span className="text-[10px] bg-blue-50 text-blue-700 font-semibold px-2 py-0.5 rounded">
                             Selecionar
                           </span>
-                        </div>
+                        </button>
                       ))
                     ) : (
                       <div className="p-3 text-center">
@@ -600,10 +606,11 @@ function FormularioAgendamento({
                 </p>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-gray-700 mb-1">Nome Completo *</label>
+                  <label htmlFor={`${tituloDialogo}-nome`} className="block text-[11px] font-semibold text-gray-700 mb-1">Nome Completo *</label>
                   <input
                     type="text"
                     required
+                    id={`${tituloDialogo}-nome`}
                     placeholder="Nome completo do paciente"
                     value={novoNome}
                     onChange={e => setNovoNome(e.target.value)}
@@ -613,11 +620,12 @@ function FormularioAgendamento({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
-                    <label className="block text-[11px] font-semibold text-gray-700 mb-1">Telefone / WhatsApp *</label>
+                    <label htmlFor={`${tituloDialogo}-telefone`} className="block text-[11px] font-semibold text-gray-700 mb-1">Telefone / WhatsApp *</label>
                     <input
                       type="text"
                       required
-                      placeholder="(11) 99999-9999"
+                      id={`${tituloDialogo}-telefone`}
+                      placeholder="(11) 99999-9999 ou +DDI"
                       value={novoWhatsapp}
                       onChange={e => setNovoWhatsapp(aplicarMascaraTelefone(e.target.value))}
                       className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
@@ -625,9 +633,10 @@ function FormularioAgendamento({
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-gray-700 mb-1">CPF (Opcional)</label>
+                    <label htmlFor={`${tituloDialogo}-cpf`} className="block text-[11px] font-semibold text-gray-700 mb-1">CPF (Opcional)</label>
                     <input
                       type="text"
+                      id={`${tituloDialogo}-cpf`}
                       placeholder="000.000.000-00"
                       value={novoCpf}
                       onChange={e => setNovoCpf(aplicarMascaraCPF(e.target.value))}
@@ -660,10 +669,11 @@ function FormularioAgendamento({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Serviço */}
             <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+              <label htmlFor={`${tituloDialogo}-servico`} className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
                 Serviço / Procedimento *
               </label>
               <select
+                id={`${tituloDialogo}-servico`}
                 value={servicoId}
                 onChange={e => { setServicoId(e.target.value); setErrorMessage(anterior => anterior === AVISO_SERVICO_INDISPONIVEL ? null : anterior); }}
                 className="w-full p-2.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900"
@@ -680,7 +690,7 @@ function FormularioAgendamento({
             {/* Profissional Elegível */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
+                <label htmlFor={`${tituloDialogo}-profissional`} className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
                   Profissional / Terapeuta *
                 </label>
                 {servicoId && (
@@ -696,6 +706,7 @@ function FormularioAgendamento({
                 )}
               </div>
               <select
+                id={`${tituloDialogo}-profissional`}
                 value={profissionalId}
                 disabled={carregandoProfissionaisElegiveis || profissionaisElegiveis.length === 0}
                 onChange={e => setProfissionalId(Number(e.target.value))}
@@ -724,12 +735,13 @@ function FormularioAgendamento({
           {/* SEÇÃO 3: DATA, HORA E CÁLCULO AUTOMÁTICO */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+              <label htmlFor={`${tituloDialogo}-data`} className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
                 Data da Consulta *
               </label>
               <input
                 type="date"
                 required
+                id={`${tituloDialogo}-data`}
                 value={data}
                 onChange={e => setData(e.target.value)}
                 className="w-full p-2.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900"
@@ -784,12 +796,13 @@ function FormularioAgendamento({
           </label>
           {/* Observações */}
           <div>
-            <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+            <label htmlFor={`${tituloDialogo}-observacoes`} className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
               Observações (Opcional)
             </label>
             <input
               type="text"
               placeholder="Anotações gerais sobre o agendamento"
+              id={`${tituloDialogo}-observacoes`}
               value={observacoes}
               onChange={e => setObservacoes(e.target.value)}
               className="w-full p-2.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs"
@@ -802,6 +815,7 @@ function FormularioAgendamento({
           <button
             type="button"
             onClick={onClose}
+            disabled={submitting || salvandoPaciente}
             className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all"
           >
             Cancelar

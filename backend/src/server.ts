@@ -14,7 +14,8 @@ import { controlarPermissoesApi } from './middleware/permissoes.js';
 import comunicacoesRouter from './routes/comunicacoes.js';
 import { iniciarLembretes } from './services/comunicacoes.js';
 import { exigirAutenticacao, validarConfiguracaoSessao } from './middleware/auth.js';
-import pool, { testarConexao, acompanharAlteracoes, notificarAlteracoes } from './config/database.js';
+import pool, { testarConexao } from './config/database.js';
+import { acompanharAlteracoes, notificarAlteracoes } from './services/alteracoesClinica.js';
 
 // Carregar variáveis de ambiente do .env
 dotenv.config();

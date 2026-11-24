@@ -10,9 +10,8 @@ USE clinica_ikigai_db;
 -- Variáveis de Sessão para Simulação de Filtros (Exemplo: 30 dias, Todas as Especialidades)
 SET @periodo_dias = 30;
 SET @id_especialidade = -1; -- -1 significa 'Todas'
-SET @data_fim = NOW();
+SET @data_fim = DATE_ADD(CURDATE(), INTERVAL 1 DAY);
 SET @data_inicio = DATE_SUB(@data_fim, INTERVAL @periodo_dias DAY);
-SET @data_inicio_anterior = DATE_SUB(@data_inicio, INTERVAL @periodo_dias DAY);
 
 -- =====================================================================
 -- 1. CONSULTA UNIFICADA DE RESUMO (KPIs Principais do Período Atual)
@@ -23,10 +22,16 @@ SELECT
     SUM(CASE WHEN a.status IN ('Realizado', 'Concluído') THEN 1 ELSE 0 END) AS total_realizados,
     SUM(CASE WHEN a.status = 'Cancelado' THEN 1 ELSE 0 END) AS total_cancelados,
     SUM(CASE WHEN a.status = 'No_Show' THEN 1 ELSE 0 END) AS total_noshow,
-    SUM(CASE WHEN a.status = 'Reagendado' THEN 1 ELSE 0 END) AS total_reagendados,
+    SUM(CASE WHEN (a.status = 'Reagendado' OR EXISTS(
+        SELECT 1 FROM historico_status_agendamento h
+        WHERE h.id_agendamento = a.id_agendamento AND h.status_novo = 'Reagendado'
+    )) THEN 1 ELSE 0 END) AS total_reagendados,
 
     -- KPI 0: Taxa de Reagendamento (%)
-    ROUND(SUM(CASE WHEN a.status = 'Reagendado' THEN 1 ELSE 0 END) / NULLIF(COUNT(a.id_agendamento), 0) * 100, 1) AS taxa_reagendamento,
+    ROUND(SUM(CASE WHEN (a.status = 'Reagendado' OR EXISTS(
+        SELECT 1 FROM historico_status_agendamento h
+        WHERE h.id_agendamento = a.id_agendamento AND h.status_novo = 'Reagendado'
+    )) THEN 1 ELSE 0 END) / NULLIF(COUNT(a.id_agendamento), 0) * 100, 1) AS taxa_reagendamento,
 
     -- KPI 1: Taxa de Não Comparecimento (%) e desdobramentos
     ROUND(SUM(CASE WHEN a.status IN ('Cancelado', 'No_Show') THEN 1 ELSE 0 END) / NULLIF(COUNT(a.id_agendamento), 0) * 100, 1) AS taxa_nao_comparecimento,
@@ -34,7 +39,8 @@ SELECT
     ROUND(SUM(CASE WHEN a.status = 'No_Show' THEN 1 ELSE 0 END) / NULLIF(COUNT(a.id_agendamento), 0) * 100, 1) AS taxa_noshow,
 
     -- KPI 3: Atraso Médio nas Consultas Realizadas (minutos)
-    ROUND(AVG(CASE WHEN a.status IN ('Realizado', 'Concluído') THEN a.minutos_atraso ELSE NULL END), 1) AS atraso_medio_minutos,
+    ROUND(AVG(CASE WHEN a.status IN ('Realizado', 'Concluído')
+        AND (a.data_hora_inicio_atendimento IS NOT NULL OR a.minutos_atraso > 0) THEN a.minutos_atraso END), 1) AS atraso_medio_minutos,
 
     -- KPI 7: Ticket Médio das Consultas Realizadas (R$)
     ROUND(AVG(CASE WHEN a.status IN ('Realizado', 'Concluído') THEN a.valor_cobrado ELSE NULL END), 2) AS ticket_medio,
@@ -46,7 +52,10 @@ SELECT
     ROUND(SUM(CASE WHEN a.status IN ('Realizado', 'Concluído') AND a.tipo_atendimento = 'Retorno' THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN a.status IN ('Realizado', 'Concluído') THEN 1 ELSE 0 END), 0) * 100, 1) AS taxa_retorno,
 
     -- KPI 9: Resolução sem Humano (%)
-    ROUND(SUM(CASE WHEN a.origem = 'Chatbot' AND a.status IN ('Realizado', 'Concluído') AND a.escalonado_humano = 0 THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN a.origem = 'Chatbot' THEN 1 ELSE 0 END), 0) * 100, 1) AS resolucao_sem_humano,
+    (SELECT ROUND(SUM(status_sessao IN ('Agendamento_Concluido', 'Duvida_Resolvida') AND escalonado_humano = 0)
+        / NULLIF(COUNT(*), 0) * 100, 1)
+     FROM sessao_chatbot
+     WHERE data_hora_inicio >= @data_inicio AND data_hora_inicio < @data_fim) AS resolucao_sem_humano,
     SUM(CASE WHEN a.origem = 'Chatbot' THEN 1 ELSE 0 END) AS agendamentos_bot,
     SUM(CASE WHEN a.origem = 'Chatbot' AND a.status IN ('Realizado', 'Concluído') AND a.escalonado_humano = 0 THEN 1 ELSE 0 END) AS bot_concluidos_sem_humano
 FROM agendamento a
@@ -57,28 +66,30 @@ WHERE a.data_hora_agendamento >= @data_inicio
 
 -- =====================================================================
 -- 2. KPI 2: OCUPAÇÃO DA AGENDA (%)
--- Fórmula: Horários Preenchidos (Não Cancelados) ÷ Capacidade Total Disponível
+-- Fórmula: Minutos ocupados por agendamentos não cancelados ÷ minutos disponíveis.
+-- Períodos com dias ausentes no histórico de capacidade retornam NULL.
 -- =====================================================================
-SELECT 
-    sub.horarios_preenchidos,
-    cap.vagas_totais_periodo,
-    ROUND(sub.horarios_preenchidos / NULLIF(cap.vagas_totais_periodo, 0) * 100, 1) AS taxa_ocupacao
+SELECT
+    reservas.minutos_ocupados,
+    CASE WHEN capacidade.dias_registrados = DATEDIFF(@data_fim, @data_inicio)
+         THEN capacidade.minutos_disponiveis END AS minutos_disponiveis,
+    CASE WHEN capacidade.dias_registrados = DATEDIFF(@data_fim, @data_inicio)
+         THEN ROUND(LEAST(100, reservas.minutos_ocupados / NULLIF(capacidade.minutos_disponiveis, 0) * 100), 1)
+         END AS taxa_ocupacao
 FROM (
-    SELECT COUNT(*) AS horarios_preenchidos
+    SELECT COALESCE(SUM(GREATEST(0, TIME_TO_SEC(TIMEDIFF(a.horario_fim, a.horario_inicio)) / 60)), 0) AS minutos_ocupados
     FROM agendamento a
     JOIN procedimento pr ON a.id_procedimento = pr.id_procedimento
-    WHERE a.data_hora_agendamento >= @data_inicio 
-      AND a.data_hora_agendamento < @data_fim
-      AND a.status != 'Cancelado'
+    WHERE a.data >= @data_inicio AND a.data < @data_fim
+      AND a.status <> 'Cancelado'
       AND (@id_especialidade = -1 OR pr.id_especialidade = @id_especialidade)
-) sub
+) reservas
 CROSS JOIN (
-    SELECT COALESCE(SUM(vagas_totais), 1) AS vagas_totais_periodo
-    FROM capacidade_diaria
-    WHERE data_referencia >= DATE(@data_inicio) 
-      AND data_referencia < DATE(@data_fim)
-      AND (@id_especialidade = -1 OR id_especialidade = @id_especialidade OR id_especialidade IS NULL)
-) cap;
+    SELECT COUNT(*) AS dias_registrados, SUM(minutos) AS minutos_disponiveis
+    FROM agenda_capacidade_snapshot
+    WHERE data >= @data_inicio AND data < @data_fim
+      AND especialidade = @id_especialidade
+) capacidade;
 
 -- =====================================================================
 -- 3. KPI 6: SATISFAÇÃO (NPS)
@@ -99,27 +110,15 @@ WHERE a.data_hora_agendamento >= @data_inicio
 
 -- =====================================================================
 -- 4. KPI 10: CONVERSÃO EM AGENDAMENTO DO CHATBOT (%)
--- Fórmula: Agendamentos originados no bot ÷ Conversas iniciadas no bot
+-- Fórmula: Conversas que geraram agendamento ÷ conversas iniciadas.
+-- Aplica-se à clínica inteira, independentemente da especialidade selecionada.
 -- =====================================================================
-SELECT 
-    ag.agendamentos_bot,
-    cv.conversas_iniciadas,
-    ROUND(ag.agendamentos_bot / NULLIF(cv.conversas_iniciadas, 0) * 100, 1) AS taxa_conversao_bot
-FROM (
-    SELECT COUNT(*) AS agendamentos_bot
-    FROM agendamento a
-    JOIN procedimento pr ON a.id_procedimento = pr.id_procedimento
-    WHERE a.origem = 'Chatbot'
-      AND a.data_hora_agendamento >= @data_inicio 
-      AND a.data_hora_agendamento < @data_fim
-      AND (@id_especialidade = -1 OR pr.id_especialidade = @id_especialidade)
-) ag
-CROSS JOIN (
-    SELECT COUNT(*) AS conversas_iniciadas
-    FROM sessao_chatbot
-    WHERE data_hora_inicio >= @data_inicio 
-      AND data_hora_inicio < @data_fim
-) cv;
+SELECT
+    COALESCE(SUM(status_sessao = 'Agendamento_Concluido'), 0) AS agendamentos_bot,
+    COUNT(*) AS conversas_iniciadas,
+    ROUND(SUM(status_sessao = 'Agendamento_Concluido') / NULLIF(COUNT(*), 0) * 100, 1) AS taxa_conversao_bot
+FROM sessao_chatbot
+WHERE data_hora_inicio >= @data_inicio AND data_hora_inicio < @data_fim;
 
 -- =====================================================================
 -- 5. KPI 4: RANKING DE ATENDIMENTOS POR ESPECIALIDADE

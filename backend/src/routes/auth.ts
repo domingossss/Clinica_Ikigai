@@ -1,20 +1,28 @@
 ﻿import { randomBytes } from 'node:crypto';
 import { Router, type CookieOptions } from 'express';
 import type { RowDataPacket } from 'mysql2';
-import pool from '../config/database.js';
-import { COOKIE_TOKEN_NAME, DURACAO_SESSAO_SEGUNDOS, exigirAutenticacao, extrairToken, gerarHashSenha,
+import rateLimit from 'express-rate-limit';
+import pool, { executarTransacao } from '../config/database.js';
+import { COOKIE_TOKEN_NAME, DURACAO_SESSAO_SEGUNDOS, exigirAutenticacao, extrairToken,
   identificarSessao, verificarSenha, type UsuarioAutenticado } from '../middleware/auth.js';
-import { transacaoUsuarios } from '../services/transacaoUsuarios.js';
 
 const router = Router();
-const hashSimulado = gerarHashSenha(randomBytes(32).toString('hex'));
+const hashSimulado = `${randomBytes(16).toString('hex')}:${randomBytes(64).toString('hex')}`;
+const limitarLogin = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 20,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { sucesso: false, erro: 'Muitas tentativas de login. Tente novamente em alguns minutos.' },
+});
 const opcoesCookie = (): CookieOptions => ({
   httpOnly: true, sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production',
 });
 
 router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
-router.post('/login', async (req, res) => {
+router.post('/login', limitarLogin, async (req, res) => {
   try {
     if (process.env.NODE_ENV === 'production' && !req.secure) {
       res.status(403).json({ sucesso: false, erro: 'O login exige conexão HTTPS.' });
@@ -26,8 +34,14 @@ router.post('/login', async (req, res) => {
       res.status(400).json({ sucesso: false, erro: 'E-mail e senha são obrigatórios.' });
       return;
     }
+    const [[credencial]] = await pool.query<RowDataPacket[]>('SELECT id_usuario, senha_hash FROM usuario WHERE email = ?', [email]);
+    const senhaValida = await verificarSenha(senha, credencial?.senha_hash ?? hashSimulado);
+    if (!senhaValida || !credencial) {
+      res.status(401).json({ sucesso: false, erro: 'E-mail ou senha inválidos.' });
+      return;
+    }
     const token = randomBytes(32).toString('base64url');
-    const usuario = await transacaoUsuarios(async conexao => {
+    const usuario = await executarTransacao(async conexao => {
       const [rows] = await conexao.query<(RowDataPacket & UsuarioAutenticado & { senha_hash: string, ativo: number, profissional_ativo: number | null })[]>(
         `SELECT u.id_usuario AS id, u.nome, u.email, u.perfil, u.senha_hash, u.ativo,
            u.id_profissional AS profissional_id, p.nome AS profissional_nome,
@@ -37,8 +51,8 @@ router.post('/login', async (req, res) => {
         [email]
       );
       const atual = rows[0];
-      const valida = verificarSenha(senha, atual?.senha_hash ?? hashSimulado);
-      if (!valida || !atual?.ativo || (atual.perfil === 'PROFISSIONAL' && atual.profissional_ativo !== 1)) return null;
+      if (!atual?.ativo || atual.id !== credencial.id_usuario || atual.senha_hash !== credencial.senha_hash ||
+        (atual.perfil === 'PROFISSIONAL' && atual.profissional_ativo !== 1)) return null;
       const anterior = extrairToken(req);
       if (anterior) await conexao.query('DELETE FROM sessao_usuario WHERE identificador = ?', [identificarSessao(anterior)]);
       await conexao.query('DELETE FROM sessao_usuario WHERE id_usuario = ? AND expira_em <= UTC_TIMESTAMP()', [atual.id]);

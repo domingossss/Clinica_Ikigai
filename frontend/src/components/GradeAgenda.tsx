@@ -1,14 +1,17 @@
+import { obterIniciais } from '../utils/formatacao';
 import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import ModalHistoricoPaciente from './ModalHistoricoPaciente';
 import ModalHistoricoAgendamento from './ModalHistoricoAgendamento';
+import ModalMinhaJornada, { type DiaJornada } from './ModalMinhaJornada';
 import type { UsuarioSessao } from '../services/auth';
 
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 interface AgendamentoDia {
+  exige_validacao_chegada?: number;
   id: number;
   data: string;
   horario_inicio: string; // "HH:MM"
@@ -38,16 +41,6 @@ interface Profissional {
   especialidade?: string;
 }
 
-interface DiaJornada {
-  dia_semana: number;
-  dia_nome: string;
-  ativo: number | boolean;
-  horario_inicio: string;
-  horario_fim: string;
-  intervalo_inicio: string | null;
-  intervalo_fim: string | null;
-}
-
 type StatusAgendamento =
   | 'Agendado'
   | 'Confirmado'
@@ -70,6 +63,7 @@ interface Props {
     horario_inicio: string;
     profissional_id: number;
   }) => void;
+  onAbrirComunicacao: (endereco: string) => void;
   onRefresh?: () => void;
   profissionalInicialId?: number | null;
   onProfissionalChange?: (profissionalId: number | null) => void;
@@ -78,6 +72,7 @@ interface Props {
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
+const STATUS_COM_CHEGADA: StatusAgendamento[] = ['Na Recepção', 'Em Atendimento', 'Concluído', 'Realizado'];
 const HORA_INICIO_PADRAO = 8;   // 08:00
 const HORA_FIM_PADRAO = 19;     // 19:00
 const ALTURA_POR_MINUTO = 1.4; // px por minuto — define escala vertical
@@ -139,15 +134,6 @@ function somarDias(dateStr: string, dias: number): string {
   return d.toISOString().split('T')[0];
 }
 
-function obterIniciais(nome: string): string {
-  if (!nome) return 'PR';
-  const limpo = nome.trim();
-  const partes = limpo.split(/\s+/).filter(p => !['dr.', 'dra.', 'drª', 'dr', 'dra'].includes(p.toLowerCase()));
-  if (partes.length === 0) return limpo.substring(0, 2).toUpperCase();
-  if (partes.length === 1) return partes[0].substring(0, 2).toUpperCase();
-  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
-}
-
 function obterDiasDaSemana(dateStr: string): Array<{ data: string; nomeDia: string; formatada: string; isHoje: boolean }> {
   const d = new Date(dateStr + 'T12:00:00');
   const day = d.getDay();
@@ -183,6 +169,7 @@ export default function GradeAgenda({
   onDataChange,
   refreshTrigger,
   onAbrirNovoAgendamento,
+  onAbrirComunicacao,
   onRefresh,
   profissionalInicialId,
   onProfissionalChange,
@@ -271,7 +258,10 @@ export default function GradeAgenda({
   // Modal de Minha Jornada (Perfil PROFISSIONAL)
   const [isJornadaModalOpen, setIsJornadaModalOpen] = useState(false);
   const [jornadaDias, setJornadaDias] = useState<DiaJornada[]>([]);
-  const [carregandoJornada, setCarregandoJornada] = useState(false);
+  const [estadoJornada, setEstadoJornada] = useState<'carregando' | 'erro' | 'pronto'>('carregando');
+  const consultaJornada = useRef<AbortController | null>(null);
+  const envioJornada = useRef(false);
+  useEffect(() => () => consultaJornada.current?.abort(), []);
   const [salvandoJornada, setSalvandoJornada] = useState(false);
   const [jornadaErro, setJornadaErro] = useState<string | null>(null);
 
@@ -342,26 +332,31 @@ export default function GradeAgenda({
 
   // ─── Atualização de status ──────────────────────────────────────────────────
 
-  const atualizarStatus = async (id: number, novoStatus: StatusAgendamento) => {
+  const podeValidarChegada = usuarioLogado?.perfil === 'RECEPCAO' || usuarioLogado?.perfil === 'ADMIN';
+
+  const atualizarStatus = async (id: number, alteracao: { status: StatusAgendamento } | { validarChegada: true }) => {
     setAtualizandoStatus(true);
     try {
       const res = await apiFetch(`/api/agendamentos/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: novoStatus }),
+        body: JSON.stringify(alteracao),
       });
       const json = await res.json();
       if (!json.sucesso) throw new Error(json.erro || 'Falha ao atualizar.');
 
-      // Atualiza estado local otimisticamente
-      setAgendamentos(prev =>
-        prev.map(a => a.id === id ? { ...a, status: novoStatus } : a)
-      );
-      if (agendamentoSelecionado?.id === id) {
-        setAgendamentoSelecionado(prev => prev ? { ...prev, status: novoStatus } : null);
-      }
+      const validouChegada = 'validarChegada' in alteracao;
+      const novoStatus: StatusAgendamento = json.dados.status;
+      const atualizarAgendamento = (agendamento: AgendamentoDia) => ({
+        ...agendamento,
+        status: novoStatus,
+        exige_validacao_chegada: validouChegada || (podeValidarChegada && novoStatus === 'Na Recepção')
+          ? 0 : agendamento.exige_validacao_chegada,
+      });
+      setAgendamentos(prev => prev.map(a => a.id === id ? atualizarAgendamento(a) : a));
+      setAgendamentoSelecionado(prev => prev?.id === id ? atualizarAgendamento(prev) : prev);
 
-      setMensagemSucesso(`Status alterado para "${novoStatus}"`);
+      setMensagemSucesso(validouChegada ? 'Chegada validada.' : `Status alterado para "${novoStatus}"`);
       setTimeout(() => setMensagemSucesso(null), 2500);
       onRefresh?.();
     } catch (e: unknown) {
@@ -500,22 +495,34 @@ export default function GradeAgenda({
     const profId = usuarioLogado?.profissional_id;
     if (!profId) return;
 
+    consultaJornada.current?.abort();
+    const consulta = new AbortController();
+    consultaJornada.current = consulta;
     setIsJornadaModalOpen(true);
-    setCarregandoJornada(true);
+    setEstadoJornada('carregando');
     setJornadaErro(null);
+    setJornadaDias([]);
 
     try {
-      const res = await apiFetch(`/api/profissionais/${profId}/jornada`);
+      const res = await apiFetch(`/api/profissionais/${profId}/jornada`, { signal: consulta.signal });
       const json = await res.json();
-      if (!res.ok || !json.sucesso) {
+      if (!res.ok || !json.sucesso || !Array.isArray(json.dados) || !json.dados.length) {
         throw new Error(json.erro || 'Não foi possível carregar sua jornada.');
       }
-      setJornadaDias(json.dados || []);
+      if (consulta.signal.aborted) return;
+      setJornadaDias(json.dados);
+      setEstadoJornada('pronto');
     } catch (err: unknown) {
+      if (consulta.signal.aborted) return;
       setJornadaErro((err instanceof Error ? err.message : '') || 'Erro ao carregar jornada.');
-    } finally {
-      setCarregandoJornada(false);
+      setEstadoJornada('erro');
     }
+  };
+
+  const fecharModalMinhaJornada = () => {
+    if (envioJornada.current) return;
+    consultaJornada.current?.abort();
+    setIsJornadaModalOpen(false);
   };
 
   const atualizarDiaJornada = <Campo extends keyof DiaJornada,>(diaSemana: number, campo: Campo, valor: DiaJornada[Campo]) => {
@@ -527,8 +534,9 @@ export default function GradeAgenda({
   const handleSalvarMinhaJornada = async (e: React.FormEvent) => {
     e.preventDefault();
     const profId = usuarioLogado?.profissional_id;
-    if (!profId) return;
+    if (!profId || estadoJornada !== 'pronto' || envioJornada.current) return;
 
+    envioJornada.current = true;
     setSalvandoJornada(true);
     setJornadaErro(null);
 
@@ -560,6 +568,7 @@ export default function GradeAgenda({
     } catch (err: unknown) {
       setJornadaErro((err instanceof Error ? err.message : '') || 'Erro ao salvar jornada.');
     } finally {
+      envioJornada.current = false;
       setSalvandoJornada(false);
     }
   };
@@ -720,13 +729,13 @@ export default function GradeAgenda({
               return (
                 <div
                   key={ag.id}
-                  onClick={() => {
+                  onClick={ag.paciente_id ? () => {
                     setBloqueioSelecionado(null);
                     setAgendamentoSelecionado(isSelecionado ? null : ag);
-                  }}
-                  className={`absolute left-1 right-1 rounded-xl border-l-4 px-2 py-1.5 cursor-pointer transition-all hover:shadow-md hover:-translate-y-px ${cfg.cor} ${cfg.corBorda} ${isSelecionado ? 'ring-2 ring-offset-1 ring-primary/50 shadow-md' : ''}`}
+                  } : undefined}
+                  className={`absolute left-1 right-1 rounded-xl border-l-4 px-2 py-1.5 transition-all ${ag.paciente_id ? 'cursor-pointer hover:shadow-md hover:-translate-y-px' : ''} ${cfg.cor} ${cfg.corBorda} ${isSelecionado ? 'ring-2 ring-offset-1 ring-primary/50 shadow-md' : ''}`}
                   style={{ top, height: height - 2, zIndex: isSelecionado ? 20 : 10 }}
-                  title={`${ag.paciente_nome} — ${ag.servico_nome}`}
+                  title={ag.paciente_id ? `${ag.paciente_nome} — ${ag.servico_nome}` : ag.paciente_nome}
                 >
                   <div className={`text-[10px] font-bold truncate ${cfg.corTexto}`}>
                     {ag.paciente_nome}
@@ -1269,7 +1278,15 @@ export default function GradeAgenda({
               </button>
             )}
 
-            {admin && <a className="block text-center py-2 text-xs font-bold text-primary" href={`/comunicacao?agendamento=${agendamentoSelecionado.id}`}>Comunicações do atendimento</a>}
+            {admin && <a className="block text-center py-2 text-xs font-bold text-primary"
+              href={`/comunicacao?agendamento=${agendamentoSelecionado.id}`}
+              onClick={evento => {
+                if (evento.ctrlKey || evento.metaKey || evento.shiftKey || evento.altKey) return;
+                evento.preventDefault();
+                onAbrirComunicacao(`/comunicacao?agendamento=${agendamentoSelecionado.id}`);
+              }}>
+              Comunicações do atendimento
+            </a>}
             {/* Botão Visualizar Histórico do Paciente (IK-77) */}
             {admin && <button
               onClick={() => setIsHistoricoModalOpen(true)}
@@ -1293,6 +1310,16 @@ export default function GradeAgenda({
               <span>Ver Histórico do Agendamento</span>
             </button>}
 
+            {podeValidarChegada && !!agendamentoSelecionado.exige_validacao_chegada && STATUS_COM_CHEGADA.includes(agendamentoSelecionado.status) && (
+              <button
+                type="button"
+                disabled={atualizandoStatus}
+                onClick={() => atualizarStatus(agendamentoSelecionado.id, { validarChegada: true })}
+                className="w-full py-2 px-3 rounded-xl text-xs font-bold border border-green-400 bg-green-50 text-green-800 hover:bg-green-100 disabled:opacity-50"
+              >
+                {atualizandoStatus ? 'Validando...' : 'Validar chegada'}
+              </button>
+            )}
             {usuarioLogado?.perfil === 'PROFISSIONAL' && (!usuarioLogado.profissional_id || Number(agendamentoSelecionado.profissional_id) !== Number(usuarioLogado.profissional_id)) ? (
               <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-semibold text-center">
                 Somente leitura: você só pode alterar o status dos atendimentos da sua própria agenda.
@@ -1302,13 +1329,14 @@ export default function GradeAgenda({
                 <p className="text-[10px] uppercase font-bold text-gray mb-2">Avançar status para:</p>
                 <div className="flex flex-col gap-1.5">
                   {FLUXO_STATUS[agendamentoSelecionado.status].map(novoStatus => {
+                    if (novoStatus === 'Na Recepção' && agendamentoSelecionado.exige_validacao_chegada && !podeValidarChegada) return null;
                     const cfg = STATUS_CONFIG[novoStatus];
                     const isCancelar = novoStatus === 'Cancelado';
                     return (
                       <button
                         key={novoStatus}
                         disabled={atualizandoStatus}
-                        onClick={() => atualizarStatus(agendamentoSelecionado.id, novoStatus)}
+                        onClick={() => atualizarStatus(agendamentoSelecionado.id, { status: novoStatus })}
                         className={`w-full py-2 px-3 rounded-xl text-xs font-bold border transition-all active:scale-95 disabled:opacity-50 ${
                           isCancelar
                             ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
@@ -1611,148 +1639,17 @@ export default function GradeAgenda({
         </div>
       )}
 
-      {/* Modal de Minha Jornada de Trabalho (Perfil PROFISSIONAL) */}
       {isJornadaModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-gray/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
-            <div className="bg-primary text-white px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-lg">⏰</span>
-                <div>
-                  <h3 className="text-base font-bold">Minha Jornada de Trabalho</h3>
-                  <p className="text-xs text-white/80 mt-0.5">
-                    Configure seus dias de atendimento, expediente e intervalo de almoço
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsJornadaModalOpen(false)}
-                className="text-white/80 hover:text-white"
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <form onSubmit={handleSalvarMinhaJornada} className="p-6 space-y-4 overflow-y-auto">
-              {jornadaErro && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
-                  {jornadaErro}
-                </div>
-              )}
-
-              {carregandoJornada ? (
-                <div className="py-10 text-center text-xs text-gray">
-                  Carregando sua jornada de trabalho...
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {jornadaDias.map(dia => {
-                    const ativoBool = Boolean(dia.ativo);
-                    return (
-                      <div
-                        key={dia.dia_semana}
-                        className={`p-3 rounded-xl border text-xs transition-all ${
-                          ativoBool
-                            ? 'bg-white border-gray/20'
-                            : 'bg-light-gray/60 border-gray/10 opacity-75'
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <label className="flex items-center gap-2 font-bold text-dark min-w-[140px] cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={ativoBool}
-                              onChange={e =>
-                                atualizarDiaJornada(dia.dia_semana, 'ativo', e.target.checked ? 1 : 0)
-                              }
-                              className="rounded border-gray/30 text-primary focus:ring-primary"
-                            />
-                            <span>{dia.dia_nome}</span>
-                          </label>
-
-                          {ativoBool ? (
-                            <div className="flex flex-wrap items-center gap-3">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[11px] text-gray font-semibold">Expediente:</span>
-                                <input
-                                  type="time"
-                                  value={dia.horario_inicio || '08:00'}
-                                  onChange={e =>
-                                    atualizarDiaJornada(dia.dia_semana, 'horario_inicio', e.target.value)
-                                  }
-                                  className="border border-gray/20 rounded-lg px-2 py-1 text-xs bg-white"
-                                />
-                                <span className="text-gray">às</span>
-                                <input
-                                  type="time"
-                                  value={dia.horario_fim || '18:00'}
-                                  onChange={e =>
-                                    atualizarDiaJornada(dia.dia_semana, 'horario_fim', e.target.value)
-                                  }
-                                  className="border border-gray/20 rounded-lg px-2 py-1 text-xs bg-white"
-                                />
-                              </div>
-
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[11px] text-gray font-semibold">Intervalo:</span>
-                                <input
-                                  type="time"
-                                  value={dia.intervalo_inicio || ''}
-                                  onChange={e =>
-                                    atualizarDiaJornada(
-                                      dia.dia_semana,
-                                      'intervalo_inicio',
-                                      e.target.value || null
-                                    )
-                                  }
-                                  className="border border-gray/20 rounded-lg px-2 py-1 text-xs bg-white"
-                                />
-                                <span className="text-gray">às</span>
-                                <input
-                                  type="time"
-                                  value={dia.intervalo_fim || ''}
-                                  onChange={e =>
-                                    atualizarDiaJornada(
-                                      dia.dia_semana,
-                                      'intervalo_fim',
-                                      e.target.value || null
-                                    )
-                                  }
-                                  className="border border-gray/20 rounded-lg px-2 py-1 text-xs bg-white"
-                                />
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-gray italic">Sem expediente neste dia</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-3 border-t border-gray/10">
-                <button
-                  type="button"
-                  onClick={() => setIsJornadaModalOpen(false)}
-                  className="flex-1 py-2.5 px-4 rounded-xl border border-gray/20 text-xs font-bold text-gray hover:bg-light-gray cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={salvandoJornada || carregandoJornada}
-                  className="flex-1 py-2.5 px-4 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  {salvandoJornada ? 'Salvando Jornada...' : 'Salvar Minha Jornada'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <ModalMinhaJornada
+          jornadaDias={jornadaDias}
+          jornadaErro={jornadaErro}
+          estadoJornada={estadoJornada}
+          onRecarregar={abrirModalMinhaJornada}
+          salvandoJornada={salvandoJornada}
+          onAlterarDia={atualizarDiaJornada}
+          onSalvar={handleSalvarMinhaJornada}
+          onFechar={fecharModalMinhaJornada}
+        />
       )}
 
       {/* Modal de Histórico do Paciente (IK-77) */}

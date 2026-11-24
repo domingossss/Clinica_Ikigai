@@ -9,6 +9,8 @@ export interface AlteracaoAgendamento {
   status_anterior: string | null;
   status_novo: string;
   tipo_evento: 'CRIACAO' | 'REAGENDAMENTO' | 'CANCELAMENTO' | 'STATUS' | null;
+  ocorrencia_anterior?: string | null;
+  ocorrencia_nova?: string | null;
   motivo: string | null;
   alterado_por: string;
   data_alteracao: string;
@@ -224,6 +226,12 @@ function HistoricoAgendamentoConteudo({
                         {formatarDataHoraBR(item.data_alteracao)}
                       </span>
                     </div>
+
+                    {item.ocorrencia_anterior && item.ocorrencia_nova && (
+                      <p className="text-xs text-dark">
+                        De {formatarDataHoraBR(item.ocorrencia_anterior)} para {formatarDataHoraBR(item.ocorrencia_nova)}
+                      </p>
+                    )}
 
                     {item.motivo && (
                       <p className="text-xs text-dark">{item.motivo}</p>

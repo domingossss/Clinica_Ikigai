@@ -1,24 +1,23 @@
-:root{--primary:#262B6B;--primary-dark:#1E2255;--secondary:#BFA15F;--secondary-light:#EFE6D2;--dark:#181924;--gray:#6B7280;--light-gray:#E9EAF5;--white:#FFFFFF;
+.dashboard-wrapper{--primary:#262B6B;--primary-dark:#1E2255;--secondary:#BFA15F;--secondary-light:#EFE6D2;--dark:#181924;--gray:#6B7280;--light-gray:#E9EAF5;--white:#FFFFFF;
 --bg:var(--light-gray);--card:var(--white);--ink:var(--dark);--mute:var(--gray);--line:var(--secondary-light);--acc:var(--primary);--acc2:var(--secondary);--bad:#9b5134;--ok:#4db39c;--slate:var(--gray);--rgb:38,43,107;--onacc:var(--white);
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-html{scroll-padding-top:env(safe-area-inset-top,0px)}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 Figtree,system-ui,-apple-system,"Segoe UI",sans-serif}
-.dashboard-wrapper .wrap{max-width:1240px;margin:0 auto;padding:4px 0 48px}
-.dashboard-wrapper h1,.dashboard-wrapper h2,.dashboard-wrapper h3{font-family:"Bricolage Grotesque",Figtree,system-ui,sans-serif;margin:0;letter-spacing:-.01em;color:var(--primary)}
-.dashboard-wrapper h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.1}
-.dashboard-wrapper header{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:flex-end;margin-bottom:12px}
-.dashboard-wrapper header p{margin:6px 0 0;color:var(--mute)}
-.dashboard-wrapper .brand{display:flex;align-items:center;gap:14px;min-width:0;max-width:100%}
-.dashboard-wrapper .brand-logo{width:clamp(72px,8vw,96px);height:clamp(72px,8vw,96px);object-fit:contain;flex:none}
-.dashboard-wrapper .brand-copy{min-width:0}
-.dashboard-wrapper .brand-copy h1{overflow-wrap:anywhere}
-.dashboard-wrapper .ctl{display:flex;gap:10px;flex-wrap:wrap}
-.dashboard-wrapper label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:3px}
-.dashboard-wrapper select{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:40px}
-.dashboard-wrapper :focus-visible{outline:2px solid var(--acc);outline-offset:2px}
-.dashboard-wrapper .note{background:var(--secondary-light);border-left:3px solid var(--secondary);padding:8px 12px;border-radius:6px;font-size:13px;margin:0 0 20px}
-.dashboard-wrapper h2{font-size:1.15rem;margin:26px 0 10px}
+:where(.dashboard-wrapper) *{box-sizing:border-box}
+.dashboard-wrapper{color:var(--ink);font:400 15px/1.5 Figtree,system-ui,-apple-system,"Segoe UI",sans-serif}
+:where(.dashboard-wrapper) .wrap{max-width:1240px;margin:0 auto;padding:4px 0 48px}
+:where(.dashboard-wrapper) h1,:where(.dashboard-wrapper) h2,:where(.dashboard-wrapper) h3{font-family:"Bricolage Grotesque",Figtree,system-ui,sans-serif;margin:0;letter-spacing:-.01em;color:var(--primary)}
+:where(.dashboard-wrapper) h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.1}
+:where(.dashboard-wrapper) header{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:flex-end;margin-bottom:12px}
+:where(.dashboard-wrapper) header p{margin:6px 0 0;color:var(--mute)}
+:where(.dashboard-wrapper) .brand{display:flex;align-items:center;gap:14px;min-width:0;max-width:100%}
+:where(.dashboard-wrapper) .brand-logo{width:clamp(72px,8vw,96px);height:clamp(72px,8vw,96px);object-fit:contain;flex:none}
+:where(.dashboard-wrapper) .brand-copy{min-width:0}
+:where(.dashboard-wrapper) .brand-copy h1{overflow-wrap:anywhere}
+:where(.dashboard-wrapper) .ctl{display:flex;gap:10px;flex-wrap:wrap}
+:where(.dashboard-wrapper) label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:3px}
+:where(.dashboard-wrapper) select{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:40px}
+:where(.dashboard-wrapper) :focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+:where(.dashboard-wrapper) .note{background:var(--secondary-light);border-left:3px solid var(--secondary);padding:8px 12px;border-radius:6px;font-size:13px;margin:0 0 20px}
+:where(.dashboard-wrapper) h2{font-size:1.15rem;margin:26px 0 10px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
 .k{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
 .k .t{font-size:13px;color:var(--mute)}
@@ -26,23 +25,23 @@ body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 Figtree,sy
 .k .s{font-size:12px;color:var(--mute)}
 .d{font-size:12px;font-weight:600;margin-top:6px}
 .d.up{color:var(--ok)}.d.dn{color:var(--bad)}.d.flat{color:var(--mute)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:12px}
+:where(.dashboard-wrapper) .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:12px}
 .p{background:var(--card);border:1px solid var(--secondary-light);border-radius:10px;padding:14px;min-width:0}
 .p h3{font-size:1rem}.p .h{color:var(--mute);font-size:12px;margin:2px 0 10px}
 .cv{position:relative;height:250px}
 .p.w{grid-column:1/-1}
-.hm{display:grid;grid-template-columns:42px repeat(6,1fr);gap:3px;font-size:12px;overflow-x:auto;min-width:0}
+.hm{display:grid;grid-template-columns:42px repeat(7,1fr);gap:3px;font-size:12px;overflow-x:auto;min-width:0}
 .hm div{padding:6px 2px;text-align:center;border-radius:4px}
 .hm .l{color:var(--mute);background:none}
-.dashboard-wrapper details{margin-top:26px;background:var(--card);border:1px solid var(--secondary);border-radius:10px;padding:12px 14px}
-.dashboard-wrapper summary{cursor:pointer;font-weight:600}
-.dashboard-wrapper .tb{overflow-x:auto;margin-top:10px}
-.dashboard-wrapper table{border-collapse:collapse;width:100%;min-width:560px;font-size:13px}
-.dashboard-wrapper th,.dashboard-wrapper td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
-.dashboard-wrapper th{color:var(--mute);font-weight:600}
+:where(.dashboard-wrapper) details{margin-top:26px;background:var(--card);border:1px solid var(--secondary);border-radius:10px;padding:12px 14px}
+:where(.dashboard-wrapper) summary{cursor:pointer;font-weight:600}
+:where(.dashboard-wrapper) .tb{overflow-x:auto;margin-top:10px}
+:where(.dashboard-wrapper) table{border-collapse:collapse;width:100%;min-width:560px;font-size:13px}
+:where(.dashboard-wrapper) th,:where(.dashboard-wrapper) td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+:where(.dashboard-wrapper) th{color:var(--mute);font-weight:600}
 @media(max-width:520px){.cv{height:220px}.cv.therapy-revenue-chart{height:230px}}
-@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-[hidden]{display:none!important}
+@media(prefers-reduced-motion:reduce){:where(.dashboard-wrapper) *{animation:none!important;transition:none!important}}
+:where(.dashboard-wrapper) [hidden]{display:none!important}
 button.k{font:inherit;color:inherit;text-align:left;cursor:pointer;width:100%;display:block;transition:border-color .15s}
 button.k:hover{border-color:var(--acc)}
 .k .go{font-size:12px;color:var(--acc);font-weight:600;margin-top:8px}
@@ -72,7 +71,7 @@ button.k:hover{border-color:var(--acc)}
 .cg .l{min-height:0;display:block;color:var(--mute);text-align:center;padding:2px}
 .cs{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:6px 0 4px}
 @media(max-width:520px){.cg i{min-height:40px;padding:3px 4px}}
-:root{--sg:#2a7f50;--sy:#e0a21b;--sr:#b3382a;--onf:#fff}
+.dashboard-wrapper{--sg:#2a7f50;--sy:#e0a21b;--sr:#b3382a;--onf:#fff}
 .s0{--c:var(--sr)}.s1{--c:var(--sy)}.s2{--c:var(--sg)}.s3{--c:var(--slate)}
 .dot,.badge i{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--c);color:var(--onf);font:800 15px/1 Figtree,system-ui,sans-serif;font-style:normal;flex:none}
 .s1 .dot,.s1.dot,.badge.s1 i{color:#2a1d00}
@@ -170,5 +169,5 @@ button.k:hover{border-color:var(--acc)}
 .survey-empty{margin:8px 0 0}
 .home-spacer{height:10px}
 .panel-title{margin:0}
-.heatmap-year{grid-template-columns:44px repeat(6,1fr) 58px;min-width:470px}
+.heatmap-year{grid-template-columns:44px repeat(7,1fr) 58px;min-width:470px}
 .scroll-x{overflow-x:auto}

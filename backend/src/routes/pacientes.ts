@@ -1,9 +1,51 @@
 import type { ResultSetHeader } from 'mysql2/promise';
 import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import pool, { ErroOperacao } from '../config/database.js';
+import pool, { ErroOperacao, executarTransacao } from '../config/database.js';
 import { sanitizarTexto, validarCPF, registrarErro } from '../middleware/security.js';
+import { normalizarTelefone } from '../services/telefone.js';
+import { reservaExcepcionalNaOcorrencia } from '../services/reservasAgenda.js';
 const router = Router();
+
+const camposCadastro = `p.uuid AS id, p.id_paciente, p.versao, p.nome AS nome_completo,
+  p.cpf, p.telefone, p.whatsapp, p.endereco, p.etapa_tratamento, p.atendimento_status, p.criado_em`;
+const atendimentoDoPaciente = (alias: string) =>
+  `(${alias}.paciente_uuid = p.uuid OR (COALESCE(${alias}.paciente_uuid, '') = '' AND ${alias}.id_paciente = p.id_paciente))`;
+const vinculoAssistencial = `EXISTS (
+  SELECT 1 FROM agendamento AS atendimento
+  WHERE atendimento.id_profissional = ? AND ${atendimentoDoPaciente('atendimento')}
+    AND atendimento.status NOT IN ('Cancelado', 'No_Show')
+    AND (atendimento.checkin_recepcao = 1 OR NOT ${reservaExcepcionalNaOcorrencia('atendimento')})
+)`;
+
+function escopoPaciente(req: Request) {
+  if (req.usuario?.perfil !== 'PROFISSIONAL') return { clausula: '', parametros: [] };
+  return { clausula: ` AND ${vinculoAssistencial}`, parametros: [req.usuario.profissional_id ?? null] };
+}
+
+function consultarPaciente(req: Request, id: string, campos = camposCadastro) {
+  const chave = /^\d+$/.test(id) ? 'p.id_paciente' : 'p.uuid';
+  const { clausula, parametros } = escopoPaciente(req);
+  return pool.query<any[]>(`SELECT ${campos} FROM paciente AS p WHERE ${chave} = ?${clausula} LIMIT 1`, [id, ...parametros]);
+}
+type Evolucao = { etapa_tratamento: string; historico_clinico: string | null; observacoes: string | null };
+
+function gravarEdicaoPaciente(req: Request, paciente: { id: string } & Evolucao,
+  posterior: Evolucao, sql: string, parametros: unknown[]) {
+  return executarTransacao(async db => {
+    const [resultado] = await db.query<ResultSetHeader>(sql, parametros);
+    if (!resultado.affectedRows || !req.usuario) return resultado;
+    const { etapa_tratamento, historico_clinico, observacoes } = paciente;
+    const anterior = { etapa_tratamento, historico_clinico, observacoes };
+    if (JSON.stringify(anterior) !== JSON.stringify(posterior)) {
+      await db.query(`INSERT INTO paciente_evolucao (paciente_uuid, versao, autor_id, autor_nome, anterior, posterior)
+        VALUES (?, ?, ?, ?, ?, ?)`, [paciente.id, req.body.versao + 1, req.usuario.id, req.usuario.nome,
+        JSON.stringify(anterior), JSON.stringify(posterior)]);
+    }
+    return resultado;
+  });
+}
+
 router.get('/pacientes', async (req: Request, res: Response): Promise<any> => {
   try {
     const pagina = Math.max(1, Math.min(100000, Number(req.query.pagina) || 1));
@@ -11,9 +53,13 @@ router.get('/pacientes', async (req: Request, res: Response): Promise<any> => {
     if (!Number.isInteger(pagina) || !Number.isInteger(limite)) return res.status(400).json({sucesso:false,erro:'Paginação inválida.'});
     const busca = String(req.query.busca || '').slice(0,150);
     const termo = '%' + busca + '%';
-    const filtro = '(nome_completo LIKE ? OR cpf LIKE ? OR telefone LIKE ?)';
-    const [total] = await pool.query<any[]>('SELECT COUNT(*) AS total FROM pacientes WHERE ' + filtro,[termo,termo,termo]);
-    const [rows] = await pool.query('SELECT id, versao, nome_completo, cpf, telefone, whatsapp, endereco, etapa_tratamento, atendimento_status, observacoes, historico_clinico, criado_em FROM pacientes WHERE ' + filtro + ' ORDER BY criado_em DESC, id LIMIT ? OFFSET ?', [termo,termo,termo,limite,(pagina-1)*limite]);
+    const escopo = escopoPaciente(req);
+    const filtro = '(p.nome LIKE ? OR p.cpf LIKE ? OR p.telefone LIKE ?)' + escopo.clausula;
+    const filtros = [termo, termo, termo, ...escopo.parametros];
+    const [total] = await pool.query<any[]>('SELECT COUNT(*) AS total FROM paciente AS p WHERE ' + filtro, filtros);
+    const camposClinicos = req.usuario?.perfil === 'RECEPCAO' ? '' : ', p.observacoes, p.historico_clinico';
+    const [rows] = await pool.query(`SELECT ${camposCadastro}${camposClinicos}
+      FROM paciente AS p WHERE ${filtro} ORDER BY p.criado_em DESC, p.uuid LIMIT ? OFFSET ?`, [...filtros, limite, (pagina - 1) * limite]);
     return res.status(200).json({ sucesso:true, dados:rows, total:total[0].total, pagina, limite });
   } catch (error: any) {
     if (error instanceof ErroOperacao) return res.status(error.status).json({ sucesso:false, erro:error.message });
@@ -41,44 +87,8 @@ router.get('/pacientes/:id/historico', async (req: Request, res: Response): Prom
     }
 
     const sortDirection = String(ordem).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
-    const isInteger = /^\d+$/.test(id.trim());
-
-    // 1. Verificar se o paciente existe (suporta UUID ou ID numérico de forma tipada)
-    const [pacientes]: any = isInteger
-      ? await pool.query(
-          `SELECT 
-             uuid AS id, 
-             id_paciente, versao, 
-             nome AS nome_completo, 
-             cpf, 
-             telefone, 
-             whatsapp, 
-             endereco, 
-             etapa_tratamento, 
-             atendimento_status, 
-             criado_em 
-           FROM paciente 
-           WHERE id_paciente = ? 
-           LIMIT 1`,
-          [parseInt(id.trim(), 10)]
-        )
-      : await pool.query(
-          `SELECT 
-             uuid AS id, 
-             id_paciente, versao, 
-             nome AS nome_completo, 
-             cpf, 
-             telefone, 
-             whatsapp, 
-             endereco, 
-             etapa_tratamento, 
-             atendimento_status, 
-             criado_em 
-           FROM paciente 
-           WHERE uuid = ? 
-           LIMIT 1`,
-          [id.trim()]
-        );
+    const [pacientes] = await consultarPaciente(req, id.trim());
+    const profissionalId = req.usuario?.perfil === 'PROFISSIONAL' ? req.usuario.profissional_id : undefined;
 
     if (!pacientes || pacientes.length === 0) {
       return res.status(404).json({
@@ -98,7 +108,7 @@ router.get('/pacientes/:id/historico', async (req: Request, res: Response): Prom
          TIME_FORMAT(a.horario_fim, '%H:%i') AS horario_fim,
          a.status,
          a.tipo_atendimento,
-         a.observacoes,
+         ${req.usuario?.perfil === 'RECEPCAO' ? 'NULL AS observacoes' : 'a.observacoes'},
          a.origem,
          a.valor_cobrado,
          p.id_procedimento AS servico_id,
@@ -114,9 +124,10 @@ router.get('/pacientes/:id/historico', async (req: Request, res: Response): Prom
        LEFT JOIN procedimento p ON a.id_procedimento = p.id_procedimento
        LEFT JOIN especialidade e ON p.id_especialidade = e.id_especialidade
        LEFT JOIN profissional pr ON a.id_profissional = pr.id_profissional
-       WHERE a.paciente_uuid = ? OR (COALESCE(a.paciente_uuid, '') = '' AND a.id_paciente = ?)
+       WHERE (a.paciente_uuid = ? OR (COALESCE(a.paciente_uuid, '') = '' AND a.id_paciente = ?))
+         ${profissionalId === undefined ? '' : 'AND a.id_profissional = ?'}
        ORDER BY a.data ${sortDirection}, a.horario_inicio ${sortDirection}`,
-      [paciente.id, paciente.id_paciente]
+      [paciente.id, paciente.id_paciente, ...(profissionalId === undefined ? [] : [profissionalId])]
     );
 
     // Resposta estruturada para atender CA01, CA02 e CA03
@@ -165,43 +176,7 @@ router.get('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
       return res.status(400).json({ sucesso: false, erro: 'ID do paciente inválido.' });
     }
 
-    const isInteger = /^\d+$/.test(id.trim());
-
-    const [rows]: any = isInteger
-      ? await pool.query(
-          `SELECT 
-             uuid AS id, 
-             id_paciente, versao, 
-             nome AS nome_completo, 
-             cpf, 
-             telefone, 
-             whatsapp, 
-             endereco, 
-             etapa_tratamento, 
-             atendimento_status, 
-             criado_em 
-           FROM paciente 
-           WHERE id_paciente = ? 
-           LIMIT 1`,
-          [parseInt(id.trim(), 10)]
-        )
-      : await pool.query(
-          `SELECT 
-             uuid AS id, 
-             id_paciente, versao, 
-             nome AS nome_completo, 
-             cpf, 
-             telefone, 
-             whatsapp, 
-             endereco, 
-             etapa_tratamento, 
-             atendimento_status, 
-             criado_em 
-           FROM paciente 
-           WHERE uuid = ? 
-           LIMIT 1`,
-          [id.trim()]
-        );
+    const [rows] = await consultarPaciente(req, id.trim());
 
     if (!rows || rows.length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Paciente não encontrado.' });
@@ -233,7 +208,7 @@ router.post('/pacientes', async (req: Request, res: Response): Promise<any> => {
 
     // Sanitizar numeros removendo tudo exceto digitos
     const cleanCpf = cpf.replace(/\D/g, '');
-    const cleanTelefone = telefone.replace(/\D/g, '');
+    const cleanTelefone = normalizarTelefone(telefone);
 
     // Validacao algoritmica de CPF (digitos verificadores + rejeicao de CPFs com digitos iguais)
     if (!validarCPF(cleanCpf)) {
@@ -243,7 +218,7 @@ router.post('/pacientes', async (req: Request, res: Response): Promise<any> => {
       });
     }
 
-    if (cleanTelefone.length < 10 || cleanTelefone.length > 15) {
+    if (!cleanTelefone) {
       return res.status(400).json({
         sucesso: false,
         erro: 'Telefone inválido. O número de telefone deve conter o DDD e de 10 a 15 dígitos.'
@@ -311,10 +286,9 @@ router.post('/pacientes/rapido', async (req: Request, res: Response): Promise<an
       });
     }
 
-    const telInput = (whatsapp || telefone || '').toString();
-    const cleanTelefone = telInput.replace(/\D/g, '');
+    const cleanTelefone = normalizarTelefone(whatsapp || telefone);
 
-    if (cleanTelefone.length < 10 || cleanTelefone.length > 15) {
+    if (!cleanTelefone) {
       return res.status(400).json({
         sucesso: false,
         erro: 'Telefone/WhatsApp inválido. Informe o DDD e o número (mínimo 10 dígitos).'
@@ -377,31 +351,41 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
     const { id } = req.params;
     const { nome_completo, cpf, telefone, endereco, etapa_tratamento, historico_clinico, observacoes, atendimento_status } = req.body;
 
-    // Verificar se o paciente existe
-    const [existing]: any = await pool.query(
-      'SELECT id, versao, nome_completo, cpf, telefone, endereco, etapa_tratamento, historico_clinico, observacoes, atendimento_status FROM pacientes WHERE id = ?',
-      [id]
-    );
+    const [existing] = await consultarPaciente(req, id, `${camposCadastro}, p.historico_clinico, p.observacoes`);
     if (existing.length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Paciente nao cadastrado.' });
     }
     const pacienteAtual = existing[0];
+    const pacienteUuid = pacienteAtual.id;
     if (!Number.isSafeInteger(req.body.versao) || req.body.versao < 0) return res.status(428).json({ sucesso:false, erro:'Atualize o cadastro antes de editar.' });
+
+    if (Number(pacienteAtual.versao) !== req.body.versao) {
+      return res.status(409).json({ sucesso: false, erro: 'Este cadastro foi alterado em outra tela. Recarregue os dados antes de salvar.' });
+    }
+
+    const camposClinicos = { etapa_tratamento, historico_clinico, observacoes };
+    if (req.usuario?.perfil === 'RECEPCAO' && Object.values(camposClinicos).some(valor => valor !== undefined)) {
+      return res.status(403).json({ sucesso: false, erro: 'A recepção pode atualizar somente os dados cadastrais.' });
+    }
+    if (Object.values(camposClinicos).some(valor => valor !== undefined && valor !== null && typeof valor !== 'string')) {
+      return res.status(400).json({ sucesso: false, erro: 'Os campos clínicos devem ser textos.' });
+    }
+    const posterior: Evolucao = {
+      etapa_tratamento: etapa_tratamento === undefined ? pacienteAtual.etapa_tratamento : sanitizarTexto(etapa_tratamento ?? '') || 'Avaliação',
+      historico_clinico: historico_clinico === undefined ? pacienteAtual.historico_clinico : sanitizarTexto(historico_clinico ?? '') || null,
+      observacoes: observacoes === undefined ? pacienteAtual.observacoes : sanitizarTexto(observacoes ?? '') || null,
+    };
 
     // Se for PROFISSIONAL, permite editar apenas a evolução clínica (etapa_tratamento, historico_clinico, observacoes)
     if (req.usuario?.perfil === 'PROFISSIONAL') {
-      const etapaFinal = etapa_tratamento !== undefined ? sanitizarTexto(String(etapa_tratamento)) : pacienteAtual.etapa_tratamento;
-      const histFinal = historico_clinico !== undefined ? sanitizarTexto(String(historico_clinico)) : pacienteAtual.historico_clinico;
-      const obsFinal = observacoes !== undefined ? sanitizarTexto(String(observacoes)) : pacienteAtual.observacoes;
-
-      const [resultado] = await pool.query<ResultSetHeader>(
-        `UPDATE pacientes
+      const resultado = await gravarEdicaoPaciente(req, pacienteAtual, posterior,
+        `UPDATE paciente AS p
          SET versao = versao + 1,
              etapa_tratamento = ?,
              historico_clinico = ?,
              observacoes = ?
-         WHERE id = ? AND versao = ?`,
-        [etapaFinal || 'Avaliação', histFinal || null, obsFinal || null, id, req.body.versao]
+         WHERE p.uuid = ? AND p.versao = ? AND ${vinculoAssistencial}`,
+        [posterior.etapa_tratamento, posterior.historico_clinico, posterior.observacoes, pacienteAtual.id, req.body.versao, req.usuario.profissional_id]
       );
 
       if (!resultado.affectedRows) return res.status(409).json({ sucesso: false, erro: 'Este cadastro foi alterado em outra tela. Recarregue os dados antes de salvar.' });
@@ -411,9 +395,7 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
         dados: {
           ...pacienteAtual,
           versao: req.body.versao + 1,
-          etapa_tratamento: etapaFinal || 'Avaliação',
-          historico_clinico: histFinal || null,
-          observacoes: obsFinal || null
+          ...posterior
         }
       });
     }
@@ -426,7 +408,7 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
     }
 
     const cleanCpf = cpf.replace(/\D/g, '');
-    const cleanTelefone = telefone.replace(/\D/g, '');
+    const cleanTelefone = normalizarTelefone(telefone);
 
     // Validacao algoritmica de CPF
     if (!validarCPF(cleanCpf)) {
@@ -436,7 +418,7 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
       });
     }
 
-    if (cleanTelefone.length < 10 || cleanTelefone.length > 15) {
+    if (!cleanTelefone) {
       return res.status(400).json({
         sucesso: false,
         erro: 'Telefone invalido. O numero de telefone deve conter o DDD e de 10 a 15 digitos.'
@@ -444,7 +426,7 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
     }
 
     // Verificar se o novo CPF já está cadastrado em outro paciente
-    const [dupCpf] = await pool.query('SELECT id FROM pacientes WHERE cpf = ? AND id != ?', [cleanCpf, id]);
+    const [dupCpf] = await pool.query('SELECT id FROM pacientes WHERE cpf = ? AND id != ?', [cleanCpf, pacienteUuid]);
     if ((dupCpf as any[]).length > 0) {
       return res.status(400).json({ sucesso: false, erro: 'Este CPF já está cadastrado em outro paciente.' });
     }
@@ -454,12 +436,10 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
     const enderecoSanitizado = sanitizarTexto(endereco);
 
     // Compare e grave na mesma instrução para não perder edições concorrentes.
-    const [atualizado]: any = await pool.query(
+    const atualizado = await gravarEdicaoPaciente(req, pacienteAtual, posterior,
       `UPDATE pacientes 
        SET versao = versao + 1, nome_completo = ?, cpf = ?, telefone = ?, whatsapp = ?, endereco = ?, 
-           etapa_tratamento = COALESCE(?, etapa_tratamento),
-           historico_clinico = IF(?, ?, historico_clinico),
-           observacoes = IF(?, ?, observacoes),
+           etapa_tratamento = ?, historico_clinico = ?, observacoes = ?,
            atendimento_status = COALESCE(?, atendimento_status)
        WHERE id = ? AND versao = ?`,
       [
@@ -468,13 +448,11 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
         cleanTelefone,
         cleanTelefone,
         enderecoSanitizado,
-        etapa_tratamento === undefined ? null : sanitizarTexto(etapa_tratamento),
-        historico_clinico !== undefined,
-        historico_clinico ? sanitizarTexto(historico_clinico) : null,
-        observacoes !== undefined,
-        observacoes ? sanitizarTexto(observacoes) : null,
+        posterior.etapa_tratamento,
+        posterior.historico_clinico,
+        posterior.observacoes,
         atendimento_status ?? null,
-        id, req.body.versao
+        pacienteUuid, req.body.versao
       ]
     );
 
@@ -489,9 +467,7 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
         cpf: cleanCpf,
         telefone: cleanTelefone,
         endereco: enderecoSanitizado,
-        etapa_tratamento,
-        historico_clinico,
-        observacoes,
+        ...(req.usuario?.perfil === 'RECEPCAO' ? {} : posterior),
         atendimento_status
       }
     });

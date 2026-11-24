@@ -112,31 +112,6 @@ export function validarIdNumerico(id: string): boolean {
   return !isNaN(parsed) && parsed > 0 && parsed.toString() === id;
 }
 
-// ============================================================================
-// MASCARAMENTO DE DADOS SENSIVEIS PARA LOGS
-// ============================================================================
-
-/**
- * Mascara numero de telefone/WhatsApp para logs seguros.
- * Ex: "5511999999999" -> "55119****9999"
- */
-export function mascaraTelefone(telefone: string): string {
-  if (!telefone || telefone.length < 8) return '***';
-  const visivel = 4;
-  return telefone.substring(0, telefone.length - visivel - 4) +
-         '****' +
-         telefone.substring(telefone.length - visivel);
-}
-
-/**
- * Mascara CPF para logs seguros.
- * Ex: "12345678901" -> "123.***.***-01"
- */
-export function mascaraCPF(cpf: string): string {
-  if (!cpf || cpf.length !== 11) return '***';
-  return `${cpf.substring(0, 3)}.***.***-${cpf.substring(9)}`;
-}
-
 /** Registra o contexto e o código, sem SQL, parâmetros, credenciais ou dados de pacientes. */
 export function registrarErro(contexto: string, erro: unknown): void {
   const codigo = typeof erro === 'object' && erro !== null && 'code' in erro && typeof erro.code === 'string' ? erro.code : 'ERRO_INTERNO';

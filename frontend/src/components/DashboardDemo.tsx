@@ -1,6 +1,6 @@
 import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import ServicosAgendamentos from './ServicosAgendamentos';
 import CadastroPacientes from './CadastroPacientes';
 import ModalAgendamentoRapido, { type PacienteItem } from './ModalAgendamentoRapido';
@@ -8,8 +8,9 @@ import GradeAgenda from './GradeAgenda';
 import GestaoUsuarios from './GestaoUsuarios';
 import Inicio from './Inicio';
 import Comunicacoes from './Comunicacoes';
-import IndicadoresDashboard from '../indicadores/main';
 import { PERFIL_LABELS, type UsuarioSessao } from '../services/auth';
+
+const IndicadoresDashboard = lazy(() => import('../indicadores/main'));
 
 // Tipagem de dados para o frontend
 interface Servico {
@@ -47,45 +48,29 @@ function dataHoje(): string {
 
 type AbaAgenda = 'inicio' | 'grade' | 'cadastro' | 'servicos' | 'usuarios' | 'comunicacao' | 'indicadores';
 
-const TITULO_POR_ABA: Record<AbaAgenda, string> = {
-  inicio: 'Início',
-  grade: 'Agendamentos',
-  cadastro: 'Pacientes',
-  servicos: 'Serviços e Configurações',
-  usuarios: 'Usuários',
-  comunicacao: 'Comunicação',
-  indicadores: 'Indicadores',
+const ROTA_POR_ABA: Record<AbaAgenda, string> = {
+  inicio: '/inicio',
+  grade: '/agendamentos',
+  cadastro: '/pacientes',
+  servicos: '/servicos',
+  usuarios: '/usuarios',
+  comunicacao: '/comunicacao',
+  indicadores: '/indicadores',
 };
 
-function obterAbaInicial(perfil?: UsuarioSessao['perfil']): AbaAgenda {
-  const rota = window.location.pathname.replace(/\/+$/, '') || '/agendamentos';
-  if (rota === '/inicio' && perfil === 'ADMIN') return 'inicio';
-  if (rota === '/comunicacao' && perfil === 'ADMIN') return 'comunicacao';
-  if ((rota === '/dashboard' || rota === '/indicadores') && perfil !== 'PROFISSIONAL') return 'indicadores';
-  if (rota === '/pacientes') return 'cadastro';
-  if (rota === '/servicos' && perfil === 'ADMIN') return 'servicos';
-  if (rota === '/usuarios' && perfil === 'ADMIN') return 'usuarios';
-  return 'grade';
+interface Props {
+  usuario: UsuarioSessao;
+  onLogout: () => void;
+  rota: string;
+  buscaUrl: string;
+  onNavegar: (endereco: string) => void;
 }
 
-export default function DashboardDemo({ usuario, onLogout }: { usuario?: UsuarioSessao; onLogout?: () => void }) {
-  // Todas as abas são exibidas dentro da mesma página principal (/agendamentos) sem recarregar.
-  const [currentTab, setCurrentTab] = useState<AbaAgenda>(() => obterAbaInicial(usuario?.perfil));
+export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNavegar }: Props) {
+  const currentTab = rota === '/dashboard' ? 'indicadores' :
+    (Object.keys(ROTA_POR_ABA) as AbaAgenda[]).find(aba => ROTA_POR_ABA[aba] === rota) ?? 'grade';
 
-  const selecionarAba = useCallback((novaAba: AbaAgenda) => {
-    setCurrentTab(novaAba);
-    if (window.location.pathname !== '/agendamentos' || window.location.search) {
-      window.history.replaceState(null, '', '/agendamentos');
-    }
-    document.title = `${TITULO_POR_ABA[novaAba]} | Clínica Ikigai`;
-  }, []);
-
-  useEffect(() => {
-    if (window.location.pathname !== '/agendamentos') {
-      window.history.replaceState(null, '', '/agendamentos');
-    }
-    document.title = `${TITULO_POR_ABA[currentTab]} | Clínica Ikigai`;
-  }, [currentTab]);
+  const selecionarAba = (aba: AbaAgenda) => onNavegar(ROTA_POR_ABA[aba]);
 
   // Controle de data e atualização da Grade
   const [gradeData, setGradeData] = useState<string>(dataHoje());
@@ -243,6 +228,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             {usuario?.perfil === 'ADMIN' && (
               <button
                 onClick={() => selecionarAba('inicio')}
+                aria-current={currentTab === 'inicio' ? 'page' : undefined}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                   currentTab === 'inicio'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
@@ -254,6 +240,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             )}
             <button
               onClick={() => selecionarAba('grade')}
+              aria-current={currentTab === 'grade' ? 'page' : undefined}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 currentTab === 'grade'
                   ? 'bg-white text-primary font-extrabold shadow-sm'
@@ -265,6 +252,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             {usuario && (
               <button
                 onClick={() => selecionarAba('cadastro')}
+                aria-current={currentTab === 'cadastro' ? 'page' : undefined}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer capitalize ${
                   currentTab === 'cadastro'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
@@ -277,6 +265,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             {usuario?.perfil === 'ADMIN' && (
               <button
                 onClick={() => selecionarAba('servicos')}
+                aria-current={currentTab === 'servicos' ? 'page' : undefined}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                   currentTab === 'servicos'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
@@ -289,6 +278,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             {usuario?.perfil === 'ADMIN' && (
               <button
                 onClick={() => selecionarAba('usuarios')}
+                aria-current={currentTab === 'usuarios' ? 'page' : undefined}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                   currentTab === 'usuarios'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
@@ -301,6 +291,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             {usuario?.perfil === 'ADMIN' && (
               <button
                 onClick={() => selecionarAba('comunicacao')}
+                aria-current={currentTab === 'comunicacao' ? 'page' : undefined}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                   currentTab === 'comunicacao'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
@@ -313,6 +304,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             {usuario?.perfil !== 'PROFISSIONAL' && (
               <button
                 onClick={() => selecionarAba('indicadores')}
+                aria-current={currentTab === 'indicadores' ? 'page' : undefined}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                   currentTab === 'indicadores'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
@@ -391,6 +383,7 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
             onProfissionalChange={setGradeProfissionalSelecionadoId}
             onAbrirNovoAgendamento={usuario?.perfil === 'PROFISSIONAL' ? undefined : handleAbrirAgendamentoDaGrade}
             usuarioLogado={usuario}
+            onAbrirComunicacao={onNavegar}
             onRefresh={() => {
               fetchDashboardData();
               setGradeRefreshKey(prev => prev + 1);
@@ -425,11 +418,13 @@ export default function DashboardDemo({ usuario, onLogout }: { usuario?: Usuario
         )}
 
         {currentTab === 'comunicacao' && usuario?.perfil === 'ADMIN' && (
-          <Comunicacoes onVoltarAgenda={() => selecionarAba('grade')} />
+          <Comunicacoes buscaUrl={buscaUrl} onNavegar={onNavegar} />
         )}
 
         {currentTab === 'indicadores' && usuario?.perfil !== 'PROFISSIONAL' && (
-          <IndicadoresDashboard />
+          <Suspense fallback={<p role="status">Carregando indicadores…</p>}>
+            <IndicadoresDashboard />
+          </Suspense>
         )}
       </main>
 

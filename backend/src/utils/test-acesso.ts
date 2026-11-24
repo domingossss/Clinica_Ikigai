@@ -68,6 +68,12 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
       'Cookie HttpOnly possui prazo de 12 horas e SameSite=Lax.');
     const cookie = admin.cookie;
     const adminId = admin.json.dados.usuario.id;
+    const profissionaisAgrupados = await chamar('/profissionais?incluir=procedimentos', 'GET', undefined, cookie);
+    const listaAgrupada = profissionaisAgrupados.json.dados as { id: number; procedimento_ids: number[] }[];
+    const vinculoIndividual = await chamar(`/profissionais/${listaAgrupada[0].id}/procedimentos`, 'GET', undefined, cookie);
+    verificar(profissionaisAgrupados.status === 200 && listaAgrupada.every(p => Array.isArray(p.procedimento_ids)) &&
+      [...listaAgrupada[0].procedimento_ids].sort().join() === [...vinculoIndividual.json.procedimento_ids].sort().join(),
+      'Listagem administrativa em lote preserva os vínculos individuais dos profissionais.');
     verificar((await chamar('/dashboard/especialidades', 'GET', undefined, cookie)).status === 200, 'ADMIN acessa os indicadores.');
     verificar((await chamar('/sem-regra', 'GET', undefined, cookie)).status === 403, 'Recurso sem política tem acesso negado inclusive para ADMIN.');
     verificar((await chamar('/auth/me', 'GET', undefined, cookie)).json.dados.id === adminId, 'Sessão identifica o administrador.');
@@ -98,6 +104,9 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
     verificar(pacienteRapido.status === 201 && !!pacienteRapido.json.dados?.id &&
       pacienteRapido.json.dados.whatsapp === '11987654321',
       'RECEPCAO cadastra paciente pelo formulário rápido sem CPF.');
+    verificar((await chamar('/pacientes/' + pacienteRapido.json.dados.id, 'PUT', {
+      versao: 0, historico_clinico: 'Alteração clínica fictícia',
+    }, usuario.cookie)).status === 403, 'Recepção não pode sobrescrever a evolução clínica.');
     for (const dados of [{}, { ativo: 'false' }, { ativo: null }, { ativo: 0 }]) {
       verificar((await chamar(rota + '/status', 'PATCH', dados, cookie)).status === 400, 'PATCH rejeita ' + JSON.stringify(dados));
     }
@@ -126,6 +135,23 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
     verificar(alteracoesGlobais.every(resp => resp.status === 403), 'IK-99 CA01: somente administrador pode alterar configurações globais.');
 
     const pacienteRota = '/pacientes/' + pacienteRapido.json.dados.id;
+    const pacienteId = pacienteRapido.json.dados.id;
+    const buscaAgenda = await chamar('/agenda/pacientes?busca=Paciente%20fict%C3%ADcio%20da%20recep%C3%A7%C3%A3o', 'GET', undefined, usuario.cookie);
+    verificar(buscaAgenda.json.dados?.some((p: { id: string; nome: string }) => p.id === pacienteId && Object.keys(p).length === 2) &&
+      (await chamar(pacienteRota, 'GET', undefined, usuario.cookie)).status === 404,
+      'Reserva excepcional encontra nome e identificador sem liberar prontuário antes do vínculo.');
+    await pool.query(`INSERT INTO agendamento (paciente_uuid,id_profissional,id_procedimento,data,horario_inicio,horario_fim,status)
+      VALUES (?, ?, 1, '2040-03-01', '16:00:00', '17:00:00', 'Realizado'),
+             (?, ?, 1, '2040-03-02', '16:00:00', '17:00:00', 'Cancelado')`,
+      [pacienteId, profissionalId, pacienteId, outroProfissionalId]);
+    const listaOutro = await chamar('/pacientes?busca=Paciente%20fict%C3%ADcio%20da%20recep%C3%A7%C3%A3o', 'GET', undefined, outraSessao.cookie);
+    const listaPropria = await chamar('/pacientes?busca=Paciente%20fict%C3%ADcio%20da%20recep%C3%A7%C3%A3o', 'GET', undefined, usuario.cookie);
+    const historicoProprio = await chamar(pacienteRota + '/historico', 'GET', undefined, usuario.cookie);
+    verificar(listaOutro.json.total === 0 && listaPropria.json.total === 1 && historicoProprio.json.dados?.total === 1 &&
+      (await chamar(pacienteRota, 'GET', undefined, outraSessao.cookie)).status === 404 &&
+      (await chamar(pacienteRota + '/historico', 'GET', undefined, outraSessao.cookie)).status === 404 &&
+      (await chamar(pacienteRota, 'PUT', { versao: 0, observacoes: 'Teste de isolamento' }, outraSessao.cookie)).status === 404,
+      'Só o profissional com atendimento elegível consulta ou grava prontuário e seu histórico traz apenas seus atendimentos.');
     const antes = await chamar(pacienteRota, 'GET', undefined, usuario.cookie);
     const evolucao = { etapa_tratamento: 'Retorno', historico_clinico: 'Histórico fictício', observacoes: 'Observação fictícia' };
     const alterado = await chamar(pacienteRota, 'PUT', {
@@ -137,6 +163,12 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
       depois.json.dados.etapa_tratamento === evolucao.etapa_tratamento &&
       ['nome_completo', 'cpf', 'telefone', 'whatsapp', 'endereco'].every(campo => depois.json.dados[campo] === antes.json.dados[campo]),
       'IK-99 CA02: a evolução clínica é salva e os dados cadastrais permanecem intactos.');
+    const [versoesClinicas] = await pool.query<RowDataPacket[]>(`SELECT autor_id, anterior, posterior FROM paciente_evolucao
+      WHERE paciente_uuid = ? AND versao = 1`, [pacienteId]);
+    verificar(Number(versoesClinicas[0]?.autor_id) === Number(edicao.json.dados.id) &&
+      versoesClinicas[0]?.anterior.historico_clinico === null &&
+      versoesClinicas[0]?.posterior.historico_clinico === evolucao.historico_clinico,
+      'Evolução clínica guarda autoria e versões anterior e posterior.');
     verificar((await chamar(pacienteRota, 'DELETE', undefined, usuario.cookie)).status === 403,
       'IK-99 CA02: profissional não pode excluir paciente.');
 
@@ -163,6 +195,7 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
       (await chamar(bloqueioRota, 'DELETE', undefined, usuario.cookie)).status === 200,
       'IK-99 CA03: profissionais só criam e removem bloqueios nas próprias agendas.');
 
+    await pool.query('DELETE FROM agendamento WHERE paciente_uuid = ?', [pacienteId]);
     const outroUsuarioRota = '/usuarios/' + outroCadastro.json.dados.id;
     verificar((await chamar('/profissionais/' + outroProfissionalId, 'DELETE', undefined, cookie)).status === 200,
       'Exclusão do cadastro na grade preserva a conta profissional para reassociação administrativa.');

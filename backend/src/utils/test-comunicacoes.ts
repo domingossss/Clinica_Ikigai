@@ -31,7 +31,7 @@ export async function runComunicacaoTests() {
         profissionalId = profissional.insertId;
       }
       await pool.query('INSERT INTO usuario (nome,email,senha_hash,perfil,id_profissional) VALUES (?,?,?,?,?)',
-        ['Teste comunicação', email, gerarHashSenha(senha), perfil, profissionalId]);
+        ['Teste comunicação', email, await gerarHashSenha(senha), perfil, profissionalId]);
       const login = await fetch(url + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, senha }) });
       if (!login.ok) throw new Error('Falha no login de comunicação (' + login.status + ')');
       return login.headers.get('set-cookie')!.split(';')[0];
@@ -40,10 +40,10 @@ export async function runComunicacaoTests() {
     const uuid = randomUUID();
     await pool.query("INSERT INTO paciente (uuid,nome,whatsapp) VALUES (?, 'Paciente fictício de comunicação', '5511999990000')", [uuid]);
     const ocorrencia = '2040-02-07 10:00:00';
-    async function criarAtendimento() {
+    async function criarAtendimento(pacienteUuid: string = uuid) {
       const [resultado] = await pool.query<ResultSetHeader>(`INSERT INTO agendamento
         (paciente_uuid, id_profissional, id_procedimento, data, horario_inicio, horario_fim)
-        VALUES (?,1,1,'2040-02-07','10:00:00','11:00:00')`, [uuid]);
+        VALUES (?,1,1,'2040-02-07','10:00:00','11:00:00')`, [pacienteUuid]);
       return resultado.insertId;
     }
     const id = await criarAtendimento();
@@ -62,20 +62,61 @@ export async function runComunicacaoTests() {
     const solicitar = (agendamento: number, anterior?: number, credencial = cookie) => fetch(url + '/comunicacoes/' + agendamento + '/confirmacao', {
       method: 'POST', headers: { Cookie: credencial, 'Content-Type': 'application/json' }, body: JSON.stringify({ ocorrencia, tentativaAnterior: anterior }),
     });
-    verificar((await fetch(url + '/comunicacoes')).status === 401, 'consulta anônima negada');
+    const abrirWhatsApp = (agendamento: number, credencial?: string, horario = ocorrencia, formato = '') => fetch(
+      `${url}/comunicacoes/${agendamento}/confirmacao/whatsapp?` + new URLSearchParams({ ocorrencia: horario, formato }),
+      { redirect: 'manual', headers: credencial ? { Cookie: credencial } : {} },
+    );
+    verificar((await fetch(url + '/comunicacoes')).status === 401 && (await abrirWhatsApp(id)).status === 401,
+      'consulta e abertura do WhatsApp negadas sem sessão');
     for (const perfil of ['RECEPCAO', 'PROFISSIONAL']) {
       const sessaoRestrita = await sessao(perfil);
       verificar((await fetch(url + '/comunicacoes', { headers: { Cookie: sessaoRestrita } })).status === 403 &&
         (await solicitar(id, undefined, sessaoRestrita)).status === 403 &&
-        (await buscar(String(id), sessaoRestrita)).status === 403, 'consulta e envio negados para ' + perfil);
+        (await buscar(String(id), sessaoRestrita)).status === 403 &&
+        (await abrirWhatsApp(id, sessaoRestrita)).status === 403, 'consulta, envio e abertura do WhatsApp negados para ' + perfil);
     }
     const vazio = await ((await consultar(id)).json() as Promise<any>);
     verificar(vazio.dados.length === 0 && vazio.atendimento.contatoFinal === '0000', 'lista vazia mostra o contato mascarado do atendimento');
     delete process.env.COMUNICACAO_PROVEDOR;
-    verificar((await solicitar(id)).status === 503, 'canal desabilitado impede envio');
+    verificar((await solicitar(id)).status === 503, 'canal desabilitado impede envio pelo sistema');
+    for (const [cadastro, destino] of [
+      ['(11) 99999-0000', '5511999990000'], ['5511999990000', '5511999990000'], ['+1 (202) 555-0100', '12025550100'],
+    ]) {
+      await pool.query('UPDATE paciente SET whatsapp = ? WHERE uuid = ?', [cadastro, uuid]);
+      const resposta = await abrirWhatsApp(id, cookie);
+      const link = resposta.headers.get('location');
+      if (!link) throw new Error('Comunicação: redirecionamento do WhatsApp sem destino.');
+      const destinoWhatsApp = new URL(link);
+      const mensagem = destinoWhatsApp.searchParams.get('text');
+      verificar(resposta.status === 302 && resposta.headers.get('cache-control') === 'no-store' &&
+        destinoWhatsApp.origin === 'https://wa.me' && destinoWhatsApp.pathname === '/' + destino &&
+        !!mensagem?.includes('Clínica Ikigai') && mensagem.includes('07/02/2040 às 10:00') && mensagem.includes('confirmar'),
+      'link sem provedor abre o número esperado com mensagem de confirmação (' + cadastro + ')');
+    }
+    const respostaWhatsApp = await abrirWhatsApp(id, cookie, ocorrencia, 'json');
+    const { dados: confirmacaoWhatsApp } = await respostaWhatsApp.json() as { dados: { url: string } };
+    verificar(respostaWhatsApp.ok && respostaWhatsApp.headers.get('cache-control') === 'no-store' &&
+      new URL(confirmacaoWhatsApp.url).origin === 'https://wa.me', 'interface pode validar o link antes de abrir o WhatsApp');
+    const aposAbrir = await (await consultar(id)).json() as typeof vazio;
+    verificar(aposAbrir.dados.length === 0 && aposAbrir.atendimento.status === 'Agendado',
+      'abrir WhatsApp preserva o status e não registra tentativa de envio');
+    verificar((await abrirWhatsApp(id, cookie, '')).status === 400 && (await abrirWhatsApp(2147483647, cookie)).status === 404,
+      'redirecionamento rejeita horário ausente e atendimento inexistente');
+    await pool.query("UPDATE paciente SET whatsapp = '5511999990000' WHERE uuid = ?", [uuid]);
     process.env.COMUNICACAO_PROVEDOR = 'simulado';
     process.env.COMUNICACAO_SIMULAR_RESULTADO = 'submetida';
     verificar((await solicitar(2147483647)).status === 404, 'atendimento inexistente');
+    const novoContato = await fetch(url + '/pacientes/rapido', {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome_completo: 'Contato internacional fictício', whatsapp: '+1 (202) 555-0100' }),
+    });
+    const cadastro = await novoContato.json() as { dados: { id: string; whatsapp: string } };
+    const atendimentoInternacional = await criarAtendimento(cadastro.dados.id);
+    const linkInternacional = await abrirWhatsApp(atendimentoInternacional, cookie);
+    verificar(novoContato.status === 201 && cadastro.dados.whatsapp === '+12025550100' &&
+      new URL(linkInternacional.headers.get('location')!).pathname === '/12025550100',
+      'cadastro preserva o código internacional até a abertura do WhatsApp');
+    await pool.query('DELETE FROM agendamento WHERE id_agendamento = ?', [atendimentoInternacional]);
     const cliques = await Promise.all([solicitar(id), solicitar(id)]);
     const resultados = await Promise.all(cliques.map(r => r.json() as Promise<any>));
     const lista = await ((await consultar(id)).json() as Promise<any>);
@@ -89,8 +130,13 @@ export async function runComunicacaoTests() {
     process.env.COMUNICACAO_SIMULAR_RESULTADO = 'entregue';
     const repeticoes = await Promise.all([solicitar(rejeitada, falha.dados.id), solicitar(rejeitada, falha.dados.id)]);
     const retornos = await Promise.all(repeticoes.map(r => r.json() as Promise<any>));
-    verificar(retornos[0].dados.id === retornos[1].dados.id && retornos[0].dados.estado === 'ENTREGUE' &&
-      (await ((await consultar(rejeitada)).json() as Promise<any>)).dados.length === 2, 'reenvio explícito preserva falha e não duplica a tentativa');
+    const historicoReenvio = await (await consultar(rejeitada)).json() as {
+      dados: Array<{ id: number; estado: string; referencia_externa: string | null }>;
+    };
+    const tentativaEntregue = historicoReenvio.dados.find(item => item.id === retornos[0].dados.id);
+    verificar(retornos[0].dados.id === retornos[1].dados.id && historicoReenvio.dados.length === 2 &&
+      tentativaEntregue?.estado === 'ENTREGUE' && !!tentativaEntregue.referencia_externa,
+      'reenvio explícito preserva falha e não duplica a tentativa');
     const falhas = await (await consultar(rejeitada, '&estado=FALHA')).json() as {
       dados: Array<{ id: number; ultima_tentativa: number }>;
     };
@@ -98,6 +144,7 @@ export async function runComunicacaoTests() {
       falhas.dados[0].ultima_tentativa === 0, 'filtro de falhas preserva histórico e identifica tentativa já substituída');
     await pool.query("UPDATE paciente SET whatsapp = 'inválido' WHERE uuid = ?", [uuid]);
     const invalida = await criarAtendimento();
+    verificar((await abrirWhatsApp(invalida, cookie)).status === 422, 'contato inválido impede abrir o WhatsApp');
     verificar((await ((await solicitar(invalida)).json() as Promise<any>)).dados.erro.includes('WhatsApp inválido'), 'contato inválido persiste a falha');
     await pool.query("UPDATE paciente SET whatsapp = '5511999990000' WHERE uuid = ?", [uuid]);
     const incerta = await criarAtendimento();
@@ -115,6 +162,11 @@ export async function runComunicacaoTests() {
     await pool.query("UPDATE agendamento SET data = '2040-02-05' WHERE id_agendamento = ?", [rejeitada]);
     verificar((await solicitar(invalida)).status === 409, 'confirmação manual recusada após cancelamento');
     verificar((await solicitar(incerta)).status === 409, 'confirmação do horário anterior recusada após reagendamento');
+    verificar((await abrirWhatsApp(invalida, cookie)).status === 409 && (await abrirWhatsApp(incerta, cookie)).status === 409,
+      'abertura do WhatsApp rejeita cancelamento e horário alterado');
+    const confirmacaoDesatualizada = await abrirWhatsApp(incerta, cookie, ocorrencia, 'json');
+    verificar(confirmacaoDesatualizada.status === 409 && !!(await confirmacaoDesatualizada.json() as { erro?: string }).erro,
+      'interface recebe erro de confirmação quando o horário já mudou');
     const [tentativas] = await pool.query<RowDataPacket[]>(
       "SELECT COUNT(*) AS total FROM comunicacao_agendamento WHERE tipo = 'CONFIRMACAO' AND id_agendamento IN (?, ?)",
       [invalida, incerta],

@@ -1,3 +1,4 @@
+import { useDialogAcessivel } from '../hooks/useDialogAcessivel';
 import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -141,6 +142,7 @@ function HistoricoPaciente({
 
   useClinicUpdates(() => { if (isOpen && pacienteId) void carregarHistorico(); }, ['pacientes', 'agendamentos', 'servicos', 'categorias', 'profissionais']);
 
+  const dialogo = useDialogAcessivel(isOpen, onClose);
   if (!isOpen) return null;
 
   // Filtragem local por status se selecionado
@@ -170,7 +172,8 @@ function HistoricoPaciente({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white rounded-3xl shadow-2xl border border-gray/10 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+      <div ref={dialogo} role="dialog" aria-modal="true" aria-label="Histórico do paciente" tabIndex={-1}
+        className="bg-white rounded-3xl shadow-2xl border border-gray/10 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         
         {/* HEADER */}
         <div className="p-6 border-b border-gray/10 bg-gradient-to-r from-light-gray/60 via-white to-light-gray/30 flex items-start justify-between gap-4">

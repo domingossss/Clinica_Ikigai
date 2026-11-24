@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { executarScriptSql } from './executarScriptSql.js';
 import {
   validarRegraAgendamento,
   validarHorarioExpediente,
@@ -328,20 +329,9 @@ async function testarEmBancoIsolado() {
     process.env.RATE_LIMIT_MAX = '250';
     if (process.env.DB_ADMIN_USER) process.env.DB_USER = process.env.DB_ADMIN_USER;
     if (process.env.DB_ADMIN_PASS) process.env.DB_PASS = process.env.DB_ADMIN_PASS;
-    for (const arquivo of ['schema.sql', 'seed.sql']) {
+    for (const arquivo of ['schema.sql', 'seed.sql', 'queries_kpis.sql']) {
       const sql = (await fs.readFile(path.resolve(diretorio, '../../../database', arquivo), 'utf8')).replaceAll('clinica_ikigai_db', nome);
-      let separador = ';'; let buffer = '';
-      for (const linha of sql.split(/\r?\n/)) {
-        const delimitador = linha.trim().match(/^DELIMITER\s+(\S+)/i);
-        if (delimitador) { separador = delimitador[1]; continue; }
-        buffer += linha + '\n';
-        if (linha.trimEnd().endsWith(separador)) {
-          const comando = buffer.trimEnd().slice(0, -separador.length);
-          if (comando.trim()) await admin.query(comando);
-          buffer = '';
-        }
-      }
-      if (buffer.replace(/--[^\n]*/g, '').trim()) await admin.query(buffer);
+      await executarScriptSql(admin, sql);
     }
     await executarTestes();
   } finally {

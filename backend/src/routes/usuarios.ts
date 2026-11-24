@@ -1,9 +1,8 @@
 ﻿import { Router, type Request, type Response } from 'express';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
-import pool, { ErroOperacao } from '../config/database.js';
+import pool, { ErroOperacao, executarTransacao } from '../config/database.js';
 import { sanitizarTexto } from '../middleware/security.js';
 import { gerarHashSenha, type PerfilUsuario } from '../middleware/auth.js';
-import { transacaoUsuarios } from '../services/transacaoUsuarios.js';
 
 const router = Router();
 async function vincularProfissional(conexao: PoolConnection, req: Request, usuario: ReturnType<typeof lerUsuario>, id: number | null, profissionalAtual: number | null = null) {
@@ -64,7 +63,7 @@ function lerId(req: Request): number {
 async function editarComoAdmin<T>(req: Request, id: number | null, operacao: (conexao: PoolConnection) => Promise<T>) {
   const autor = req.usuario?.id;
   if (!autor) throw new ErroOperacao(401, 'Autenticação necessária.');
-  return transacaoUsuarios(async conexao => {
+  return executarTransacao(async conexao => {
     // Bloquear autor e destino na mesma ordem impede que dois administradores removam o acesso um do outro.
     const ids = [...new Set(id === null ? [autor] : [autor, id])].sort((a, b) => a - b);
     for (const atual of ids) {
@@ -94,7 +93,7 @@ router.get('/', async (_req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { nome, email, senha, perfil } = lerUsuario(req, true);
-    const hash = gerarHashSenha(senha);
+    const hash = await gerarHashSenha(senha);
     const dados = await editarComoAdmin(req, null, async conexao => {
       const profissional_id = await vincularProfissional(conexao, req, { nome, email, senha, perfil }, null);
       const [resultado] = await conexao.query<ResultSetHeader>(
@@ -111,7 +110,7 @@ router.put('/:id', async (req, res) => {
     const id = lerId(req);
     const { nome, email, senha, perfil } = lerUsuario(req, false);
     if (req.usuario?.id === id && perfil !== 'ADMIN') throw new ErroOperacao(409, 'Não é possível remover seu próprio perfil de administrador.');
-    const hash = senha ? gerarHashSenha(senha) : null;
+    const hash = senha ? await gerarHashSenha(senha) : null;
     const profissional_id = await editarComoAdmin(req, id, async conexao => {
       const [[anterior]] = await conexao.query<RowDataPacket[]>(
         'SELECT perfil, id_profissional FROM usuario WHERE id_usuario = ?', [id]);

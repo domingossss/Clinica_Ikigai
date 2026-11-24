@@ -18,7 +18,7 @@ async function provisionar() {
     if (existentes.length) throw new Error('O banco já possui usuários. Gerencie as contas pela aplicação.');
     await conexao.query(
       "INSERT INTO usuario (nome, email, senha_hash, perfil, ativo) VALUES (?, ?, ?, 'ADMIN', 1)",
-      ['Administrador Ikigai', email, gerarHashSenha(senha)]
+      ['Administrador Ikigai', email, await gerarHashSenha(senha)]
     );
     console.log('Primeiro administrador criado.');
   } finally {
