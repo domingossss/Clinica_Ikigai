@@ -7,6 +7,8 @@ import type { AddressInfo } from 'node:net';
 import type { RowDataPacket } from 'mysql2';
 import pool from '../config/database.js';
 import { identificarSessao, validarConfiguracaoSessao } from '../middleware/auth.js';
+import { resolverJanelasAgenda, validarPeriodoAgenda } from './validation.js';
+import { janelaLembrete } from '../services/comunicacoes.js';
 
 const executar = promisify(execFile);
 
@@ -22,11 +24,15 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
   await once(servidor, 'listening');
   const origem = 'http://127.0.0.1:' + (servidor.address() as AddressInfo).port;
 
-  async function chamar(rota: string, metodo = 'GET', dados?: unknown, cookie?: string, https = false) {
+  async function chamar(rota: string, metodo = 'GET', dados?: unknown, cookie?: string, https = false, origemInvalida = false) {
     const headers: Record<string, string> = {};
     if (dados !== undefined) headers['Content-Type'] = 'application/json';
     if (cookie) headers.Cookie = cookie;
-    if (https) headers['X-Forwarded-Proto'] = 'https';
+    if (https) {
+      headers['X-Forwarded-Proto'] = 'https';
+      if (!origemInvalida) headers.Origin = origem.replace(/^http:/, 'https:');
+    }
+    if (origemInvalida) headers.Origin = 'http://site-malicioso.test';
     const resposta = await fetch(origem + '/api' + rota, {
       method: metodo, headers, body: dados === undefined ? undefined : JSON.stringify(dados),
     });
@@ -136,7 +142,7 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
 
     const pacienteRota = '/pacientes/' + pacienteRapido.json.dados.id;
     const pacienteId = pacienteRapido.json.dados.id;
-    const buscaAgenda = await chamar('/agenda/pacientes?busca=Paciente%20fict%C3%ADcio%20da%20recep%C3%A7%C3%A3o', 'GET', undefined, usuario.cookie);
+    const buscaAgenda = await chamar('/agenda/pacientes?busca=Paciente%20fict%C3%ADcio%20da%20recep%C3%A7%C3%A3o&agenda=true', 'GET', undefined, usuario.cookie);
     verificar(buscaAgenda.json.dados?.some((p: { id: string; nome: string }) => p.id === pacienteId && Object.keys(p).length === 2) &&
       (await chamar(pacienteRota, 'GET', undefined, usuario.cookie)).status === 404,
       'Reserva excepcional encontra nome e identificador sem liberar prontuário antes do vínculo.');
@@ -251,10 +257,201 @@ export async function testarAcesso(verificar: (ok: boolean, descricao: string) =
     verificar(encerrada.status === 200 && /Expires=/i.test(encerrada.setCookie) &&
       (await chamar('/auth/me', 'GET', undefined, sair.cookie)).status === 401, 'Logout limpa o cookie e revoga a sessão no banco.');
 
+    // ── CT-01: Prontuário RBAC, validação de chegada, lock otimista e preservação de histórico ──
+    const recepcaoPront = criar('Recepção Prontuário', 'recepcao-pront@example.test', 'RECEPCAO');
+    await chamar('/usuarios', 'POST', recepcaoPront, cookie);
+    const sessaoRecepcao = await chamar('/auth/login', 'POST', recepcaoPront);
+    const profPront = criar('Profissional Prontuário', 'prof-pront@example.test', 'PROFISSIONAL');
+    const profProntCad = await chamar('/usuarios', 'POST', profPront, cookie);
+    const sessaoProfPront = await chamar('/auth/login', 'POST', profPront);
+    const profProntId = profProntCad.json.dados.profissional_id;
+
+    const pacPront = await chamar('/pacientes', 'POST', {
+      nome_completo: 'Paciente Prontuário Auditoria',
+      cpf: '52998224725',
+      telefone: '11999990001',
+      endereco: 'Rua Original, 10',
+    }, cookie);
+    const pacProntUuid = pacPront.json.dados.id;
+
+    // 1. RECEPCAO não acessa prontuário (403)
+    verificar(
+      (await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'GET', undefined, sessaoRecepcao.cookie)).status === 403 &&
+      (await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'PUT', { versao: 0, anamnese: 'x' }, sessaoRecepcao.cookie)).status === 403,
+      'CT-01: RECEPCAO não pode ler nem editar prontuário clínico (403).'
+    );
+
+    // 2. PROFISSIONAL sem vínculo ou com reserva excepcional não validada recebe 404
+    const [agExcRes] = await pool.query<any>(
+      `INSERT INTO agendamento (paciente_uuid, id_profissional, id_procedimento, data, horario_inicio, horario_fim, status, checkin_recepcao)
+       VALUES (?, ?, 1, '2040-04-10', '10:00:00', '11:00:00', 'Agendado', 0)`,
+      [pacProntUuid, profProntId]
+    );
+    const agExcId = Number(agExcRes.insertId);
+    await pool.query(
+      `INSERT INTO historico_status_agendamento (id_agendamento, status_novo, tipo_evento, alterado_por, motivo)
+       VALUES (?, 'Agendado', 'CRIACAO', 'Profissional Prontuário', 'Reserva confirmada pelo profissional em dia fechado')`,
+      [agExcId]
+    );
+    verificar(
+      (await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'GET', undefined, sessaoProfPront.cookie)).status === 404 &&
+      (await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'PUT', { versao: 0, agendamento_id: agExcId, anamnese: 'indevida' }, sessaoProfPront.cookie)).status === 404,
+      'CT-01: Reserva excepcional sem validação de chegada mantém prontuário bloqueado para PROFISSIONAL (404).'
+    );
+
+    // 3. Após RECEPCAO validar chegada, PROFISSIONAL acessa, mas não altera campos cadastrais e respeita versão/datas
+    await pool.query('UPDATE agendamento SET checkin_recepcao = 1 WHERE id_agendamento = ?', [agExcId]);
+    const prontAberto = await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'GET', undefined, sessaoProfPront.cookie);
+    verificar(
+      prontAberto.status === 200 && prontAberto.json.dados?.paciente?.versao === 0,
+      'CT-01: Após validação de chegada pela recepção, PROFISSIONAL acessa prontuário com versão otimista.'
+    );
+    const dataInvalida = await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'PUT', {
+      versao: 0, agendamento_id: agExcId, data_nascimento: '2026-02-31',
+    }, cookie);
+    verificar(dataInvalida.status === 400, 'CT-01: Prontuário rejeita data de nascimento inválida (2026-02-31).');
+    const semVersao = await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'PUT', {
+      agendamento_id: agExcId, anamnese: 'Sem versão',
+    }, sessaoProfPront.cookie);
+    verificar(semVersao.status === 428, 'CT-01: Prontuário exige controle de versão otimista (428).');
+    const salvoPront = await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'PUT', {
+      versao: 0, agendamento_id: agExcId, rg: '999999', endereco: 'Rua Invadida',
+      etapa_tratamento: 'Em Tratamento', anamnese: 'Anamnese da sessão', evolucao: 'Evolução da sessão',
+    }, sessaoProfPront.cookie);
+    const conflitoPront = await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'PUT', {
+      versao: 0, agendamento_id: agExcId, anamnese: 'Versão obsoleta',
+    }, sessaoProfPront.cookie);
+    const prontDepois = await chamar(`/pacientes/${pacProntUuid}/prontuario`, 'GET', undefined, cookie);
+    verificar(
+      salvoPront.status === 200 &&
+      salvoPront.json.dados?.versao === 1 &&
+      conflitoPront.status === 409 &&
+      prontDepois.json.dados?.paciente?.endereco === 'Rua Original, 10' &&
+      prontDepois.json.dados?.paciente?.historico_clinico === null,
+      'CT-01: Prontuário incrementa versão, detecta conflito 409, preserva cadastro e não sobrescreve histórico global.'
+    );
+
+    // ── CT-02: Primeiro acesso obrigatório, credencial temporária aleatória e rotação de sessão ──
+    const novoPrimeiroAcesso = await chamar('/usuarios', 'POST', {
+      nome: 'Usuário Primeiro Acesso',
+      email: 'primeiro-acesso@example.test',
+      perfil: 'RECEPCAO',
+    }, cookie);
+    const credTemp = String(novoPrimeiroAcesso.json.dados?.credencial_temporaria || '');
+    verificar(
+      novoPrimeiroAcesso.status === 201 &&
+      credTemp.length >= 10 &&
+      credTemp !== 'Ikigai@123' &&
+      novoPrimeiroAcesso.json.dados?.primeiro_acesso === true,
+      'CT-02: Criação sem senha gera credencial temporária aleatória e marca primeiro acesso.'
+    );
+    const loginTemp1 = await chamar('/auth/login', 'POST', { email: 'primeiro-acesso@example.test', senha: credTemp });
+    const loginTemp2 = await chamar('/auth/login', 'POST', { email: 'primeiro-acesso@example.test', senha: credTemp });
+    verificar(
+      loginTemp1.status === 200 &&
+      (await chamar('/pacientes', 'GET', undefined, loginTemp1.cookie)).status === 403 &&
+      (await chamar('/auth/trocar-senha', 'POST', { nova_senha: 'curta', confirmar_senha: 'curta' }, loginTemp1.cookie)).status === 400 &&
+      (await chamar('/auth/trocar-senha', 'POST', { nova_senha: 'NovaSenha123!', confirmar_senha: 'Diferente123!' }, loginTemp1.cookie)).status === 400,
+      'CT-02: Primeiro acesso bloqueia APIs (403) até trocar senha e valida tamanho mínimo e confirmação.'
+    );
+    const senhaNova = 'NovaSenhaSegura2026!';
+    const trocaOk = await chamar('/auth/primeiro-acesso/senha', 'POST', { nova_senha: senhaNova, confirmar_senha: senhaNova }, loginTemp1.cookie);
+    verificar(
+      trocaOk.status === 200 &&
+      !!trocaOk.cookie &&
+      trocaOk.cookie !== loginTemp1.cookie &&
+      (await chamar('/auth/me', 'GET', undefined, loginTemp2.cookie)).status === 401 &&
+      (await chamar('/pacientes', 'GET', undefined, trocaOk.cookie)).status === 200 &&
+      (await chamar('/auth/primeiro-acesso/senha', 'POST', { nova_senha: 'OutraSenha2026!', confirmar_senha: 'OutraSenha2026!' }, trocaOk.cookie)).status === 403 &&
+      (await chamar('/auth/trocar-senha', 'POST', { nova_senha: 'OutraSenha2026!', confirmar_senha: 'OutraSenha2026!' }, trocaOk.cookie)).status === 400,
+      'CT-02: Rota dedicada de primeiro acesso rotaciona cookie, revoga outras sessões, bloqueia reutilização (403) e exige senha_atual em trocas futuras.'
+    );
+
+    // ── CT-03: Personalização individual de procedimentos pelo PROFISSIONAL sem mutar catálogo global ──
+    const bloqueioGlobal = await chamar(`/profissionais/${profProntId}/procedimentos`, 'POST', {
+      nome: 'Procedimento Global Indevido', duracao_minutos: 45, preco: 999,
+    }, sessaoProfPront.cookie);
+    const [procAntes] = await pool.query<RowDataPacket[]>('SELECT duracao_minutos, preco, ativo FROM procedimento WHERE id_procedimento = 1');
+    const vincularProc = await chamar(`/profissionais/${profProntId}/procedimentos`, 'POST', {
+      procedimento_id: 1, duracao_minutos: 45, preco: 320,
+    }, sessaoProfPront.cookie);
+    const editarProcIndividual = await chamar(`/profissionais/${profProntId}/procedimentos/1`, 'PUT', {
+      duracao_minutos: 50, preco: 350, ativo: 0,
+    }, sessaoProfPront.cookie);
+    const [procDepois] = await pool.query<RowDataPacket[]>('SELECT duracao_minutos, preco, ativo FROM procedimento WHERE id_procedimento = 1');
+    const listaMeusProcs = await chamar(`/profissionais/${profProntId}/procedimentos`, 'GET', undefined, sessaoProfPront.cookie);
+    const meuProc1 = (listaMeusProcs.json.dados || []).find((p: { id: number }) => Number(p.id) === 1);
+    const profsElegiveisServico1 = await chamar('/servicos/1/profissionais', 'GET', undefined, cookie);
+    const pausadoOcultoNaRecepcao = !(profsElegiveisServico1.json.dados || []).some(
+      (p: { id: number }) => Number(p.id) === Number(profProntId)
+    );
+    verificar(
+      bloqueioGlobal.status === 403 &&
+      [200, 201].includes(vincularProc.status) &&
+      editarProcIndividual.status === 200 &&
+      Number(procDepois[0].duracao_minutos) === Number(procAntes[0].duracao_minutos) &&
+      Number(procDepois[0].preco) === Number(procAntes[0].preco) &&
+      Number(procDepois[0].ativo) === Number(procAntes[0].ativo) &&
+      Number(meuProc1?.duracao_minutos) === 50 &&
+      Number(meuProc1?.preco) === 350 &&
+      Number(meuProc1?.ativo_profissional) === 0 &&
+      pausadoOcultoNaRecepcao,
+      'CT-03: PROFISSIONAL personaliza duração, preço e pausa apenas na própria agenda sem mutar catálogo global e pausa oculta da recepção.'
+    );
+
+    // ── CT-05: Validações de calendário, Horario_Especial, timezone, XSS e DELETE por ID numérico ──
+    const janelasEspecial = resolverJanelasAgenda(
+      '2040-04-10',
+      { ativo: 1, horario_inicio: '08:00', horario_fim: '18:00', intervalo_inicio: '12:00', intervalo_fim: '13:00' },
+      { tipo_excecao: 'Horario_Especial', horario_inicio: '09:00', horario_fim: '13:00' }
+    );
+    const fusoAnterior = process.env.LEMBRETE_FUSO;
+    process.env.LEMBRETE_FUSO = 'Timezone/Invalida_XYZ';
+    const janelaInvalida = janelaLembrete(new Date());
+    if (fusoAnterior === undefined) delete process.env.LEMBRETE_FUSO; else process.env.LEMBRETE_FUSO = fusoAnterior;
+
+    const profXss = await chamar('/profissionais', 'POST', { nome: 'Dr. <b>Seguro</b>', especialidade: '<script>x</script>Acupuntura' }, cookie);
+    const pacDel = await chamar('/pacientes', 'POST', {
+      nome_completo: 'Paciente Exclusao Numerica',
+      cpf: '11144477735',
+      telefone: '11988887777',
+      endereco: 'Rua Exclusao, 50',
+    }, cookie);
+    const [pacDelRow] = await pool.query<RowDataPacket[]>('SELECT id_paciente FROM paciente WHERE uuid = ?', [pacDel.json.dados.id]);
+    const putVersao = await chamar(`/pacientes/${pacDel.json.dados.id}`, 'PUT', {
+      versao: 0,
+      nome_completo: 'Paciente Exclusao Atualizado',
+      cpf: '11144477735',
+      telefone: '11988887777',
+      endereco: 'Rua Exclusao, 50',
+    }, cookie);
+    const delPorId = await chamar(`/pacientes/${pacDelRow[0].id_paciente}`, 'DELETE', undefined, cookie);
+    verificar(
+      JSON.stringify(janelasEspecial) === JSON.stringify([[540, 780]]) &&
+      validarPeriodoAgenda('2026-02-31', '2026-03-01').valido === false &&
+      validarPeriodoAgenda('2026-01-01', '2028-01-01').valido === false &&
+      janelaInvalida === null &&
+      profXss.status === 201 && !/<|>/i.test(String(profXss.json.dados?.nome || '')) &&
+      putVersao.status === 200 && putVersao.json.dados?.versao === 1 &&
+      delPorId.status === 200,
+      'CT-05: Horario_Especial preserva turno, datas inválidas/longas e timezones inválidos são tratados, HTML é sanitizado e PUT/DELETE de paciente funcionam.'
+    );
+
+    await pool.query('DELETE FROM prontuario_consulta WHERE paciente_uuid = ?', [pacProntUuid]);
+    await pool.query('DELETE FROM agendamento WHERE id_agendamento = ?', [agExcId]);
+    await pool.query('DELETE FROM paciente_evolucao WHERE paciente_uuid = ?', [pacProntUuid]);
+    await pool.query('DELETE FROM paciente WHERE uuid = ?', [pacProntUuid]);
+
     process.env.NODE_ENV = 'production';
     const producao = await chamar('/auth/login', 'POST', recepcao, undefined, true);
+    const semOrigemProd = await fetch(origem + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-Proto': 'https' },
+      body: JSON.stringify(recepcao),
+    });
     verificar(producao.status === 200 && /; Secure(;|$)/i.test(producao.setCookie) &&
-      (await chamar('/auth/login', 'POST', recepcao)).status === 403, 'Publicação exige HTTPS e emite cookie Secure pelo proxy local.');
+      semOrigemProd.status === 403 &&
+      (await chamar('/auth/login', 'POST', recepcao, undefined, false, true)).status === 403, 'Publicação exige HTTPS, valida Origin estritamente e emite cookie Secure pelo proxy local.');
     delete process.env.SESSION_SECRET;
     delete process.env.JWT_SECRET;
     let rejeitado = false;

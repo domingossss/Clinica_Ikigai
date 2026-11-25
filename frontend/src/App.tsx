@@ -1,14 +1,17 @@
-import { lazy, Suspense, useEffect, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
 import { startClinicUpdates } from './services/clinicUpdates';
 import { eventoSessao } from './api';
-import { buscarSessao, encerrarSessao, trocarSenhaPrimeiroAcesso, type UsuarioSessao } from './services/auth';
+import { buscarSessao, encerrarSessao, type UsuarioSessao } from './services/auth';
 import TelaLogin from './components/TelaLogin';
-import CampoSenha from './components/CampoSenha';
+import TelaPrimeiroAcesso from './components/TelaPrimeiroAcesso';
 
 const Agenda = lazy(() => import('./components/DashboardDemo'));
 
+const ROTA_PRIMEIRO_ACESSO = '/primeiro-acesso';
+
 const titulos: Record<string, string> = {
   '/login': 'Login',
+  [ROTA_PRIMEIRO_ACESSO]: 'Primeiro Acesso',
   '/inicio': 'Início',
   '/agendamentos': 'Agendamentos',
   '/pacientes': 'Pacientes',
@@ -25,9 +28,11 @@ const rotasProtegidas = new Set([
 ]);
 const rotaAtual = () => window.location.pathname.replace(/\/+$/, '') || '/';
 const rotaPadrao = (usuario: UsuarioSessao) => usuario.perfil === 'ADMIN' ? '/inicio' : '/agendamentos';
+const precisaTrocarSenha = (usuario: UsuarioSessao | null | undefined) =>
+  Boolean(usuario?.primeiro_acesso || usuario?.precisa_trocar_senha);
 
 function rotaPermitida(rota: string, usuario: UsuarioSessao) {
-  if (rota === '/acesso') return false;
+  if (rota === '/acesso' || rota === ROTA_PRIMEIRO_ACESSO) return false;
   if (['/inicio', '/servicos', '/usuarios'].includes(rota)) return usuario.perfil === 'ADMIN';
   if (rota === '/procedimentos') return usuario.perfil === 'PROFISSIONAL';
   if (rota === '/dashboard' || rota === '/indicadores' || rota === '/comunicacao') return usuario.perfil !== 'PROFISSIONAL';
@@ -35,6 +40,13 @@ function rotaPermitida(rota: string, usuario: UsuarioSessao) {
 }
 
 function restaurarDestino(usuario: UsuarioSessao) {
+  if (precisaTrocarSenha(usuario)) {
+    if (rotaAtual() !== ROTA_PRIMEIRO_ACESSO) {
+      window.history.replaceState(null, '', ROTA_PRIMEIRO_ACESSO);
+      window.dispatchEvent(new Event('popstate'));
+    }
+    return;
+  }
   if (rotaAtual() !== '/login') return;
   const pendente = window.history.state?.ikigaiDestino as { rota?: unknown; busca?: unknown } | undefined;
   const destinoPermitido = typeof pendente?.rota === 'string' && rotasProtegidas.has(pendente.rota) &&
@@ -46,8 +58,9 @@ function restaurarDestino(usuario: UsuarioSessao) {
 
 function destino(usuario: UsuarioSessao | null) {
   if (!usuario) return '/login';
+  if (precisaTrocarSenha(usuario)) return ROTA_PRIMEIRO_ACESSO;
   const rota = rotaAtual();
-  return ['/', '/login', '/acesso'].includes(rota) ? rotaPadrao(usuario) : rota;
+  return ['/', '/login', '/acesso', ROTA_PRIMEIRO_ACESSO].includes(rota) ? rotaPadrao(usuario) : rota;
 }
 
 function observarEndereco(atualizar: () => void) {
@@ -98,9 +111,10 @@ export default function App() {
       window.removeEventListener('focus', consultar);
     };
   }, []);
+  const pendenteTrocaSenha = precisaTrocarSenha(usuario);
   useEffect(() => {
-    if (usuario) return startClinicUpdates();
-  }, [usuario]);
+    if (usuario && !pendenteTrocaSenha) return startClinicUpdates();
+  }, [usuario, pendenteTrocaSenha]);
   const rota = usuario === undefined ? '' : destino(usuario);
   useEffect(() => {
     if (!rota) return;
@@ -124,16 +138,35 @@ export default function App() {
       setErro('Não foi possível confirmar a saída. Tente novamente.');
     }
   }
-  if (usuario === undefined) return <main className="p-8 text-center"><p role="status">{erro || 'Verificando sessão…'}</p>{erro && <button onClick={() => window.location.reload()}>Tentar novamente</button>}</main>;
+  if (usuario === undefined) {
+    return (
+      <main className="min-h-screen bg-light-gray flex flex-col items-center justify-center p-8 text-center gap-4">
+        <p role="status" className="text-sm text-dark font-medium">{erro || 'Verificando sessão…'}</p>
+        {erro && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition-all cursor-pointer"
+          >
+            Tentar novamente
+          </button>
+        )}
+      </main>
+    );
+  }
   if (!usuario) return <TelaLogin onLoginSuccess={sessao => {
     restaurarDestino(sessao);
     setUsuario(sessao);
   }} />;
-  if (usuario.primeiro_acesso || usuario.precisa_trocar_senha) {
+  if (rota === ROTA_PRIMEIRO_ACESSO && pendenteTrocaSenha) {
     return (
       <TelaPrimeiroAcesso
         usuario={usuario}
-        onSenhaAlterada={() => setUsuario({ ...usuario, primeiro_acesso: false, precisa_trocar_senha: false })}
+        onSenhaAlterada={() => {
+          const atualizado = { ...usuario, primeiro_acesso: false, precisa_trocar_senha: false };
+          window.history.replaceState(null, '', rotaPadrao(atualizado));
+          setUsuario(atualizado);
+        }}
         onLogout={sair}
       />
     );
@@ -141,122 +174,65 @@ export default function App() {
   const restrito = !rotaPermitida(rota, usuario);
   return <div className="min-h-screen bg-light-gray font-sans text-dark">
     {erro && <p role="alert" className="p-3 bg-red-50 text-red-800">{erro}</p>}
-    <Suspense fallback={<p role="status">Carregando página…</p>}>
-      {restrito ? <main className="p-8"><h1>Acesso restrito</h1><p>Esta área requer permissão. Consulte a administração da clínica.</p></main>
-        : rotasProtegidas.has(rota) ? <Agenda key={usuario.id + ':' + usuario.perfil + ':' + (usuario.profissional_id ?? '')}
+    <Suspense fallback={<p role="status" className="p-8 text-center text-sm text-gray">Carregando página…</p>}>
+      {restrito ? (
+        <TelaEstadoRota
+          titulo="Acesso restrito"
+          descricao="Esta área requer permissão específica. Consulte a administração da clínica ou volte para a sua página inicial."
+          rotuloAcao="Voltar para o início"
+          onVoltar={() => navegar(rotaPadrao(usuario))}
+          onSair={() => void sair()}
+        />
+      ) : rotasProtegidas.has(rota) ? (
+        <Agenda key={usuario.id + ':' + usuario.perfil + ':' + (usuario.profissional_id ?? '')}
           usuario={usuario} onLogout={sair} rota={rota} buscaUrl={window.location.search} onNavegar={navegar} />
-        : <main className="p-8"><h1>Página não encontrada</h1></main>}
+      ) : (
+        <TelaEstadoRota
+          titulo="Página não encontrada"
+          descricao="O endereço acessado não existe na plataforma da Clínica Ikigai."
+          rotuloAcao="Ir para a página inicial"
+          onVoltar={() => navegar(rotaPadrao(usuario))}
+          onSair={() => void sair()}
+        />
+      )}
     </Suspense>
   </div>;
 }
 
-function TelaPrimeiroAcesso({
-  usuario,
-  onSenhaAlterada,
-  onLogout,
+function TelaEstadoRota({
+  titulo,
+  descricao,
+  rotuloAcao,
+  onVoltar,
+  onSair,
 }: {
-  usuario: UsuarioSessao;
-  onSenhaAlterada: () => void;
-  onLogout: () => void;
+  titulo: string;
+  descricao: string;
+  rotuloAcao: string;
+  onVoltar: () => void;
+  onSair: () => void;
 }) {
-  const [novaSenha, setNovaSenha] = useState('');
-  const [confirmarSenha, setConfirmarSenha] = useState('');
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setErro(null);
-    if (novaSenha.length < 6) {
-      setErro('A nova senha deve ter pelo menos 6 caracteres.');
-      return;
-    }
-    if (novaSenha !== confirmarSenha) {
-      setErro('A confirmação da senha não confere.');
-      return;
-    }
-    setSalvando(true);
-    try {
-      await trocarSenhaPrimeiroAcesso(novaSenha, confirmarSenha);
-      onSenhaAlterada();
-    } catch (err) {
-      setErro(err instanceof Error ? err.message : 'Erro ao definir nova senha.');
-    } finally {
-      setSalvando(false);
-    }
-  }
-
   return (
-    <main className="min-h-screen bg-light-gray flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray/15 overflow-hidden">
-        <div className="bg-primary text-white px-6 py-5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <img src="/logo.png" alt="Clínica Ikigai" className="w-10 h-10 rounded-xl object-cover bg-white/10" />
-            <div>
-              <h1 className="text-base font-bold leading-tight">Primeiro Acesso</h1>
-              <p className="text-xs text-white/80">Olá, {usuario.nome}! Defina sua senha pessoal</p>
-            </div>
-          </div>
+    <main className="min-h-screen flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-sm border border-gray/15 p-6 text-center space-y-4">
+        <h1 className="text-lg font-bold text-dark">{titulo}</h1>
+        <p className="text-xs text-gray">{descricao}</p>
+        <div className="flex items-center justify-center gap-2 pt-1">
           <button
             type="button"
-            onClick={onLogout}
-            className="text-xs font-bold px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+            onClick={onVoltar}
+            className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark cursor-pointer"
+          >
+            {rotuloAcao}
+          </button>
+          <button
+            type="button"
+            onClick={onSair}
+            className="px-4 py-2 rounded-xl border border-gray/25 text-xs font-bold text-dark hover:bg-light-gray cursor-pointer"
           >
             Sair
           </button>
         </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
-            Sua conta está utilizando a <strong>senha padrão inicial</strong>. Para sua segurança, escolha uma nova senha pessoal antes de acessar o sistema.
-          </div>
-
-          {erro && (
-            <div role="alert" className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl px-4 py-3 font-medium">
-              {erro}
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="primeiro-acesso-nova" className="block text-xs font-bold text-dark mb-1.5">
-              Nova senha (mín. 6 caracteres)
-            </label>
-            <CampoSenha
-              id="primeiro-acesso-nova"
-              required
-              minLength={6}
-              autoComplete="new-password"
-              value={novaSenha}
-              onChange={e => setNovaSenha(e.target.value)}
-              placeholder="Digite sua nova senha"
-              className="w-full px-3.5 py-2.5 rounded-xl border border-gray/25 text-sm text-dark focus:outline-none focus:ring-2 focus:ring-primary/40"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="primeiro-acesso-confirmar" className="block text-xs font-bold text-dark mb-1.5">
-              Confirmar nova senha
-            </label>
-            <CampoSenha
-              id="primeiro-acesso-confirmar"
-              required
-              minLength={6}
-              autoComplete="new-password"
-              value={confirmarSenha}
-              onChange={e => setConfirmarSenha(e.target.value)}
-              placeholder="Repita sua nova senha"
-              className="w-full px-3.5 py-2.5 rounded-xl border border-gray/25 text-sm text-dark focus:outline-none focus:ring-2 focus:ring-primary/40"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={salvando}
-            className="w-full py-2.5 px-4 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-dark transition-all disabled:opacity-50 cursor-pointer"
-          >
-            {salvando ? 'Salvando nova senha...' : 'Salvar Senha e Acessar Sistema'}
-          </button>
-        </form>
       </div>
     </main>
   );

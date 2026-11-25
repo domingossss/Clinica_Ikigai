@@ -59,7 +59,9 @@ const STATUS_BADGES: Record<string, { label: string; corFundo: string; corTexto:
 
 function formatarDataBR(dataStr: string): string {
   if (!dataStr) return '';
-  const [ano, mes, dia] = dataStr.split('-');
+  const partes = dataStr.split('-');
+  if (partes.length !== 3) return dataStr;
+  const [ano, mes, dia] = partes;
   return `${dia}/${mes}/${ano}`;
 }
 
@@ -162,8 +164,12 @@ function HistoricoPaciente({
 
   const totalAtendimentos = historico.length;
   const totalRealizados = historico.filter(h => h.status === 'Realizado' || h.status === 'Concluído').length;
-  const totalFuturos = historico.filter(h => h.status === 'Agendado' || h.status === 'Confirmado').length;
-  const totalCancelados = historico.filter(h => h.status === 'Cancelado' || h.status === 'No_Show').length;
+  const totalFuturos = historico.filter(
+    h => h.status === 'Agendado' || h.status === 'Confirmado' || h.status === 'Na Recepção' || h.status === 'Em Atendimento'
+  ).length;
+  const totalCancelados = historico.filter(
+    h => h.status === 'Cancelado' || h.status === 'No_Show' || h.status === 'Reagendado'
+  ).length;
 
   return (
     <div
@@ -362,7 +368,14 @@ function HistoricoPaciente({
           {/* ESTADO: LISTA DE ATENDIMENTOS (CA01 e CA02) */}
           {!carregando && !erro && historico.length > 0 && historicoFiltrado.length === 0 && (
             <div className="py-12 text-center text-xs text-gray font-semibold">
-              Nenhum atendimento com o filtro selecionado ({filtroStatus}).
+              Nenhum atendimento com o filtro selecionado ({
+                ({
+                  TODOS: 'Todos',
+                  REALIZADOS: 'Realizados',
+                  AGENDADOS: 'Agendados / Em curso',
+                  CANCELADOS: 'Cancelados / Faltas / Reagendados',
+                } as Record<string, string>)[filtroStatus] || filtroStatus
+              }).
             </div>
           )}
 

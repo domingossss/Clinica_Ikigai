@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import poolPadrao, { ErroOperacao } from '../config/database.js';
-import { obterJanelasAgenda } from './janelasAgenda.js';
+import { carregarJanelasAgenda, obterJanelasAgenda } from './janelasAgenda.js';
+import { publicarAlteracao } from './alteracoesClinica.js';
 import { transacaoAgenda } from './reservasAgenda.js';
 import { sanitizarTexto, validarCPF, validarFormatoData } from '../middleware/security.js';
 import {
   calcularHorarioTermino,
   converterHorarioParaMinutos,
   converterMinutosParaHorario,
-  ExcecaoDia,
   horarioCabeNasJanelas,
   JanelaAgenda,
   JornadaDia,
@@ -317,9 +317,35 @@ export function adicionarDiasDataIso(dataIso: string, dias: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
+export function variantesTelefoneBr(valor: string | null | undefined): string[] {
+  const base = normalizarDigitosTelefoneComparacao(valor);
+  if (!base) return [];
+  const variantes = new Set<string>([base, `55${base}`]);
+  if (base.length === 11 && base[2] === '9') {
+    const sem9 = `${base.slice(0, 2)}${base.slice(3)}`;
+    variantes.add(sem9);
+    variantes.add(`55${sem9}`);
+  } else if (base.length === 10) {
+    const com9 = `${base.slice(0, 2)}9${base.slice(2)}`;
+    variantes.add(com9);
+    variantes.add(`55${com9}`);
+  }
+  return [...variantes];
+}
+
+const formatadorDataHoraClinica = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
 function formatarDataHoraMySql(ms: number): string {
-  const dt = new Date(ms);
-  return dt.toISOString().slice(0, 19).replace('T', ' ');
+  return formatadorDataHoraClinica.format(new Date(ms));
 }
 
 /**
@@ -423,7 +449,7 @@ export class InMemoryWhatsAppClinicRepository implements WhatsAppClinicRepositor
 
     if (atual && atual.idSessaoChatbot) {
       const sb = this.sessoesChatbot.find(s => s.id_sessao === atual.idSessaoChatbot);
-      if (sb && sb.status_sessao === 'Em_Andamento') {
+      if (sb && sb.status_sessao === 'Em_Andamento' && sb.escalonado_humano === 0) {
         sb.status_sessao = 'Abandonada';
         sb.data_hora_fim = formatarDataHoraMySql(nowMs);
       }
@@ -474,9 +500,10 @@ export class InMemoryWhatsAppClinicRepository implements WhatsAppClinicRepositor
       if (sb) {
         if (opcoes.statusSessaoChatbot) {
           sb.status_sessao = opcoes.statusSessaoChatbot;
-          if (opcoes.statusSessaoChatbot !== 'Em_Andamento') {
-            sb.data_hora_fim = formatarDataHoraMySql(nowMs);
-          }
+          sb.data_hora_fim = opcoes.statusSessaoChatbot !== 'Em_Andamento' ? formatarDataHoraMySql(nowMs) : null;
+        } else if (opcoes.escalonadoHumano === true) {
+          sb.status_sessao = 'Em_Andamento';
+          sb.data_hora_fim = null;
         }
         if (opcoes.escalonadoHumano !== undefined) {
           sb.escalonado_humano = opcoes.escalonadoHumano ? 1 : 0;
@@ -1175,6 +1202,11 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
 
   private async garantirTabelasConversacao(): Promise<void> {
     if (this.tabelasVerificadas) return;
+    // Em produção, as tabelas devem ser criadas via db:migrate (menor privilégio de banco).
+    if (process.env.NODE_ENV === 'production') {
+      this.tabelasVerificadas = true;
+      return;
+    }
     await this.dbPool.query(`
       CREATE TABLE IF NOT EXISTS whatsapp_sessao_conversa (
         conversation_id VARCHAR(64) PRIMARY KEY,
@@ -1188,7 +1220,10 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
         criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_whatsapp_sessao_expira (expira_em),
-        INDEX idx_whatsapp_sessao_paciente (paciente_uuid)
+        INDEX idx_whatsapp_sessao_paciente (paciente_uuid),
+        CONSTRAINT fk_whatsapp_sessao_chatbot
+          FOREIGN KEY (id_sessao_chatbot) REFERENCES sessao_chatbot (id_sessao)
+          ON DELETE SET NULL ON UPDATE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     await this.dbPool.query(`
@@ -1283,12 +1318,16 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       if (atual.estado_envio === 'PROCESSANDO' && atual.expira_em > agoraSql) {
         return { status: 'EM_ANDAMENTO' };
       }
-      await this.dbPool.query(
+      // Aquisição condicional atômica (evita TOCTOU quando dois workers disputam evento expirado)
+      const [resUpdate]: any = await this.dbPool.query(
         `UPDATE whatsapp_evento_processado
          SET estado_envio = 'PROCESSANDO', conversation_id = ?, origem = ?, expira_em = ?
-         WHERE message_id = ?`,
-        [conversationId, origin, expiraSql, messageId]
+         WHERE message_id = ? AND (expira_em <= ? OR estado_envio = 'FALHA')`,
+        [conversationId, origin, expiraSql, messageId, agoraSql]
       );
+      if (resUpdate && typeof resUpdate.affectedRows === 'number' && resUpdate.affectedRows === 0) {
+        return { status: 'EM_ANDAMENTO' };
+      }
       return { status: 'NOVO' };
     }
 
@@ -1371,12 +1410,12 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       };
     }
 
-    // Se havia sessão anterior expirada em andamento, marcar como Abandonada no funil
+    // Se havia sessão anterior expirada em andamento (sem transbordo humano pendente), marcar como Abandonada no funil
     if (rows.length > 0 && rows[0].id_sessao_chatbot) {
       await this.dbPool.query(
         `UPDATE sessao_chatbot
          SET status_sessao = 'Abandonada', data_hora_fim = COALESCE(data_hora_fim, ?)
-         WHERE id_sessao = ? AND status_sessao = 'Em_Andamento'`,
+         WHERE id_sessao = ? AND status_sessao = 'Em_Andamento' AND escalonado_humano = 0`,
         [agoraSql, rows[0].id_sessao_chatbot]
       );
     }
@@ -1460,7 +1499,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
         await this.dbPool.query(
           `UPDATE sessao_chatbot
            SET status_sessao = ?,
-               data_hora_fim = IF(?, ?, data_hora_fim),
+               data_hora_fim = IF(?, ?, NULL),
                escalonado_humano = IF(? IS NOT NULL, ?, escalonado_humano)
            WHERE id_sessao = ?`,
           [
@@ -1472,11 +1511,24 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
             sessao.idSessaoChatbot
           ]
         );
-      } else if (opcoes.escalonadoHumano !== undefined) {
+      } else if (opcoes.escalonadoHumano === true) {
         await this.dbPool.query(
-          `UPDATE sessao_chatbot SET escalonado_humano = ? WHERE id_sessao = ?`,
-          [opcoes.escalonadoHumano ? 1 : 0, sessao.idSessaoChatbot]
+          `UPDATE sessao_chatbot
+           SET escalonado_humano = 1,
+               status_sessao = 'Em_Andamento',
+               data_hora_fim = NULL
+           WHERE id_sessao = ?`,
+          [sessao.idSessaoChatbot]
         );
+      } else if (opcoes.escalonadoHumano === false) {
+        await this.dbPool.query(
+          `UPDATE sessao_chatbot SET escalonado_humano = 0 WHERE id_sessao = ?`,
+          [sessao.idSessaoChatbot]
+        );
+      }
+
+      if (opcoes.escalonadoHumano === true && this.dbPool === poolPadrao) {
+        void publicarAlteracao('comunicacoes');
       }
     }
   }
@@ -1503,15 +1555,18 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       return { status: 'CPF_INVALIDO' };
     }
 
-    const telSemDdi = normalizarDigitosTelefoneComparacao(phone);
-    const telComDdi = `55${telSemDdi}`;
+    const variantes = variantesTelefoneBr(phone);
+    if (!variantes.length) {
+      return { status: 'NAO_ENCONTRADO' };
+    }
+    const placeholders = variantes.map(() => '?').join(', ');
 
     const [rowsTelefone] = await this.dbPool.query<RowDataPacket[]>(
       `SELECT id_paciente, uuid, nome, cpf, telefone, whatsapp, etapa_tratamento, atendimento_status
        FROM paciente
-       WHERE REGEXP_REPLACE(COALESCE(whatsapp, ''), '[^0-9]', '') IN (?, ?)
-          OR REGEXP_REPLACE(COALESCE(telefone, ''), '[^0-9]', '') IN (?, ?)`,
-      [telSemDdi, telComDdi, telSemDdi, telComDdi]
+       WHERE REGEXP_REPLACE(COALESCE(whatsapp, ''), '[^0-9]', '') IN (${placeholders})
+          OR REGEXP_REPLACE(COALESCE(telefone, ''), '[^0-9]', '') IN (${placeholders})`,
+      [...variantes, ...variantes]
     );
 
     const vinculados = rowsTelefone.map(r => this.mapRowPaciente(r));
@@ -1612,7 +1667,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
        LEFT JOIN especialidade e ON e.id_especialidade = p.id_especialidade
        INNER JOIN profissional_procedimento pp ON pp.id_procedimento = p.id_procedimento
        INNER JOIN profissional pr ON pr.id_profissional = pp.id_profissional
-       WHERE p.ativo = 1 AND pr.ativo = 1
+       WHERE p.ativo = 1 AND pr.ativo = 1 AND pp.ativo_profissional = 1
        ORDER BY p.id_procedimento ASC`
     );
 
@@ -1636,7 +1691,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
        FROM profissional pr
        INNER JOIN profissional_procedimento pp ON pp.id_profissional = pr.id_profissional
        INNER JOIN procedimento p ON p.id_procedimento = pp.id_procedimento
-       WHERE pp.id_procedimento = ? AND pr.ativo = 1 AND p.ativo = 1
+       WHERE pp.id_procedimento = ? AND pr.ativo = 1 AND p.ativo = 1 AND pp.ativo_profissional = 1
        ORDER BY pr.id_profissional ASC`,
       [procedimentoId]
     );
@@ -1664,7 +1719,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       'SELECT duracao_minutos, preco, ativo FROM procedimento WHERE id_procedimento = ?',
       [procedimentoId]
     );
-    if (!servicos.length || !servicos[0].ativo) {
+    if (!servicos.length || (!servicos[0].ativo && ignorarAgendamentoId === 0)) {
       throw new ErroOperacao(400, 'Procedimento inativo ou não cadastrado.');
     }
 
@@ -1673,10 +1728,17 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       [profissionalId]
     );
     const [vinculos] = await this.dbPool.query<RowDataPacket[]>(
-      'SELECT 1 FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
+      `SELECT duracao_minutos_profissional, preco_profissional, ativo_profissional
+       FROM profissional_procedimento
+       WHERE id_profissional = ? AND id_procedimento = ?`,
       [profissionalId, procedimentoId]
     );
-    if (!profs.length || !profs[0].ativo || !vinculos.length) {
+    if (
+      !profs.length ||
+      !profs[0].ativo ||
+      !vinculos.length ||
+      (Number(vinculos[0].ativo_profissional ?? 1) === 0 && ignorarAgendamentoId === 0)
+    ) {
       throw new ErroOperacao(400, 'Profissional inativo ou não habilitado.');
     }
 
@@ -1708,7 +1770,8 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       agendamentosPaciente = agPac;
     }
 
-    const duracaoMinutos = Number(servicos[0].duracao_minutos);
+    const duracaoMinutos = Number(vinculos[0].duracao_minutos_profissional ?? servicos[0].duracao_minutos);
+    const precoEfetivo = Number(vinculos[0].preco_profissional ?? servicos[0].preco);
     const duracaoComRespiro = duracaoMinutos + 15;
     const ocupados = [...agendamentos, ...bloqueios, ...agendamentosPaciente];
 
@@ -1729,7 +1792,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
     return {
       horarios,
       duracaoMinutos,
-      preco: Number(servicos[0].preco)
+      preco: precoEfetivo
     };
   }
 
@@ -1742,19 +1805,102 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
     pacienteUuid?: string | null,
     ignorarAgendamentoId = 0
   ): Promise<string[]> {
+    if (!validarFormatoData(dataInicial)) {
+      throw new ErroOperacao(400, 'Data inválida. Use YYYY-MM-DD.');
+    }
+    const datasCandidatas = Array.from({ length: Math.max(0, diasBusca) }, (_, i) =>
+      adicionarDiasDataIso(dataInicial, i)
+    );
+    if (!datasCandidatas.length || limiteDatas <= 0) return [];
+
+    // Consulta em lote (~6 queries totais em vez de até 126 queries N+1 sequenciais)
+    const [servicos] = await this.dbPool.query<RowDataPacket[]>(
+      'SELECT duracao_minutos, preco, ativo FROM procedimento WHERE id_procedimento = ?',
+      [procedimentoId]
+    );
+    if (!servicos.length || (!servicos[0].ativo && ignorarAgendamentoId === 0)) {
+      throw new ErroOperacao(400, 'Procedimento inativo ou não cadastrado.');
+    }
+    const [profs] = await this.dbPool.query<RowDataPacket[]>(
+      'SELECT ativo FROM profissional WHERE id_profissional = ?',
+      [profissionalId]
+    );
+    const [vinculos] = await this.dbPool.query<RowDataPacket[]>(
+      'SELECT duracao_minutos_profissional, ativo_profissional FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
+      [profissionalId, procedimentoId]
+    );
+    if (
+      !profs.length ||
+      !profs[0].ativo ||
+      !vinculos.length ||
+      (Number(vinculos[0].ativo_profissional ?? 1) === 0 && ignorarAgendamentoId === 0)
+    ) {
+      throw new ErroOperacao(400, 'Profissional inativo ou não habilitado.');
+    }
+
+    const duracaoMinutos = Number(vinculos[0].duracao_minutos_profissional ?? servicos[0].duracao_minutos);
+    const duracaoComRespiro = duracaoMinutos + 15;
+    const dataFim = datasCandidatas[datasCandidatas.length - 1];
+
+    const [resolverJanelas, [agendamentos], [bloqueios], [agendamentosPaciente]] = await Promise.all([
+      carregarJanelasAgenda(this.dbPool, [profissionalId], datasCandidatas),
+      this.dbPool.query<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data,
+                TIME_FORMAT(horario_inicio, '%H:%i') AS horario_inicio,
+                TIME_FORMAT(horario_fim, '%H:%i') AS horario_fim
+         FROM agendamento
+         WHERE id_profissional = ? AND data BETWEEN ? AND ? AND id_agendamento <> ? AND status <> 'Cancelado'`,
+        [profissionalId, dataInicial, dataFim, ignorarAgendamentoId]
+      ),
+      this.dbPool.query<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data,
+                TIME_FORMAT(horario_inicio, '%H:%i') AS horario_inicio,
+                TIME_FORMAT(horario_fim, '%H:%i') AS horario_fim
+         FROM bloqueio_agenda
+         WHERE id_profissional = ? AND data BETWEEN ? AND ?`,
+        [profissionalId, dataInicial, dataFim]
+      ),
+      pacienteUuid
+        ? this.dbPool.query<RowDataPacket[]>(
+            `SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data,
+                    TIME_FORMAT(horario_inicio, '%H:%i') AS horario_inicio,
+                    TIME_FORMAT(horario_fim, '%H:%i') AS horario_fim
+             FROM agendamento
+             WHERE paciente_uuid = ? AND data BETWEEN ? AND ? AND id_agendamento <> ? AND status <> 'Cancelado'`,
+            [pacienteUuid, dataInicial, dataFim, ignorarAgendamentoId]
+          )
+        : Promise.resolve([[] as RowDataPacket[]]),
+    ]);
+
+    const ocupadosPorData = new Map<string, Array<{ inicio: number; fim: number }>>();
+    for (const item of [...agendamentos, ...bloqueios, ...agendamentosPaciente]) {
+      const chave = String(item.data || '');
+      if (!chave) continue;
+      const lista = ocupadosPorData.get(chave) ?? [];
+      lista.push({
+        inicio: converterHorarioParaMinutos(String(item.horario_inicio)),
+        fim: converterHorarioParaMinutos(String(item.horario_fim)),
+      });
+      ocupadosPorData.set(chave, lista);
+    }
+
     const datas: string[] = [];
-    for (let i = 0; i < diasBusca && datas.length < limiteDatas; i++) {
-      const dataCandidata = adicionarDiasDataIso(dataInicial, i);
-      const { horarios } = await this.listarHorariosDisponiveis(
-        profissionalId,
-        procedimentoId,
-        dataCandidata,
-        pacienteUuid,
-        ignorarAgendamentoId
-      );
-      if (horarios.length > 0) {
-        datas.push(dataCandidata);
+    for (const dataCandidata of datasCandidatas) {
+      if (datas.length >= limiteDatas) break;
+      const janelas = resolverJanelas(profissionalId, dataCandidata, false);
+      const ocupados = ocupadosPorData.get(dataCandidata) ?? [];
+      let temSlotLivre = false;
+      for (const [inicio, fim] of janelas) {
+        for (let minuto = inicio; minuto + duracaoComRespiro <= fim; minuto += 30) {
+          const conflito = ocupados.some(o => minuto < o.fim && o.inicio < minuto + duracaoComRespiro);
+          if (!conflito) {
+            temSlotLivre = true;
+            break;
+          }
+        }
+        if (temSlotLivre) break;
       }
+      if (temSlotLivre) datas.push(dataCandidata);
     }
     return datas;
   }
@@ -1771,7 +1917,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
     if (!validarFormatoData(data)) throw new ErroOperacao(400, 'Data inválida. Use YYYY-MM-DD.');
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(horarioInicio)) throw new ErroOperacao(400, 'Horário inválido. Use HH:MM.');
 
-    return this.executarTransacaoAgenda([profissionalId], async (conexao: PoolConnection) => {
+    const resumoCriado = await this.executarTransacaoAgenda([profissionalId], async (conexao: PoolConnection) => {
       const [profissionais] = await conexao.query<RowDataPacket[]>(
         'SELECT nome, ativo FROM profissional WHERE id_profissional = ?',
         [profissionalId]
@@ -1789,14 +1935,17 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       }
 
       const [vinculos] = await conexao.query<RowDataPacket[]>(
-        'SELECT 1 FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
+        `SELECT duracao_minutos_profissional, preco_profissional, ativo_profissional
+         FROM profissional_procedimento
+         WHERE id_profissional = ? AND id_procedimento = ?`,
         [profissionalId, procedimentoId]
       );
-      if (!vinculos.length) {
-        throw new ErroOperacao(400, 'Profissional não habilitado para este procedimento.');
+      if (!vinculos.length || Number(vinculos[0].ativo_profissional ?? 1) === 0) {
+        throw new ErroOperacao(400, 'Profissional não habilitado ou com procedimento pausado.');
       }
 
-      const duracao = Number(servicos[0].duracao_minutos);
+      const duracao = Number(vinculos[0].duracao_minutos_profissional ?? servicos[0].duracao_minutos);
+      const precoEfetivo = Number(vinculos[0].preco_profissional ?? servicos[0].preco);
       const fim = converterMinutosParaHorario(converterHorarioParaMinutos(horarioInicio) + duracao + 15);
       const janelas = await obterJanelasAgenda(conexao, profissionalId, data, false);
       if (!horarioCabeNasJanelas(horarioInicio, fim, janelas)) {
@@ -1847,7 +1996,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       const tipoAtendimento = ['Retorno', 'Manutenção'].includes(String(pacientes[0].etapa_tratamento))
         ? 'Retorno'
         : 'Primeira_Consulta';
-      const preco = Number(servicos[0].preco);
+      const preco = precoEfetivo;
 
       const [resultado] = await conexao.query<ResultSetHeader>(
         `INSERT INTO agendamento
@@ -1895,6 +2044,8 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
         origem: 'Chatbot'
       };
     });
+    if (this.dbPool === poolPadrao) void publicarAlteracao('agendamentos');
+    return resumoCriado;
   }
 
   async listarAgendamentosFuturosPaciente(
@@ -1949,9 +2100,9 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
     phone: string,
     dataReferencia: string
   ): Promise<WhatsAppAgendamentoResumo[]> {
-    const telSemDdi = normalizarDigitosTelefoneComparacao(phone);
-    if (!telSemDdi) return [];
-    const telComDdi = `55${telSemDdi}`;
+    const variantes = variantesTelefoneBr(phone);
+    if (!variantes.length) return [];
+    const placeholders = variantes.map(() => '?').join(', ');
 
     const [rows] = await this.dbPool.query<RowDataPacket[]>(
       `SELECT a.id_agendamento AS id,
@@ -1982,11 +2133,11 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
              AND c.estado IN ('SUBMETIDA', 'ENTREGUE')
          )
          AND (
-           REGEXP_REPLACE(COALESCE(p.whatsapp, ''), '[^0-9]', '') IN (?, ?)
-           OR REGEXP_REPLACE(COALESCE(p.telefone, ''), '[^0-9]', '') IN (?, ?)
+           REGEXP_REPLACE(COALESCE(p.whatsapp, ''), '[^0-9]', '') IN (${placeholders})
+           OR REGEXP_REPLACE(COALESCE(p.telefone, ''), '[^0-9]', '') IN (${placeholders})
          )
        ORDER BY a.data ASC, a.horario_inicio ASC`,
-      [dataReferencia, telSemDdi, telComDdi, telSemDdi, telComDdi]
+      [dataReferencia, ...variantes, ...variantes]
     );
 
     return rows.map(r => ({
@@ -2028,7 +2179,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
     }
     const profissionalId = Number(profRows[0].id_profissional);
 
-    return this.executarTransacaoAgenda([profissionalId], async (conexao: PoolConnection) => {
+    const resultadoConfirmacao = await this.executarTransacaoAgenda([profissionalId], async (conexao: PoolConnection) => {
       const [rows] = await conexao.query<RowDataPacket[]>(
         `SELECT a.id_agendamento AS id,
                 DATE_FORMAT(a.data, '%Y-%m-%d') AS data,
@@ -2160,6 +2311,11 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
         jaEstavaConfirmado: false
       };
     });
+    if (!resultadoConfirmacao.jaEstavaConfirmado && this.dbPool === poolPadrao) {
+      void publicarAlteracao('agendamentos');
+      void publicarAlteracao('comunicacoes');
+    }
+    return resultadoConfirmacao;
   }
 
   async reagendarAgendamentoWhatsApp(params: {
@@ -2187,7 +2343,7 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
     }
     const profissionalId = Number(profRows[0].id_profissional);
 
-    return this.executarTransacaoAgenda([profissionalId], async (conexao: PoolConnection) => {
+    const resultadoReagendamento = await this.executarTransacaoAgenda([profissionalId], async (conexao: PoolConnection) => {
       const [rows] = await conexao.query<RowDataPacket[]>(
         `SELECT a.id_agendamento AS id,
                 DATE_FORMAT(a.data, '%Y-%m-%d') AS data,
@@ -2223,19 +2379,16 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       if (!atual.profissional_ativo) {
         throw new ErroOperacao(400, 'Profissional inativo ou não cadastrado.');
       }
-      if (!atual.procedimento_ativo) {
-        throw new ErroOperacao(400, 'Procedimento inativo ou não cadastrado.');
-      }
 
       const [vinculos] = await conexao.query<RowDataPacket[]>(
-        'SELECT 1 FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
+        'SELECT duracao_minutos_profissional FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
         [profissionalId, Number(atual.servico_id)]
       );
       if (!vinculos.length) {
         throw new ErroOperacao(400, 'Profissional não habilitado para este procedimento.');
       }
 
-      const duracao = Number(atual.duracao_minutos);
+      const duracao = Number(vinculos[0].duracao_minutos_profissional ?? atual.duracao_minutos);
       const fim = converterMinutosParaHorario(converterHorarioParaMinutos(novoHorarioInicio) + duracao + 15);
       const janelas = await obterJanelasAgenda(conexao, profissionalId, novaData, false);
       if (!horarioCabeNasJanelas(novoHorarioInicio, fim, janelas)) {
@@ -2289,10 +2442,14 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
         [agendamentoId]
       );
 
+      const ocorrenciaAnterior = `${dataAnterior} ${horarioAnterior.length === 5 ? `${horarioAnterior}:00` : horarioAnterior}`;
+      const ocorrenciaNova = `${novaData} ${novoHorarioInicio.length === 5 ? `${novoHorarioInicio}:00` : novoHorarioInicio}`;
+
       await conexao.query(
         `UPDATE agendamento
          SET data = ?, horario_inicio = ?, horario_fim = ?,
-             data_hora_agendamento = TIMESTAMP(?, ?), status = 'Reagendado'
+             data_hora_agendamento = TIMESTAMP(?, ?), status = 'Reagendado',
+             data_hora_checkin = NULL, checkin_recepcao = 0
          WHERE id_agendamento = ?`,
         [novaData, novoHorarioInicio, fim, novaData, novoHorarioInicio, agendamentoId]
       );
@@ -2307,16 +2464,17 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       if (novos.length) {
         await conexao.query(
           `UPDATE historico_status_agendamento
-           SET motivo = ?, tipo_evento = 'REAGENDAMENTO', alterado_por = ?, id_usuario = NULL
+           SET motivo = ?, tipo_evento = 'REAGENDAMENTO', alterado_por = ?, id_usuario = NULL,
+               ocorrencia_anterior = ?, ocorrencia_nova = ?
            WHERE id_historico = ?`,
-          [motivoTexto, autor, novos[0].id_historico]
+          [motivoTexto, autor, ocorrenciaAnterior, ocorrenciaNova, novos[0].id_historico]
         );
       } else {
         await conexao.query(
           `INSERT INTO historico_status_agendamento
-           (id_agendamento, status_anterior, status_novo, motivo, tipo_evento, alterado_por, id_usuario)
-           VALUES (?, ?, 'Reagendado', ?, 'REAGENDAMENTO', ?, NULL)`,
-          [agendamentoId, statusAnterior, motivoTexto, autor]
+           (id_agendamento, status_anterior, status_novo, motivo, tipo_evento, alterado_por, id_usuario, ocorrencia_anterior, ocorrencia_nova)
+           VALUES (?, ?, 'Reagendado', ?, 'REAGENDAMENTO', ?, NULL, ?, ?)`,
+          [agendamentoId, statusAnterior, motivoTexto, autor, ocorrenciaAnterior, ocorrenciaNova]
         );
       }
 
@@ -2340,6 +2498,10 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
         statusAnterior
       };
     });
+    if (this.dbPool === poolPadrao) {
+      void publicarAlteracao('agendamentos');
+    }
+    return resultadoReagendamento;
   }
 
   async listarAgendamentosElegiveisAvaliacao(pacienteUuid: string): Promise<WhatsAppAgendamentoResumo[]> {

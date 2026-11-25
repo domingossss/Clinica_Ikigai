@@ -23,6 +23,7 @@ const versaoRevisoes = '2026-11-23-revisoes-clinica';
 const versaoCheckin = '2026-11-23-validacao-checkin-recepcao';
 const versaoProntuarioELogin = '2026-11-24-prontuario-consulta-e-login-usuario';
 const versaoWhatsAppEtapa2 = '2026-11-24-whatsapp-etapa-2';
+const versaoAuditoriaHardening = '2026-11-24-auditoria-hardening-e-procedimentos-profissional';
 const trava = createHash('sha256').update(`ikigai:migracao:${esquema}`).digest('hex');
 
 async function colunas(tabela: string) {
@@ -130,6 +131,44 @@ try {
   await aplicarVersao(versaoWhatsAppEtapa2, async () => {
     await criarTabelaDoSchema(schema, 'whatsapp_sessao_conversa');
     await criarTabelaDoSchema(schema, 'whatsapp_evento_processado');
+  });
+  await aplicarVersao(versaoAuditoriaHardening, async () => {
+    const ppCols = await colunas('profissional_procedimento');
+    if (!ppCols.has('duracao_minutos_profissional')) {
+      await conexao.query('ALTER TABLE profissional_procedimento ADD COLUMN duracao_minutos_profissional INT NULL AFTER id_procedimento');
+    }
+    if (!ppCols.has('preco_profissional')) {
+      await conexao.query('ALTER TABLE profissional_procedimento ADD COLUMN preco_profissional DECIMAL(10, 2) NULL AFTER duracao_minutos_profissional');
+    }
+    if (!ppCols.has('ativo_profissional')) {
+      await conexao.query('ALTER TABLE profissional_procedimento ADD COLUMN ativo_profissional TINYINT(1) NOT NULL DEFAULT 1 AFTER preco_profissional');
+    }
+    const prontCols = await colunas('prontuario_consulta');
+    if (!prontCols.has('autor_id')) {
+      await conexao.query('ALTER TABLE prontuario_consulta ADD COLUMN autor_id INT NULL AFTER id_profissional');
+    }
+    if (!prontCols.has('autor_nome')) {
+      await conexao.query('ALTER TABLE prontuario_consulta ADD COLUMN autor_nome VARCHAR(150) NULL AFTER autor_id');
+    }
+    const indicesExistentes = async (tabela: string) => {
+      const [rows] = await conexao.query<mysql.RowDataPacket[]>(
+        'SELECT DISTINCT INDEX_NAME AS nome FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+        [esquema, tabela]
+      );
+      return new Set(rows.map(r => String(r.nome)));
+    };
+    const idxHist = await indicesExistentes('historico_status_agendamento');
+    if (!idxHist.has('idx_historico_ag_status_tipo')) {
+      await conexao.query('CREATE INDEX idx_historico_ag_status_tipo ON historico_status_agendamento (id_agendamento, status_novo, tipo_evento)');
+    }
+    const idxAg = await indicesExistentes('agendamento');
+    if (!idxAg.has('idx_agendamento_paciente_data_status')) {
+      await conexao.query('CREATE INDEX idx_agendamento_paciente_data_status ON agendamento (paciente_uuid, data, status)');
+    }
+    const idxSess = await indicesExistentes('sessao_chatbot');
+    if (!idxSess.has('idx_sessao_escalonado')) {
+      await conexao.query('CREATE INDEX idx_sessao_escalonado ON sessao_chatbot (escalonado_humano)');
+    }
   });
   console.log('Estrutura atualizada. Dados existentes preservados.');
 } finally {

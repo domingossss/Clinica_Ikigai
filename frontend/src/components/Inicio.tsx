@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
+import { obterDataClinicaISO } from '../utils/formatacao';
 
 interface Atendimento {
   id: number;
@@ -11,12 +12,11 @@ interface Atendimento {
   status: string;
 }
 const fuso = 'America/Sao_Paulo';
-const dataClinica = new Intl.DateTimeFormat('sv-SE', { timeZone: fuso });
 const horaClinica = new Intl.DateTimeFormat('pt-BR', { timeZone: fuso, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
 export default function Inicio({ onAbrirAgenda }: { onAbrirAgenda?: () => void }) {
   const [agora, setAgora] = useState(() => new Date());
-  const dia = dataClinica.format(agora);
+  const dia = obterDataClinicaISO(agora);
   const [atendimentos, setAtendimentos] = useState<Atendimento[]>([]);
   const [consulta, setConsulta] = useState<{ dia: string; estado: 'ok' | 'erro' } | null>(null);
   const estado = consulta?.dia === dia ? consulta.estado : 'carregando';
@@ -58,7 +58,7 @@ export default function Inicio({ onAbrirAgenda }: { onAbrirAgenda?: () => void }
     <div className="space-y-6">
       {/* Cabeçalho padronizado da aba Início */}
       <div className="bg-white rounded-2xl shadow-premium border border-gray/10 overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-6 py-4 border-b border-gray/10 bg-light-gray/30">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray/10 bg-light-gray/30">
           <div>
             <h1 className="text-base font-bold text-dark flex items-center gap-2">
               <span className="p-1.5 bg-primary/10 rounded-lg text-primary text-xs font-bold">
@@ -113,8 +113,8 @@ export default function Inicio({ onAbrirAgenda }: { onAbrirAgenda?: () => void }
             Nenhum atendimento programado para hoje.
           </p>
         ) : (
-          <div className="p-6 space-y-6">
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div className="rounded-xl border border-gray/15 bg-light-gray/30 p-4">
                 <dt className="text-xs font-semibold text-gray">Atendimentos do dia</dt>
                 <dd className="mt-1.5 text-2xl font-extrabold text-primary">{atendimentos.length}</dd>

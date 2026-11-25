@@ -133,7 +133,7 @@ export async function runIntegrityRegressionTests() {
   const { default: dashboard } = await import('../routes/dashboardRoutes.js');
   const { randomUUID } = await import('node:crypto');
   const { transacaoAgenda } = await import('../services/reservasAgenda.js');
-  const { acompanharAlteracoes, notificarAlteracoes } = await import('../services/alteracoesClinica.js');
+  const { acompanharAlteracoes, aguardarPublicacoesPendentes, notificarAlteracoes } = await import('../services/alteracoesClinica.js');
   const app = express();
   app.use(express.json());
   const operador = { id: 37, nome: 'Operadora de teste', email: 'operadora@example.test', perfil: 'RECEPCAO' as 'RECEPCAO' | 'PROFISSIONAL', profissional_id: 0 };
@@ -233,6 +233,7 @@ export async function runIntegrityRegressionTests() {
       [agendaTerceiro, diarioTerceiro].every(agenda => agenda.json.dados?.some((item: any) => item.id === especial.json.dados.id &&
         item.paciente_id === null && item.paciente_nome === 'Horário ocupado' && item.servico_nome === '')),
       'Profissional vê ocupação sem dados de pacientes nas três consultas de outras agendas');
+    await aguardarPublicacoesPendentes();
     const fluxoPreparacao = await abrirFluxo();
     await fluxoPreparacao.proximo('pronto');
     operador.perfil = 'RECEPCAO';
@@ -255,7 +256,7 @@ export async function runIntegrityRegressionTests() {
     await fluxoPreparacao.proximo('alteracao');
     const repeticaoChegada = await request(rotaStatus, 'PUT', { validarChegada: true });
     const revisaoNaValidacao = await fluxoPreparacao.proximo('alteracao', 350);
-    assert(revisaoNaValidacao === null, 'Repetir a validação de chegada não emite um novo aviso');
+    assert(revisaoNaValidacao === null, 'Repetir a validação de chegada não emite um novo aviso' + (revisaoNaValidacao ? ' (recebido: ' + JSON.stringify(revisaoNaValidacao) + ')' : ''));
     const [depoisChegada] = await pool.query<any[]>(`SELECT a.status, a.data_hora_checkin, a.checkin_recepcao,
       (SELECT COUNT(*) FROM historico_status_agendamento h WHERE h.id_agendamento = a.id_agendamento
         AND h.status_anterior = 'Na Recepção' AND h.status_novo = 'Na Recepção'
@@ -287,10 +288,12 @@ export async function runIntegrityRegressionTests() {
     assert(!JSON.stringify(avisoAgenda).includes(uuid) && Object.keys(avisoAgenda || {}).every(k => ['versao', 'recursos'].includes(k)), 'Avisos de atualização não expõem pacientes ou conteúdo dos registros');
     const semAlteracoes = await abrirFluxo();
     await semAlteracoes.proximo('pronto');
+    // Consumir qualquer evento residual pendente de escritas anteriores antes do teste
+    while (await semAlteracoes.proximo('alteracao', 350) !== null) {}
     const reservaRejeitada = await request('/agendamentos', 'POST', { ...reserva, horario_inicio: '12:00' });
     const consultaServicos = await request('/servicos');
-    assert(reservaRejeitada.status === 409 && consultaServicos.status === 200 &&
-      await semAlteracoes.proximo('alteracao', 300) === null,
+    const eventoResidual = await semAlteracoes.proximo('alteracao', 300);
+    assert(reservaRejeitada.status === 409 && consultaServicos.status === 200 && eventoResidual === null,
       'Operação rejeitada e consultas de leitura não emitem avisos de alteração');
     const gradeClinica = { dia_semana:1, ativo:true, horario_inicio:'09:00', horario_fim:'17:00', intervalo_inicio:'14:00', intervalo_fim:'15:00' };
     assert((await request('/expediente-clinica','PUT',gradeClinica)).status === 200,'Configuração da grade semanal da clínica no banco de teste');

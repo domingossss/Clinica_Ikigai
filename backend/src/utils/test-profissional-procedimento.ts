@@ -4,8 +4,7 @@ import http from 'http';
 import router from '../routes/agendamentos.js';
 import {
   validarVinculoProfissionalProcedimento,
-  filtrarProfissionaisPorProcedimento,
-  filtrarProcedimentosPorProfissional
+  filtrarProfissionaisPorProcedimento
 } from './validation.js';
 import { mockStore } from './mock-store.js';
 
@@ -106,7 +105,6 @@ export async function runProfissionalProcedimentoTests(): Promise<{ total: numbe
     }
     const procIdA = procs[0].id_procedimento;
     const procIdB = procs[1].id_procedimento;
-    const procIdC = procs[2] ? procs[2].id_procedimento : null;
 
     // -------------------------------------------------------------------------
     // SUÍTE 2: CA01 — Vinculação de Procedimentos ao Profissional

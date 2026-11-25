@@ -24,7 +24,6 @@ const regras: [RegExp, Regra][] = [
   [/^\/pacientes\/[A-Za-z0-9-]+$/, { GET: leitura, PUT: leitura, DELETE: admin }],
   [/^\/pacientes\/[A-Za-z0-9-]+\/historico$/, { GET: leitura }],
   [/^\/pacientes\/[A-Za-z0-9-]+\/prontuario$/, { GET: leitura, PUT: leitura }],
-  [/^\/agendamentos\/\d+\/prontuario$/, { GET: leitura, PUT: leitura }],
   [/^\/(profissionais|categorias)$/, { GET: leitura, POST: admin }],
   [/^\/(profissionais|servicos|categorias)\/\d+$/, { PUT: admin, DELETE: admin }],
   [/^\/servicos$/, { GET: leitura, POST: admin }],

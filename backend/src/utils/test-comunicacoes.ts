@@ -6,6 +6,8 @@ import pool from '../config/database.js';
 import { gerarHashSenha } from '../middleware/auth.js';
 import { app } from '../server.js';
 import { processarFila } from '../services/comunicacoes.js';
+import { MySqlWhatsAppClinicRepository } from '../services/whatsappClinicRepository.js';
+import { SimulatedMessageProvider, WhatsAppSimulationService } from '../services/whatsappSimulation.js';
 
 export async function runComunicacaoTests() {
   const [base] = await pool.query<RowDataPacket[]>('SELECT DATABASE() AS nome');
@@ -219,6 +221,62 @@ export async function runComunicacaoTests() {
       painelPosResolver.dados.transbordos.some((t: { id_sessao: number; pendente: boolean; status_sessao: string }) =>
         t.id_sessao === sessaoTransbordo.insertId && !t.pendente && t.status_sessao === 'Duvida_Resolvida'),
       'RECEPCAO marca transbordo humano como atendido preservando histórico gerencial'
+    );
+
+    // Fluxo ponta a ponta do bot -> MySQL -> painel de transbordos pendentes (incluindo reabertura após resolução e TTL)
+    let botClockMs = Date.now();
+    const botProvider = new SimulatedMessageProvider();
+    const botRepo = new MySqlWhatsAppClinicRepository(pool);
+    const botService = new WhatsAppSimulationService(botProvider, () => {}, {
+      repository: botRepo,
+      now: () => new Date(botClockMs)
+    });
+    const telefoneBot = '5511988887766';
+    const respBot1 = await botService.process({
+      messageId: 'e2e-handoff-1-' + randomUUID().slice(0, 8),
+      phone: telefoneBot,
+      text: 'quero falar com um atendente',
+      origin: 'baileys-local'
+    });
+    const painelAposBot1 = await (await fetch(url + '/comunicacoes/whatsapp/painel', { headers: { Cookie: cookieRecepcao } })).json() as any;
+    const itemBot = painelAposBot1.dados.transbordos.find((t: { contato_final: string | null; pendente: boolean }) =>
+      t.contato_final === '7766' && t.pendente);
+    verificar(
+      /atendimento humano registrada/i.test(respBot1.reply) && Boolean(itemBot),
+      'frase natural no bot WhatsApp aparece imediatamente em Transbordo Humano Pendentes no painel'
+    );
+
+    // Recepção resolve e o cliente solicita novamente na mesma sessão -> deve voltar para Pendentes!
+    await fetch(url + `/comunicacoes/whatsapp/transbordos/${itemBot.id_sessao}/resolver`, {
+      method: 'PATCH', headers: { Cookie: cookieRecepcao }
+    });
+    await botService.process({
+      messageId: 'e2e-handoff-2-' + randomUUID().slice(0, 8),
+      phone: telefoneBot,
+      text: '6',
+      origin: 'baileys-local'
+    });
+    const painelReaberto = await (await fetch(url + '/comunicacoes/whatsapp/painel', { headers: { Cookie: cookieRecepcao } })).json() as any;
+    const itemReaberto = painelReaberto.dados.transbordos.find((t: { id_sessao: number; pendente: boolean }) =>
+      t.id_sessao === itemBot.id_sessao && t.pendente);
+    verificar(
+      Boolean(itemReaberto),
+      'nova solicitação (opção 6) na mesma sessão reabre status para Pendentes no painel'
+    );
+
+    // Mesmo após 31 minutos de inatividade e nova mensagem, o transbordo pendente não some como Abandonada
+    botClockMs += 31 * 60 * 1000;
+    await botService.process({
+      messageId: 'e2e-handoff-3-' + randomUUID().slice(0, 8),
+      phone: telefoneBot,
+      text: 'oi',
+      origin: 'baileys-local'
+    });
+    const painelPosTtl = await (await fetch(url + '/comunicacoes/whatsapp/painel', { headers: { Cookie: cookieRecepcao } })).json() as any;
+    verificar(
+      painelPosTtl.dados.transbordos.some((t: { id_sessao: number; pendente: boolean }) =>
+        t.id_sessao === itemBot.id_sessao && t.pendente),
+      'expiração de 30 min da conversa não apaga solicitação de transbordo humano pendente'
     );
     return { pass, fail: 0 };
   } finally {

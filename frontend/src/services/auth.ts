@@ -1,4 +1,4 @@
-import { apiFetch } from '../api';
+import { apiFetch, lerJsonSeguro } from '../api';
 
 export type PerfilUsuario = 'ADMIN' | 'RECEPCAO' | 'PROFISSIONAL';
 
@@ -14,8 +14,6 @@ export interface UsuarioSessao {
   profissional_nome?: string | null;
   profissional_especialidade?: string | null;
 }
-
-export const SENHA_PADRAO_INICIAL = 'Ikigai@123';
 
 export function gerarLoginPreview(nome: string): string {
   const ignorar = new Set(['dr', 'dra', 'dr.', 'dra.', 'terapeuta', 'prof', 'prof.', 'de', 'da', 'do', 'dos', 'das', 'e']);
@@ -41,8 +39,9 @@ export const PERFIL_LABELS: Record<PerfilUsuario, string> = {
 export async function buscarSessao(): Promise<UsuarioSessao | null> {
   const res = await apiFetch('/api/auth/me');
   if (res.status === 401) return null;
-  if (!res.ok) throw new Error('Não foi possível verificar sua sessão.');
-  return (await res.json()).dados;
+  const json = await lerJsonSeguro<{ dados?: UsuarioSessao }>(res);
+  if (!res.ok || !json?.dados) throw new Error('Não foi possível verificar sua sessão.');
+  return json.dados;
 }
 
 export async function efetuarLogin(identificador: string, senha: string): Promise<UsuarioSessao> {
@@ -50,25 +49,25 @@ export async function efetuarLogin(identificador: string, senha: string): Promis
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ login: identificador, email: identificador, senha }),
+    body: JSON.stringify({ login: identificador.trim(), email: identificador.trim(), senha }),
   });
-  const json = await res.json();
-  if (!res.ok || !json.sucesso || !json.dados?.usuario) {
-    throw new Error(json.erro || 'Não foi possível entrar no sistema.');
+  const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: { usuario?: UsuarioSessao } }>(res);
+  if (!res.ok || !json?.sucesso || !json.dados?.usuario) {
+    throw new Error(json?.erro || 'Não foi possível entrar no sistema. Verifique sua conexão e tente novamente.');
   }
   return json.dados.usuario;
 }
 
 export async function trocarSenhaPrimeiroAcesso(novaSenha: string, confirmarSenha: string): Promise<void> {
-  const res = await apiFetch('/api/auth/trocar-senha', {
+  const res = await apiFetch('/api/auth/primeiro-acesso/senha', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({ nova_senha: novaSenha, confirmar_senha: confirmarSenha }),
   });
-  const json = await res.json();
-  if (!res.ok || !json.sucesso) {
-    throw new Error(json.erro || 'Não foi possível alterar a senha.');
+  const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string }>(res);
+  if (!res.ok || !json?.sucesso) {
+    throw new Error(json?.erro || 'Não foi possível alterar a senha. Tente novamente.');
   }
 }
 

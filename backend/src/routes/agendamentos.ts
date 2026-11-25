@@ -96,7 +96,12 @@ router.get('/agenda/pacientes', async (req,res,next) => {
   try {
     const busca = String(req.query.busca || '').trim().slice(0,150);
     if (busca.length < 2) {res.json({dados:[]});return;}
-    const [dados] = await pool.query('SELECT uuid AS id,nome FROM paciente WHERE LOCATE(?,nome)>0 ORDER BY nome LIMIT 10',[busca]);
+    // Projeção estritamente mínima (id e nome) para reserva excepcional; prontuário permanece
+    // bloqueado até validação da chegada pela recepção (vinculoAssistencial).
+    const [dados] = await pool.query(
+      'SELECT uuid AS id, nome FROM paciente WHERE LOCATE(?, nome) > 0 ORDER BY nome LIMIT 10',
+      [busca]
+    );
     res.json({dados});
   } catch(e) { next(e); }
 });
@@ -124,32 +129,40 @@ router.get('/disponibilidade', async (req: Request, res: Response): Promise<any>
     validarDataHora(data, '08:00');
     const profId = idPositivo(profissional_id || 1);
     const servId = idPositivo(servico_id);
-    const dados = await transacaoAgenda([profId], async conexao => {
-      const [servicos] = await conexao.query<any[]>('SELECT duracao_minutos, ativo FROM procedimento WHERE id_procedimento = ?', [servId]);
-      if (!servicos.length || !servicos[0].ativo) throw new ErroOperacao(400, 'Procedimento inativo ou não cadastrado.');
-      const [profs] = await conexao.query<any[]>('SELECT ativo FROM profissional WHERE id_profissional = ?', [profId]);
-      const [vinculos] = await conexao.query<any[]>('SELECT 1 FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?', [profId, servId]);
-      if (!profs[0].ativo || !vinculos.length) throw new ErroOperacao(400, 'Profissional inativo ou não habilitado.');
-      const janelas = await obterJanelasAgenda(conexao, profId, data as string, req.usuario?.perfil === 'PROFISSIONAL' && req.query.excepcional === '1');
-      const [agendamentos] = await conexao.query<any[]>(
-        "SELECT a.id_agendamento AS id, TIME_FORMAT(a.horario_inicio, '%H:%i') AS horario_inicio, TIME_FORMAT(a.horario_fim, '%H:%i') AS horario_fim, p.nome AS paciente_nome, s.nome AS servico_nome FROM agendamento a JOIN paciente p ON p.uuid = a.paciente_uuid JOIN procedimento s ON s.id_procedimento = a.id_procedimento WHERE a.id_profissional = ? AND a.data = ? AND a.status <> 'Cancelado'", [profId, data]);
-      const [bloqueios] = await conexao.query<any[]>("SELECT id_bloqueio AS id, TIME_FORMAT(horario_inicio, '%H:%i') AS horario_inicio, TIME_FORMAT(horario_fim, '%H:%i') AS horario_fim, motivo FROM bloqueio_agenda WHERE id_profissional = ? AND data = ?", [profId, data]);
-      const slots: { horario: string; disponivel: boolean }[] = [];
-      const duracao = Number(servicos[0].duracao_minutos) + 15;
-      if (!Number.isInteger(duracao) || duracao <= 15) throw new ErroOperacao(400, 'Duração do procedimento inválida.');
-      for (const [inicio, fim] of janelas) {
-        for (let minuto = inicio; minuto + duracao <= fim; minuto += 30) {
-          const disponivel = ![...agendamentos, ...bloqueios].some(a => minuto < converterHorarioParaMinutos(a.horario_fim) && converterHorarioParaMinutos(a.horario_inicio) < minuto + duracao);
-          slots.push({ horario: converterMinutosParaHorario(minuto).slice(0, 5), disponivel });
-        }
+
+    // Consulta somente leitura sem FOR UPDATE para evitar contenção de locks no MySQL
+    const [servicos] = await pool.query<any[]>('SELECT duracao_minutos, ativo FROM procedimento WHERE id_procedimento = ?', [servId]);
+    if (!servicos.length || !servicos[0].ativo) throw new ErroOperacao(400, 'Procedimento inativo ou não cadastrado.');
+    const [profs] = await pool.query<any[]>('SELECT ativo FROM profissional WHERE id_profissional = ?', [profId]);
+    if (!profs.length) throw new ErroOperacao(404, 'Profissional não encontrado.');
+    const [vinculos] = await pool.query<any[]>(
+      'SELECT duracao_minutos_profissional, ativo_profissional FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
+      [profId, servId]
+    );
+    if (!profs[0].ativo || !vinculos.length || !vinculos[0].ativo_profissional) {
+      throw new ErroOperacao(400, 'Profissional inativo ou não habilitado.');
+    }
+    const janelas = await obterJanelasAgenda(pool, profId, data as string, req.usuario?.perfil === 'PROFISSIONAL' && req.query.excepcional === '1');
+    const [agendamentos] = await pool.query<any[]>(
+      "SELECT a.id_agendamento AS id, TIME_FORMAT(a.horario_inicio, '%H:%i') AS horario_inicio, TIME_FORMAT(a.horario_fim, '%H:%i') AS horario_fim, p.nome AS paciente_nome, s.nome AS servico_nome FROM agendamento a JOIN paciente p ON p.uuid = a.paciente_uuid JOIN procedimento s ON s.id_procedimento = a.id_procedimento WHERE a.id_profissional = ? AND a.data = ? AND a.status <> 'Cancelado'", [profId, data]);
+    const [bloqueios] = await pool.query<any[]>("SELECT id_bloqueio AS id, TIME_FORMAT(horario_inicio, '%H:%i') AS horario_inicio, TIME_FORMAT(horario_fim, '%H:%i') AS horario_fim, motivo FROM bloqueio_agenda WHERE id_profissional = ? AND data = ?", [profId, data]);
+    const slots: { horario: string; disponivel: boolean }[] = [];
+    const duracaoProcedimento = Number(vinculos[0].duracao_minutos_profissional ?? servicos[0].duracao_minutos);
+    const duracao = duracaoProcedimento + 15;
+    if (!Number.isInteger(duracao) || duracao <= 15) throw new ErroOperacao(400, 'Duração do procedimento inválida.');
+    for (const [inicio, fim] of janelas) {
+      for (let minuto = inicio; minuto + duracao <= fim; minuto += 30) {
+        const disponivel = ![...agendamentos, ...bloqueios].some(a => minuto < converterHorarioParaMinutos(a.horario_fim) && converterHorarioParaMinutos(a.horario_inicio) < minuto + duracao);
+        slots.push({ horario: converterMinutosParaHorario(minuto).slice(0, 5), disponivel });
       }
-      if (visualizaDetalhesAgenda(req, profId)) return { dados: slots, ocupados: agendamentos, bloqueios };
-      return {
-        dados: slots,
-        ocupados: agendamentos.map(({ id, horario_inicio, horario_fim }) => ({ id, horario_inicio, horario_fim })),
-        bloqueios: bloqueios.map(({ id, horario_inicio, horario_fim }) => ({ id, horario_inicio, horario_fim })),
-      };
-    });
+    }
+    const dados = visualizaDetalhesAgenda(req, profId)
+      ? { dados: slots, ocupados: agendamentos, bloqueios }
+      : {
+          dados: slots,
+          ocupados: agendamentos.map(({ id, horario_inicio, horario_fim }) => ({ id, horario_inicio, horario_fim })),
+          bloqueios: bloqueios.map(({ id, horario_inicio, horario_fim }) => ({ id, horario_inicio, horario_fim })),
+        };
     return res.json({ sucesso: true, ...dados });
   } catch (erro) { return responderFalha(res, erro); }
 });
@@ -568,6 +581,8 @@ router.post('/bloqueios', async (req: Request, res: Response): Promise<any> => {
     if (converterHorarioParaMinutos(horario_inicio) >= converterHorarioParaMinutos(horario_fim)) throw new ErroOperacao(400, 'Início deve ser anterior ao fim.');
     const motivo = sanitizarTexto(typeof req.body.motivo === 'string' ? req.body.motivo : '') || 'Horário Bloqueado';
     const id = await transacaoAgenda([profissional_id], async conexao => {
+      const [profs] = await conexao.query<any[]>('SELECT ativo FROM profissional WHERE id_profissional = ?', [profissional_id]);
+      if (!profs.length || !profs[0].ativo) throw new ErroOperacao(400, 'Profissional inativo ou não cadastrado.');
       const [ag] = await conexao.query<any[]>("SELECT id_agendamento FROM agendamento WHERE id_profissional = ? AND data = ? AND status <> 'Cancelado' AND ? < horario_fim AND horario_inicio < ?", [profissional_id, data, horario_inicio, horario_fim]);
       const [bl] = await conexao.query<any[]>('SELECT id_bloqueio FROM bloqueio_agenda WHERE id_profissional = ? AND data = ? AND ? < horario_fim AND horario_inicio < ?', [profissional_id, data, horario_inicio, horario_fim]);
       if (ag.length || bl.length) throw new ErroOperacao(409, 'O bloqueio conflita com um atendimento ou outro bloqueio.');

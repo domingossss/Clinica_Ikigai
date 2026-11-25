@@ -1,4 +1,5 @@
-import { apiFetch } from '../api';
+import { apiFetch, lerJsonSeguro } from '../api';
+import { useDialogAcessivel } from '../hooks/useDialogAcessivel';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useClinicUpdates } from '../services/clinicUpdates';
 
@@ -90,10 +91,14 @@ function HistoricoAgendamentoConteudo({
     const controller = new AbortController();
     consulta.current = controller;
     return apiFetch(`/api/agendamentos/${agendamentoId}/historico`, { signal: controller.signal }).then(async res => {
-      const json = await res.json();
+      const json = await lerJsonSeguro<{
+        sucesso?: boolean;
+        erro?: string;
+        dados?: { agendamento: AgendamentoResumo; historico?: AlteracaoAgendamento[] };
+      }>(res);
       if (controller.signal.aborted) return;
-      if (!res.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Não foi possível carregar o histórico do agendamento.');
+      if (!res.ok || !json?.sucesso || !json.dados) {
+        throw new Error(json?.erro || 'Não foi possível carregar o histórico do agendamento.');
       }
       setAgendamento(json.dados.agendamento);
       setHistorico(json.dados.historico || []);
@@ -112,24 +117,20 @@ function HistoricoAgendamentoConteudo({
 
   useClinicUpdates(carregarHistorico, ['agendamentos']);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  const dialogoRef = useDialogAcessivel(true, onClose);
 
   return (
     <div
       className="fixed inset-0 z-50 bg-dark/50 backdrop-blur-xs flex items-center justify-center p-4"
       onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="titulo-historico-agendamento"
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl border border-gray/15 w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden"
+        ref={dialogoRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="titulo-historico-agendamento"
+        tabIndex={-1}
+        className="bg-white rounded-2xl shadow-2xl border border-gray/15 w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden focus:outline-none"
         onClick={e => e.stopPropagation()}
       >
         {/* Cabeçalho */}

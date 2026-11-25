@@ -22,10 +22,15 @@ export async function validarReserva(banco: ConsultaBanco, profissionalId: numbe
   const [profissionais] = await banco.query<any[]>('SELECT ativo FROM profissional WHERE id_profissional = ?', [profissionalId]);
   if (!profissionais.length || !profissionais[0].ativo) throw new ErroOperacao(400, 'Profissional inativo ou não cadastrado.');
   const [servicos] = await banco.query<any[]>('SELECT * FROM procedimento WHERE id_procedimento = ? FOR SHARE', [servicoId]);
-  if (!servicos.length || !servicos[0].ativo) throw new ErroOperacao(400, 'Procedimento inativo ou não cadastrado.');
-  const [vinculos] = await banco.query<any[]>('SELECT 1 FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?', [profissionalId, servicoId]);
-  if (!vinculos.length) throw new ErroOperacao(400, 'Profissional não habilitado para este procedimento.');
-  const duracao = Number(servicos[0].duracao_minutos);
+  if (!servicos.length || (!servicos[0].ativo && ignorarId === 0)) throw new ErroOperacao(400, 'Procedimento inativo ou não cadastrado.');
+  const [vinculos] = await banco.query<any[]>(
+    'SELECT duracao_minutos_profissional, preco_profissional, ativo_profissional FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?',
+    [profissionalId, servicoId]
+  );
+  if (!vinculos.length || (!vinculos[0].ativo_profissional && ignorarId === 0)) {
+    throw new ErroOperacao(400, 'Profissional não habilitado para este procedimento.');
+  }
+  const duracao = Number(vinculos[0].duracao_minutos_profissional ?? servicos[0].duracao_minutos);
   if (!Number.isInteger(duracao) || duracao <= 0) throw new ErroOperacao(400, 'Duração do procedimento inválida.');
   const fim = calcularHorarioTermino(inicio, duracao);
   const janelas = await obterJanelasAgenda(banco, profissionalId, data, excepcional);
@@ -37,7 +42,8 @@ export async function validarReserva(banco: ConsultaBanco, profissionalId: numbe
   const [bloqueios] = await banco.query<any[]>(
     'SELECT id_bloqueio FROM bloqueio_agenda WHERE id_profissional = ? AND data = ? AND ? < horario_fim AND horario_inicio < ?', [profissionalId, data, inicio, fim]);
   if (bloqueios.length) throw new ErroOperacao(409, 'Horário bloqueado na agenda.');
-  return { fim, preco: Number(servicos[0].preco) };
+  const precoEfetivo = Number(vinculos[0].preco_profissional ?? servicos[0].preco);
+  return { fim, preco: precoEfetivo };
 }
 export async function gravarHistorico(conexao: PoolConnection, agendamento: { id_agendamento: number; status: string }, status: string, usuario: { id: number; nome: string } | undefined, atualizar: () => Promise<unknown>, motivo: string, horarios?: { anterior: string; novo: string }) {
   const tipo = status === 'Cancelado' ? 'CANCELAMENTO' : status === 'Reagendado' ? 'REAGENDAMENTO' : 'STATUS';

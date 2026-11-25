@@ -33,7 +33,7 @@ export const HORARIO_EXPEDIENTE = {
  * @param tipo Tipo de atendimento ('Consulta', 'Retorno' ou 'Procedimento')
  * @returns boolean true se for de Segunda a Sexta, false para Sábado ou Domingo
  */
-export function validarRegraAgendamento(data: Date, tipo?: string): boolean {
+export function validarRegraAgendamento(data: Date, _tipo?: string): boolean {
   if (!data || isNaN(data.getTime())) {
     return false;
   }
@@ -291,15 +291,25 @@ export function validarPeriodoAgenda(dataInicio: string, dataFim: string): { val
     return { valido: false, motivo: 'Formato de data inválido. Use YYYY-MM-DD.' };
   }
 
-  const dInicio = new Date(dataInicio + 'T00:00:00');
-  const dFim = new Date(dataFim + 'T00:00:00');
+  const [yi, mi, di] = dataInicio.split('-').map(Number);
+  const [yf, mf, df] = dataFim.split('-').map(Number);
+  const dInicio = new Date(Date.UTC(yi, mi - 1, di));
+  const dFim = new Date(Date.UTC(yf, mf - 1, df));
 
-  if (isNaN(dInicio.getTime()) || isNaN(dFim.getTime())) {
+  if (
+    dInicio.getUTCFullYear() !== yi || dInicio.getUTCMonth() !== mi - 1 || dInicio.getUTCDate() !== di ||
+    dFim.getUTCFullYear() !== yf || dFim.getUTCMonth() !== mf - 1 || dFim.getUTCDate() !== df
+  ) {
     return { valido: false, motivo: 'Data inválida.' };
   }
 
   if (dInicio > dFim) {
     return { valido: false, motivo: 'A data inicial não pode ser posterior à data final.' };
+  }
+
+  const diffDias = Math.round((dFim.getTime() - dInicio.getTime()) / 86_400_000);
+  if (diffDias > 366) {
+    return { valido: false, motivo: 'O intervalo máximo permitido para consulta é de 366 dias.' };
   }
 
   return { valido: true };
@@ -455,6 +465,11 @@ export function resolverJanelasAgenda(data: string, jornada?: JornadaDia, exceca
     ativo = true;
     inicio = excecao.horario_inicio || '';
     fim = excecao.horario_fim || '';
+    if (!inicio || !fim) return [];
+    const ini = converterHorarioParaMinutos(inicio);
+    const end = converterHorarioParaMinutos(fim);
+    if (!Number.isFinite(ini) || !Number.isFinite(end) || ini >= end) return [];
+    return [[ini, end]];
   }
   if (!ativo || !inicio || !fim) return [];
   const ini = converterHorarioParaMinutos(inicio);

@@ -16,6 +16,7 @@ export function useDialogAcessivel(aberto: boolean, onFechar: () => void, ocupad
       if (!dialogo || evento.defaultPrevented) return;
       if (evento.key === 'Escape') {
         evento.preventDefault();
+        evento.stopPropagation();
         fechar();
         return;
       }

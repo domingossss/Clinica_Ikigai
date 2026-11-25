@@ -13,3 +13,12 @@ export async function apiFetch(caminho: string, opcoes: RequestInit = {}) {
   }
   return resposta;
 }
+
+/** Faz parse seguro de JSON evitando SyntaxError em respostas HTML (502/503/504/429). */
+export async function lerJsonSeguro<T = Record<string, unknown>>(resposta: Response): Promise<T | null> {
+  try {
+    return (await resposta.json()) as T;
+  } catch {
+    return null;
+  }
+}

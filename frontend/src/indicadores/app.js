@@ -2,6 +2,7 @@ import {
   apagarRespostasPesquisa, carregarRespostasPesquisa, lerRespostaPesquisa, salvarRespostasPesquisa,
   surveyFormHtml, SURVEY_SOURCES, SURVEY_STORAGE_KEY,
 } from './pesquisa.js';
+import Swal from 'sweetalert2';
 import { escaparTextoHtml } from './renderizacao.js';
 import { atendimentosComAtrasoRegistrado, calcularOcupacao, contarDiasDeFuncionamento, indexarCapacidade, resumirConversas } from './metricas.js';
 
@@ -355,7 +356,7 @@ export function initDashboard(dashData, containerEl, Chart) {
     else if (PV === 'tx') { pl = c.ss.map(s => s.nm); d = c.ss.map(s => s.r); }
     else { pl = PV === 'sx' ? ['Feminino', 'Masculino'] : ['Convênio', 'Particular']; d = pl.map(v => c.Rl.filter(x => x[PV] === v).length); }
     const o = [['age', 'Faixa etária'], ['sx', 'Sexo'], ['cv', 'Forma de pagamento'], ['tx', 'Atendimentos realizados']].map(([v, n]) => `<option value="${v}"${v === PV ? ' selected' : ''}>${n}</option>`).join('');
-    return { t: 'Perfil do paciente', h: `<select id="pv" aria-label="Perfil por">${o}</select>`, cfg: pie(pl, d) };
+    return { t: 'Perfil do paciente', h: '', ctrlHtml: `<select id="pv" aria-label="Perfil por">${o}</select>`, cfg: pie(pl, d) };
   }
 
   const tx = (l, fn) => l.length ? f1(l.filter(fn).length / l.length * 100) : 0;
@@ -548,9 +549,9 @@ export function initDashboard(dashData, containerEl, Chart) {
   const hasF = i => K[i] && K[i][9] != null, fv = (i, v) => K[i][8](v);
   const kSourceText = (k, m) => {
     const val = k[3](m);
-    if (val == null) return 'Aguardando dados no banco de dados';
+    if (val == null) return 'Aguardando registros da clínica';
     if (k[12] === 2 || (k[7] === 'res' && m.surveyCount)) return 'Pesquisa local';
-    return 'Calculado do banco de dados (MySQL)';
+    return 'Calculado a partir dos registros da clínica';
   };
   const metaTxt = i => { const k = K[i]; return `Meta ${k[4] < 0 ? '≤' : '≥'} ${fv(i, k[9])} · crítico ${k[4] < 0 ? '>' : '<'} ${fv(i, k[10])}`; };
   const stv = (i, v) => {
@@ -583,13 +584,13 @@ export function initDashboard(dashData, containerEl, Chart) {
   const srcTag = p => {
     const l = K.filter(k => k[0] === p);
     const withData = l.filter(k => k[3](c) != null).length;
-    if (withData === 0) return 'sem dados no banco';
+    if (withData === 0) return 'sem registros no período';
     return `${withData} indicador${withData > 1 ? 'es' : ''} ativo${withData > 1 ? 's' : ''}`;
   };
   function put(list, elSelector, pre) {
     const target = $(elSelector);
     if (!target) return;
-    target.innerHTML = list.map((x, i) => `<div class="p${x.w ? ' w' : ''}"><h3>${escaparTextoHtml(x.t)}</h3><div class="h">${escaparTextoHtml(x.h || '')}</div>${x.html || `<div class="cv${/radar|polar|bubble/.test(x.cfg.type) ? ' tall' : ''}"><canvas id="${pre}${i}"></canvas></div>`}</div>`).join('');
+    target.innerHTML = list.map((x, i) => `<div class="p${x.w ? ' w' : ''}"><h3>${escaparTextoHtml(x.t)}</h3><div class="h">${x.ctrlHtml || escaparTextoHtml(x.h || '')}</div>${x.html || `<div class="cv${/radar|polar|bubble/.test(x.cfg.type) ? ' tall' : ''}"><canvas id="${pre}${i}"></canvas></div>`}</div>`).join('');
     list.forEach((x, i) => x.cfg && mk(pre + i, x.cfg));
     const s = $('#pv'); if (s) s.addEventListener('change', e => { PV = e.target.value; render(); });
   }
@@ -646,8 +647,8 @@ export function initDashboard(dashData, containerEl, Chart) {
       if (all.length > 0 && all[0].st < 2 && c.hasAppointments) {
         const t = all[0];
         const rest = all.filter(x => x.st < 2).slice(1, 5);
-        alertaEl.innerHTML = geral + `<div class="alerta s${t.st}" role="alert"><span class="dot">${SI[t.st]}</span><div><small>Maior foco de atenção agora</small><b>${K[t.i][1]} <em>· ${t?.r?.pn?.n || 'Geral'}</em></b><span>${escaparTextoHtml(K[t.i][2](c))} · ${metaTxt(t.i)}</span></div><button class="bk" data-i="${t.i}">Abrir análise</button></div>`
-          + (rest.length ? `<div class="rk"><span>Depois dele:</span>${rest.map((x, j) => `<button class="s${x.st}" data-i="${x.i}"><i class="dot">${SI[x.st]}</i>${j + 2}º ${K[x.i][1]} · ${escaparTextoHtml(K[x.i][2](c))}</button>`).join('')}</div>` : '');
+        alertaEl.innerHTML = geral + `<div class="alerta s${t.st}" role="alert"><span class="dot">${SI[t.st]}</span><div><small>Maior foco de atenção agora</small><b>${escaparTextoHtml(K[t.i][1])} <em>· ${escaparTextoHtml(t?.r?.pn?.n || 'Geral')}</em></b><span>${escaparTextoHtml(K[t.i][2](c))} · ${escaparTextoHtml(metaTxt(t.i))}</span></div><button class="bk" data-i="${t.i}">Abrir análise</button></div>`
+          + (rest.length ? `<div class="rk"><span>Depois dele:</span>${rest.map((x, j) => `<button class="s${x.st}" data-i="${x.i}"><i class="dot">${SI[x.st]}</i>${j + 2}º ${escaparTextoHtml(K[x.i][1])} · ${escaparTextoHtml(K[x.i][2](c))}</button>`).join('')}</div>` : '');
       } else {
         alertaEl.innerHTML = geral;
       }
@@ -667,8 +668,8 @@ export function initDashboard(dashData, containerEl, Chart) {
             <span class="badge ${noData ? 's3' : 's' + r.st}"><i>${noData ? '—' : SI[r.st]}</i>${status}</span>
           </header>
           <div class="sc"><b>${noData ? '—' : r.sc}</b><span>${noData ? '' : '/100'}</span></div>
-          <small>${noData ? 'Aguardando registros no banco de dados' : `${nr} crítico${nr === 1 ? '' : 's'} · ${ny} em atenção · ${srcTag(r.p)}`}</small>
-          ${!noData && w && w.st < 2 ? `<span class="foco">Foco: ${K[w.i][1]} · ${K[w.i][2](c)}</span>` : `<span class="foco">${noData ? 'Sem dados suficientes' : 'Tudo dentro da meta'}</span>`}
+          <small>${noData ? 'Aguardando registros de atendimento' : `${nr} crítico${nr === 1 ? '' : 's'} · ${ny} em atenção · ${srcTag(r.p)}`}</small>
+          ${!noData && w && w.st < 2 ? `<span class="foco">Foco: ${escaparTextoHtml(K[w.i][1])} · ${escaparTextoHtml(K[w.i][2](c))}</span>` : `<span class="foco">${noData ? 'Sem dados suficientes' : 'Tudo dentro da meta'}</span>`}
         </button>`;
       }).join('');
     }
@@ -802,21 +803,29 @@ export function initDashboard(dashData, containerEl, Chart) {
 
   function go(p, i, pop) {
     pan = p; cur = i;
-    if (!pop) try { history.pushState({ p, i }, ''); } catch { /* A navegação interna funciona mesmo sem atualizar o histórico. */ }
+    if (!pop) try { history.replaceState({ p, i }, ''); } catch { /* A navegação interna funciona mesmo sem atualizar o histórico. */ }
     render();
     containerEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
     const b = $(i !== null ? '#bk' : '#bk2'); if (p !== null && b) b.focus();
   }
-  const back = () => cur !== null ? go(pan, null) : go(null, null);
+  const back = () => cur !== null ? go(pan, null, 1) : go(null, null, 1);
 
-  // Inicializa selects
+  // Inicializa selects preservando seleção atual em atualizações ao vivo
   const espEl = $('#esp');
   if (espEl) {
+    const prevEsp = espEl.value;
     espEl.replaceChildren(new Option('Todas', '-1'), ...SP.map(([nome], i) => new Option(nome, String(i))));
+    if (prevEsp && [...espEl.options].some(o => o.value === prevEsp)) {
+      espEl.value = prevEsp;
+    }
   }
   const cyEl = $('#cy');
   if (cyEl) {
+    const prevYear = cyEl.value;
     cyEl.innerHTML = Array.from({ length: T0.getFullYear() - OLD.getFullYear() + 1 }, (_, i) => OLD.getFullYear() + i).map(y => `<option${y === T0.getFullYear() ? ' selected' : ''}>${y}</option>`).join('');
+    if (prevYear && [...cyEl.options].some(o => o.value === prevYear)) {
+      cyEl.value = prevYear;
+    }
   }
 
   // Registra eventos no container
@@ -835,14 +844,24 @@ export function initDashboard(dashData, containerEl, Chart) {
     }
 
     if (e.target.closest('#clear-survey')) {
-      if (!confirm('Apagar todas as respostas de pesquisa salvas neste navegador?')) return;
-      const erro = apagarRespostasPesquisa();
-      if (!erro) {
-        SURVEY_RESPONSES = [];
-        surveyStorageError = '';
-      }
-      surveyNotice = { texto: erro || 'Respostas locais apagadas.', falha: Boolean(erro) };
-      render();
+      void Swal.fire({
+        icon: 'warning',
+        titleText: 'Apagar respostas da pesquisa?',
+        text: 'Todas as respostas de pesquisa salvas neste navegador serão removidas.',
+        showCancelButton: true,
+        confirmButtonText: 'Sim, apagar',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: '#b91c1c',
+      }).then(res => {
+        if (!res.isConfirmed) return;
+        const erro = apagarRespostasPesquisa();
+        if (!erro) {
+          SURVEY_RESPONSES = [];
+          surveyStorageError = '';
+        }
+        surveyNotice = { texto: erro || 'Respostas locais apagadas.', falha: Boolean(erro) };
+        render();
+      });
     }
   };
 
@@ -881,7 +900,10 @@ export function initDashboard(dashData, containerEl, Chart) {
   };
 
   const onPopState = e => { const s = e.state || {}; go(s.p ?? null, s.i ?? null, 1); };
-  const onKeyDown = e => { if (e.key === 'Escape' && (pan !== null || cur !== null)) back(); };
+  const onKeyDown = e => {
+    if (e.defaultPrevented || document.querySelector('[role="dialog"]')) return;
+    if (e.key === 'Escape' && (pan !== null || cur !== null)) back();
+  };
   const onStorage = e => {
     if (e.key !== SURVEY_STORAGE_KEY) return;
     const { respostas, erro } = carregarRespostasPesquisa();

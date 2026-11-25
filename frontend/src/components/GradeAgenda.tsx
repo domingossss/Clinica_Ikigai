@@ -1,7 +1,9 @@
-import { obterIniciais } from '../utils/formatacao';
-import { apiFetch } from '../api';
+import { obterIniciais, obterDataClinicaISO } from '../utils/formatacao';
+import { apiFetch, lerJsonSeguro } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import Swal from 'sweetalert2';
+import { useDialogAcessivel } from '../hooks/useDialogAcessivel';
 import ModalHistoricoPaciente from './ModalHistoricoPaciente';
 import ModalHistoricoAgendamento from './ModalHistoricoAgendamento';
 import ModalMinhaJornada, { type DiaJornada } from './ModalMinhaJornada';
@@ -99,44 +101,57 @@ const FLUXO_STATUS: Record<StatusAgendamento, StatusAgendamento[]> = {
   No_Show:          [],
   Concluído:        [],
   Cancelado:        [],
-  Reagendado:       ['Confirmado', 'Na Recepção', 'Cancelado'],
+  Reagendado:       ['Confirmado', 'Na Recepção', 'Cancelado', 'No_Show'],
 };
 
 // ─── Funções auxiliares ───────────────────────────────────────────────────────
 
+const REGEX_DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
 function timeToMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
-  return h * 60 + m;
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+
+function formatarDateLocalISO(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dia}`;
+}
+
+function parseDataSegura(dateStr: string): Date {
+  if (REGEX_DATA_ISO.test(dateStr)) {
+    const d = new Date(`${dateStr}T12:00:00`);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date(`${dataHoje()}T12:00:00`);
 }
 
 function formatarDataBR(dateStr: string): string {
-  if (!dateStr) return '';
+  if (!dateStr || !REGEX_DATA_ISO.test(dateStr)) return '';
   const [y, m, d] = dateStr.split('-');
   return `${d}/${m}/${y}`;
 }
 
 function diaSemana(dateStr: string): string {
   const dias = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-  const d = new Date(dateStr + 'T12:00:00');
-  return dias[d.getDay()];
+  const d = parseDataSegura(dateStr);
+  return dias[d.getDay()] || '';
 }
 
 function dataHoje(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return obterDataClinicaISO();
 }
 
 function somarDias(dateStr: string, dias: number): string {
-  const d = new Date(dateStr + 'T12:00:00');
+  const d = parseDataSegura(dateStr);
   d.setDate(d.getDate() + dias);
-  return d.toISOString().split('T')[0];
+  return formatarDateLocalISO(d);
 }
 
 function obterDiasDaSemana(dateStr: string): Array<{ data: string; nomeDia: string; formatada: string; isHoje: boolean }> {
-  const d = new Date(dateStr + 'T12:00:00');
+  const d = parseDataSegura(dateStr);
   const day = d.getDay();
   const diffSegunda = day === 0 ? -6 : (day === 6 ? -5 : 1 - day);
   const segunda = new Date(d);
@@ -149,7 +164,7 @@ function obterDiasDaSemana(dateStr: string): Array<{ data: string; nomeDia: stri
   for (let i = 0; i < 7; i++) {
     const cur = new Date(segunda);
     cur.setDate(segunda.getDate() + i);
-    const iso = cur.toISOString().split('T')[0];
+    const iso = formatarDateLocalISO(cur);
     const [, m, dia] = iso.split('-');
     dias.push({
       data: iso,
@@ -227,6 +242,11 @@ export default function GradeAgenda({
 
   // Popup de detalhes/status do agendamento
   const [agendamentoSelecionado, setAgendamentoSelecionado] = useState<AgendamentoDia | null>(null);
+  const [prontuarioAberto, setProntuarioAberto] = useState<{
+    pacienteId: string;
+    pacienteNome: string;
+    agendamentoId: number;
+  } | null>(null);
   const [atualizandoStatus, setAtualizandoStatus] = useState(false);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
 
@@ -240,7 +260,9 @@ export default function GradeAgenda({
   const [reagendarHorario, setReagendarHorario] = useState('08:00');
   const [reagendarMotivo, setReagendarMotivo] = useState('');
   const [reagendando, setReagendando] = useState(false);
+  const envioReagendarRef = useRef(false);
   const [reagendarErro, setReagendarErro] = useState<string | null>(null);
+  const [janelasReagendamento, setJanelasReagendamento] = useState<[number, number][] | null>(null);
 
   // Modal de Bloqueio de Horário (IK-87)
   const [isBloquearModalOpen, setIsBloquearModalOpen] = useState(false);
@@ -250,7 +272,19 @@ export default function GradeAgenda({
   const [bloqueioFim, setBloqueioFim] = useState('13:00');
   const [bloqueioMotivo, setBloqueioMotivo] = useState('Almoço / Intervalo');
   const [bloqueando, setBloqueando] = useState(false);
+  const envioBloqueioRef = useRef(false);
   const [bloqueioErro, setBloqueioErro] = useState<string | null>(null);
+
+  const dialogoReagendarRef = useDialogAcessivel(
+    isReagendarModalOpen,
+    () => setIsReagendarModalOpen(false),
+    reagendando
+  );
+  const dialogoBloquearRef = useDialogAcessivel(
+    isBloquearModalOpen,
+    () => setIsBloquearModalOpen(false),
+    bloqueando
+  );
 
   // Modal de Histórico do Paciente (IK-77)
   const [isHistoricoModalOpen, setIsHistoricoModalOpen] = useState(false);
@@ -267,6 +301,9 @@ export default function GradeAgenda({
   const [jornadaErro, setJornadaErro] = useState<string | null>(null);
 
   const mudarData = (novaData: string) => {
+    if (!REGEX_DATA_ISO.test(novaData)) return;
+    const d = new Date(`${novaData}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return;
     setDataSelecionada(novaData);
     onDataChange?.(novaData);
   };
@@ -295,17 +332,35 @@ export default function GradeAgenda({
       : '/api/agendamentos/dia?data=' + data;
     return Promise.all([agendaUrl, '/api/janelas?data=' + data + '&periodo=' + modo].map(async url => {
       const res = await apiFetch(url, {signal:controller.signal});
-      const json = await res.json();
-      if (!res.ok || !json.sucesso) throw new Error(json.erro || 'Não foi possível consultar a agenda.');
+      const json = await lerJsonSeguro<{
+        sucesso?: boolean;
+        erro?: string;
+        dados?: unknown;
+        bloqueios?: BloqueioDia[];
+        resumo?: {
+          total: number;
+          confirmados: number;
+          agendados: number;
+          concluidos: number;
+          em_atendimento: number;
+          recepcao: number;
+          reagendados: number;
+          bloqueios_total?: number;
+        } | null;
+      }>(res);
+      if (!res.ok || !json?.sucesso) throw new Error(json?.erro || 'Não foi possível consultar a agenda.');
       return json;
     })).then(([agenda, janelas]) => {
       if (controller.signal.aborted) return;
+      const listaAgendamentos = (Array.isArray(agenda.dados) ? agenda.dados : []) as AgendamentoDia[];
+      const listaBloqueios = Array.isArray(agenda.bloqueios) ? agenda.bloqueios : [];
+      const listaJanelas = (Array.isArray(janelas.dados) ? janelas.dados : []) as { profissional_id: number; data: string; janelas: [number, number][] }[];
       setErro(null);
-      setJanelasAgenda(janelas.dados);
-      setAgendamentos(agenda.dados || []);
-      setBloqueios(agenda.bloqueios || []);
-      setAgendamentoSelecionado(prev => prev ? (agenda.dados || []).find((item: AgendamentoDia) => item.id === prev.id) || null : null);
-      setBloqueioSelecionado(prev => prev ? (agenda.bloqueios || []).find((item: BloqueioDia) => item.id === prev.id) || null : null);
+      setJanelasAgenda(listaJanelas);
+      setAgendamentos(listaAgendamentos);
+      setBloqueios(listaBloqueios);
+      setAgendamentoSelecionado(prev => prev ? listaAgendamentos.find(item => item.id === prev.id) || null : null);
+      setBloqueioSelecionado(prev => prev ? listaBloqueios.find(item => item.id === prev.id) || null : null);
       setResumoProfissional(profId ? agenda.resumo || null : null);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
@@ -331,11 +386,53 @@ export default function GradeAgenda({
   }, [dataSelecionada, profissionalSelecionadoId, modoVisualizacao, refreshTrigger, buscarAgenda]);
 
 
+  // Carrega janelas de expediente do profissional ao escolher nova data no modal de reagendamento
+  useEffect(() => {
+    if (!isReagendarModalOpen || !agendamentoSelecionado || !REGEX_DATA_ISO.test(reagendarData)) {
+      return;
+    }
+    const controller = new AbortController();
+    const profId = agendamentoSelecionado.profissional_id;
+    apiFetch(`/api/janelas?data=${encodeURIComponent(reagendarData)}&periodo=dia`, {
+      signal: controller.signal,
+    })
+      .then(res => lerJsonSeguro<{ sucesso?: boolean; dados?: { profissional_id: number; data: string; janelas: [number, number][] }[] }>(res))
+      .then(json => {
+        if (controller.signal.aborted) return;
+        const entrada = json?.sucesso
+          ? (json.dados || []).find(j => Number(j.profissional_id) === Number(profId) && j.data === reagendarData)
+          : undefined;
+        setJanelasReagendamento(entrada ? entrada.janelas : null);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setJanelasReagendamento(null);
+      });
+    return () => controller.abort();
+  }, [isReagendarModalOpen, agendamentoSelecionado, reagendarData]);
+
   // ─── Atualização de status ──────────────────────────────────────────────────
 
   const podeValidarChegada = usuarioLogado?.perfil === 'RECEPCAO' || usuarioLogado?.perfil === 'ADMIN';
 
-  const atualizarStatus = async (id: number, alteracao: { status: StatusAgendamento } | { validarChegada: true }) => {
+  const atualizarStatus = async (
+    id: number,
+    alteracao: { status: StatusAgendamento } | { validarChegada: true },
+    jaConfirmado = false
+  ) => {
+    if (!jaConfirmado && 'status' in alteracao && (alteracao.status === 'Cancelado' || alteracao.status === 'No_Show')) {
+      const rotulo = alteracao.status === 'No_Show' ? 'Não compareceu' : 'Cancelado';
+      const confirmacao = await Swal.fire({
+        icon: 'warning',
+        titleText: `Confirmar status "${rotulo}"?`,
+        text: 'Esta ação encerra o atendimento na grade.',
+        showCancelButton: true,
+        confirmButtonText: `Confirmar: ${rotulo}`,
+        cancelButtonText: 'Voltar',
+        confirmButtonColor: '#b91c1c',
+      });
+      if (!confirmacao.isConfirmed) return;
+    }
+
     setAtualizandoStatus(true);
     try {
       const res = await apiFetch(`/api/agendamentos/${id}/status`, {
@@ -343,8 +440,8 @@ export default function GradeAgenda({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(alteracao),
       });
-      const json = await res.json();
-      if (!json.sucesso) throw new Error(json.erro || 'Falha ao atualizar.');
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: { status: StatusAgendamento } }>(res);
+      if (!res.ok || !json?.sucesso || !json.dados) throw new Error(json?.erro || 'Falha ao atualizar.');
 
       const validouChegada = 'validarChegada' in alteracao;
       const novoStatus: StatusAgendamento = json.dados.status;
@@ -357,11 +454,15 @@ export default function GradeAgenda({
       setAgendamentos(prev => prev.map(a => a.id === id ? atualizarAgendamento(a) : a));
       setAgendamentoSelecionado(prev => prev?.id === id ? atualizarAgendamento(prev) : prev);
 
-      setMensagemSucesso(validouChegada ? 'Chegada validada.' : `Status alterado para "${novoStatus}"`);
+      setMensagemSucesso(validouChegada ? 'Chegada validada.' : `Status alterado para "${STATUS_CONFIG[novoStatus]?.label || novoStatus}"`);
       setTimeout(() => setMensagemSucesso(null), 2500);
       onRefresh?.();
     } catch (e: unknown) {
-      alert('Erro ao atualizar status: ' + ((e instanceof Error ? e.message : '') || 'Tente novamente.'));
+      void Swal.fire({
+        icon: 'error',
+        titleText: 'Erro ao atualizar status',
+        text: (e instanceof Error ? e.message : '') || 'Tente novamente.',
+      });
     } finally {
       setAtualizandoStatus(false);
     }
@@ -371,8 +472,17 @@ export default function GradeAgenda({
 
   const handleConfirmarReagendamento = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!agendamentoSelecionado) return;
+    if (!agendamentoSelecionado || envioReagendarRef.current) return;
+    if (!REGEX_DATA_ISO.test(reagendarData)) {
+      setReagendarErro('Informe uma data válida.');
+      return;
+    }
+    if (!horarioReagendamentoEfetivo) {
+      setReagendarErro('Não há horários disponíveis na jornada do profissional para a data selecionada.');
+      return;
+    }
 
+    envioReagendarRef.current = true;
     setReagendando(true);
     setReagendarErro(null);
 
@@ -382,18 +492,18 @@ export default function GradeAgenda({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           data: reagendarData,
-          horario_inicio: reagendarHorario,
-          motivo: reagendarMotivo || 'Reagendado via grade de horários'
+          horario_inicio: horarioReagendamentoEfetivo,
+          motivo: reagendarMotivo.trim() || 'Reagendado via grade de horários'
         }),
       });
 
-      const json = await res.json();
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; detalhes?: string }>(res);
 
-      if (!res.ok || !json.sucesso) {
-        throw new Error(json.erro || json.detalhes || 'Falha ao reagendar atendimento.');
+      if (!res.ok || !json?.sucesso) {
+        throw new Error(json?.erro || json?.detalhes || 'Falha ao reagendar atendimento.');
       }
 
-      setMensagemSucesso(`Atendimento reagendado com sucesso para ${formatarDataBR(reagendarData)} às ${reagendarHorario}!`);
+      setMensagemSucesso(`Atendimento reagendado com sucesso para ${formatarDataBR(reagendarData)} às ${horarioReagendamentoEfetivo}!`);
       setTimeout(() => setMensagemSucesso(null), 3500);
 
       setIsReagendarModalOpen(false);
@@ -410,6 +520,7 @@ export default function GradeAgenda({
     } catch (err: unknown) {
       setReagendarErro((err instanceof Error ? err.message : '') || 'Erro ao reagendar atendimento.');
     } finally {
+      envioReagendarRef.current = false;
       setReagendando(false);
     }
   };
@@ -418,6 +529,22 @@ export default function GradeAgenda({
 
   const handleCriarBloqueio = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (envioBloqueioRef.current) return;
+    if (!REGEX_DATA_ISO.test(bloqueioData)) {
+      setBloqueioErro('Informe uma data válida.');
+      return;
+    }
+    if (timeToMinutes(bloqueioFim) <= timeToMinutes(bloqueioInicio)) {
+      setBloqueioErro('O horário de término deve ser posterior ao horário de início.');
+      return;
+    }
+    const motivoLimpo = bloqueioMotivo.trim();
+    if (!motivoLimpo) {
+      setBloqueioErro('Informe o motivo do bloqueio.');
+      return;
+    }
+
+    envioBloqueioRef.current = true;
     setBloqueando(true);
     setBloqueioErro(null);
 
@@ -430,14 +557,14 @@ export default function GradeAgenda({
           data: bloqueioData,
           horario_inicio: bloqueioInicio,
           horario_fim: bloqueioFim,
-          motivo: bloqueioMotivo
+          motivo: motivoLimpo
         })
       });
 
-      const json = await res.json();
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string }>(res);
 
-      if (!res.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Falha ao bloquear horário.');
+      if (!res.ok || !json?.sucesso) {
+        throw new Error(json?.erro || 'Falha ao bloquear horário.');
       }
 
       setMensagemSucesso(`Horário bloqueado com sucesso (${bloqueioInicio} às ${bloqueioFim})!`);
@@ -455,6 +582,7 @@ export default function GradeAgenda({
     } catch (err: unknown) {
       setBloqueioErro((err instanceof Error ? err.message : '') || 'Erro ao criar bloqueio.');
     } finally {
+      envioBloqueioRef.current = false;
       setBloqueando(false);
     }
   };
@@ -462,19 +590,26 @@ export default function GradeAgenda({
   // ─── Ação de Remover Bloqueio (IK-87) ───────────────────────────────────────
 
   const handleRemoverBloqueio = async (bloqueioId: number) => {
-    if (!confirm('Deseja realmente remover este bloqueio e liberar o horário para atendimentos?')) {
-      return;
-    }
+    const confirmacao = await Swal.fire({
+      icon: 'warning',
+      titleText: 'Desbloquear horário?',
+      text: 'Deseja realmente remover este bloqueio e liberar o horário para atendimentos?',
+      showCancelButton: true,
+      confirmButtonText: 'Sim, liberar horário',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#b91c1c',
+    });
+    if (!confirmacao.isConfirmed) return;
 
     setRemovendoBloqueio(true);
     try {
       const res = await apiFetch(`/api/bloqueios/${bloqueioId}`, {
         method: 'DELETE'
       });
-      const json = await res.json();
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string }>(res);
 
-      if (!res.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Falha ao remover bloqueio.');
+      if (!res.ok || !json?.sucesso) {
+        throw new Error(json?.erro || 'Falha ao remover bloqueio.');
       }
 
       setMensagemSucesso('Bloqueio removido! O horário está novamente disponível.');
@@ -484,7 +619,11 @@ export default function GradeAgenda({
       buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
       onRefresh?.();
     } catch (err: unknown) {
-      alert('Erro ao remover bloqueio: ' + ((err instanceof Error ? err.message : '') || 'Tente novamente.'));
+      void Swal.fire({
+        icon: 'error',
+        titleText: 'Erro ao remover bloqueio',
+        text: (err instanceof Error ? err.message : '') || 'Tente novamente.',
+      });
     } finally {
       setRemovendoBloqueio(false);
     }
@@ -584,6 +723,19 @@ export default function GradeAgenda({
     slots.push(`${String(h).padStart(2, '0')}:00`);
     slots.push(`${String(h).padStart(2, '0')}:30`);
   }
+  const slotsFimBase = [...slots, `${String(HORA_FIM_GRADE).padStart(2, '0')}:00`];
+  const slotsFimBloqueio = slotsFimBase.filter(s => timeToMinutes(s) > timeToMinutes(bloqueioInicio));
+  const slotsReagendamento = janelasReagendamento === null
+    ? slots
+    : janelasReagendamento.length === 0
+      ? []
+      : slots.filter(s => {
+          const min = timeToMinutes(s);
+          return janelasReagendamento.some(([ini, fim]) => min >= ini && min < fim);
+        });
+  const horarioReagendamentoEfetivo = slotsReagendamento.includes(reagendarHorario)
+    ? reagendarHorario
+    : (slotsReagendamento[0] || '');
 
   const agendamentosParaProfissional = (profId: number) =>
     agendamentos.filter(a => Number(a.profissional_id) === Number(profId));
@@ -661,8 +813,9 @@ export default function GradeAgenda({
 
             const dentroJornada = janelasAgenda.find(j => j.profissional_id === profIdDoSlot && j.data === dataDoSlot)?.janelas.some(([i,f]) => slotMin >= i && slotMin < f);
             return (onAbrirNovoAgendamento && dentroJornada && !temAgendamento && !temBloqueio) ? (
-              <div
+              <button
                 key={slot}
+                type="button"
                 onClick={() =>
                   onAbrirNovoAgendamento?.({
                     data: dataDoSlot,
@@ -670,17 +823,18 @@ export default function GradeAgenda({
                     profissional_id: profIdDoSlot,
                   })
                 }
-                className="absolute left-0 right-0 hover:bg-primary/5 cursor-pointer transition-colors group"
+                aria-label={`Agendar às ${slot} em ${formatarDataBR(dataDoSlot)}`}
+                className="absolute left-0 right-0 hover:bg-primary/5 focus:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/40 cursor-pointer transition-colors group"
                 style={{
                   top: topParaHorario(slot),
                   height: 30 * ALTURA_POR_MINUTO,
                 }}
                 title={`Agendar às ${slot} em ${formatarDataBR(dataDoSlot)}`}
               >
-                <span className="absolute inset-0 flex items-center justify-center text-[9px] text-primary opacity-0 group-hover:opacity-100 font-semibold transition-opacity">
+                <span className="absolute inset-0 flex items-center justify-center text-[9px] text-primary opacity-0 group-hover:opacity-100 group-focus:opacity-100 font-semibold transition-opacity">
                   + Agendar {slot}
                 </span>
-              </div>
+              </button>
             ) : null;
           })}
 
@@ -689,15 +843,25 @@ export default function GradeAgenda({
             const top = topParaHorario(bl.horario_inicio);
             const height = alturaParaDuracao(bl.horario_inicio, bl.horario_fim);
             const isSelecionado = bloqueioSelecionado?.id === bl.id;
+            const alternarBloqueio = () => {
+              setAgendamentoSelecionado(null);
+              setBloqueioSelecionado(isSelecionado ? null : bl);
+            };
 
             return (
               <div
                 key={`bloqueio-${bl.id}`}
-                onClick={() => {
-                  setAgendamentoSelecionado(null);
-                  setBloqueioSelecionado(isSelecionado ? null : bl);
+                role="button"
+                tabIndex={0}
+                aria-label={`Horário bloqueado: ${bl.motivo || 'Indisponível'} de ${bl.horario_inicio} às ${bl.horario_fim}`}
+                onClick={alternarBloqueio}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    alternarBloqueio();
+                  }
                 }}
-                className={`absolute left-1 right-1 rounded-xl border-l-4 border-gray-600 bg-gray-100/95 px-2 py-1.5 cursor-pointer transition-all hover:shadow-md ${isSelecionado ? 'ring-2 ring-gray-600 shadow-md' : ''}`}
+                className={`absolute left-1 right-1 rounded-xl border-l-4 border-gray-600 bg-gray-100/95 px-2 py-1.5 cursor-pointer transition-all hover:shadow-md focus:outline-none focus:ring-2 focus:ring-gray-600 ${isSelecionado ? 'ring-2 ring-gray-600 shadow-md' : ''}`}
                 style={{ top, height: height - 2, zIndex: isSelecionado ? 25 : 15 }}
                 title={`Horário Bloqueado: ${bl.motivo} (${bl.horario_inicio} - ${bl.horario_fim})`}
               >
@@ -726,15 +890,34 @@ export default function GradeAgenda({
               const top = topParaHorario(ag.horario_inicio);
               const height = alturaParaDuracao(ag.horario_inicio, ag.horario_fim);
               const isSelecionado = agendamentoSelecionado?.id === ag.id;
+              const selecionarAgendamento = () => {
+                if (!ag.paciente_id) return;
+                setBloqueioSelecionado(null);
+                if (usuarioLogado?.perfil === 'PROFISSIONAL') {
+                  setProntuarioAberto({
+                    pacienteId: ag.paciente_id,
+                    pacienteNome: ag.paciente_nome,
+                    agendamentoId: ag.id,
+                  });
+                } else {
+                  setAgendamentoSelecionado(isSelecionado ? null : ag);
+                }
+              };
 
               return (
                 <div
                   key={ag.id}
-                  onClick={ag.paciente_id ? () => {
-                    setBloqueioSelecionado(null);
-                    setAgendamentoSelecionado(isSelecionado ? null : ag);
-                  } : undefined}
-                  className={`absolute left-1 right-1 rounded-xl border-l-4 px-2 py-1.5 transition-all ${ag.paciente_id ? 'cursor-pointer hover:shadow-md hover:-translate-y-px' : ''} ${cfg.cor} ${cfg.corBorda} ${isSelecionado ? 'ring-2 ring-offset-1 ring-primary/50 shadow-md' : ''}`}
+                  role={ag.paciente_id ? 'button' : undefined}
+                  tabIndex={ag.paciente_id ? 0 : undefined}
+                  aria-label={ag.paciente_id ? `${ag.paciente_nome}, ${ag.servico_nome}, ${ag.horario_inicio} às ${ag.horario_fim}, status ${cfg.label}` : undefined}
+                  onClick={ag.paciente_id ? selecionarAgendamento : undefined}
+                  onKeyDown={ag.paciente_id ? (e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      selecionarAgendamento();
+                    }
+                  }) : undefined}
+                  className={`absolute left-1 right-1 rounded-xl border-l-4 px-2 py-1.5 transition-all ${ag.paciente_id ? 'cursor-pointer hover:shadow-md hover:-translate-y-px focus:outline-none focus:ring-2 focus:ring-primary/50' : ''} ${cfg.cor} ${cfg.corBorda} ${isSelecionado ? 'ring-2 ring-offset-1 ring-primary/50 shadow-md' : ''}`}
                   style={{ top, height: height - 2, zIndex: isSelecionado ? 20 : 10 }}
                   title={ag.paciente_id ? `${ag.paciente_nome} — ${ag.servico_nome}` : ag.paciente_nome}
                 >
@@ -761,6 +944,19 @@ export default function GradeAgenda({
         </div>
       </div>
     );
+  };
+
+  const agAtualProntuario = prontuarioAberto
+    ? agendamentos.find(a => a.id === prontuarioAberto.agendamentoId)
+    : undefined;
+  const transicoesProntuario = agAtualProntuario
+    ? (FLUXO_STATUS[agAtualProntuario.status] || []).filter(
+        novoStatus => !(novoStatus === 'Na Recepção' && agAtualProntuario.exige_validacao_chegada && !podeValidarChegada)
+      )
+    : [];
+  const handleProntuarioSalvo = () => {
+    void buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
+    onRefresh?.();
   };
 
   // ─── Render ─────────────────────────────────────────────────────────────────
@@ -1212,15 +1408,17 @@ export default function GradeAgenda({
 
       {/* Painel de detalhes do agendamento selecionado (Admin e Recepção) */}
       {agendamentoSelecionado && usuarioLogado?.perfil !== 'PROFISSIONAL' && (
-        <div className="fixed bottom-6 right-6 z-50 w-80 bg-white rounded-2xl shadow-2xl border border-gray/15 overflow-hidden animate-in slide-in-from-bottom-4 duration-200">
-          <div className="bg-dark text-white px-5 py-4 flex items-center justify-between">
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-gray/15 animate-in slide-in-from-bottom-4 duration-200">
+          <div className="bg-dark text-white px-5 py-4 flex items-center justify-between sticky top-0 z-10">
             <div>
               <h4 className="text-sm font-bold">Detalhes do Agendamento</h4>
               <p className="text-[10px] text-white/60 mt-0.5">#{agendamentoSelecionado.id}</p>
             </div>
             <button
+              type="button"
+              aria-label="Fechar detalhes do agendamento"
               onClick={() => setAgendamentoSelecionado(null)}
-              className="text-white/70 hover:text-white transition-colors"
+              className="text-white/70 hover:text-white transition-colors cursor-pointer"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1243,11 +1441,11 @@ export default function GradeAgenda({
 
               <div className="grid grid-cols-2 gap-2 text-[11px]">
                 <div className="bg-light-gray rounded-lg p-2">
-                  <span className="block text-gray text-[9px] uppercase font-bold mb-0.5">Servico</span>
+                  <span className="block text-gray text-[9px] uppercase font-bold mb-0.5">Serviço</span>
                   <span className="font-semibold text-dark">{agendamentoSelecionado.servico_nome}</span>
                 </div>
                 <div className="bg-light-gray rounded-lg p-2">
-                  <span className="block text-gray text-[9px] uppercase font-bold mb-0.5">Horario</span>
+                  <span className="block text-gray text-[9px] uppercase font-bold mb-0.5">Horário</span>
                   <span className="font-semibold text-dark font-mono">
                     {agendamentoSelecionado.horario_inicio} – {agendamentoSelecionado.horario_fim}
                   </span>
@@ -1360,7 +1558,7 @@ export default function GradeAgenda({
 
       {/* Painel de detalhes do bloqueio selecionado (IK-87) */}
       {bloqueioSelecionado && (
-        <div className="fixed bottom-6 right-6 z-50 w-80 bg-white rounded-2xl shadow-2xl border border-gray-300 overflow-hidden animate-in slide-in-from-bottom-4 duration-200">
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[85vh] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-gray-300 animate-in slide-in-from-bottom-4 duration-200">
           <div className="bg-gray-800 text-white px-5 py-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-base">🔒</span>
@@ -1426,16 +1624,30 @@ export default function GradeAgenda({
 
       {/* Modal de Reagendamento (IK-85) */}
       {isReagendarModalOpen && agendamentoSelecionado && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-gray/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={e => {
+            if (e.target === e.currentTarget && !reagendando) setIsReagendarModalOpen(false);
+          }}
+        >
+          <div
+            ref={dialogoReagendarRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Reagendar Atendimento"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-gray/10 animate-in fade-in zoom-in-95 duration-200 focus:outline-none"
+          >
             <div className="bg-primary text-white px-6 py-4 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-bold">Reagendar Atendimento</h3>
                 <p className="text-xs text-white/80 mt-0.5">Selecione nova data e horário para a consulta</p>
               </div>
               <button
+                type="button"
+                aria-label="Fechar reagendamento"
                 onClick={() => setIsReagendarModalOpen(false)}
-                className="text-white/80 hover:text-white"
+                className="text-white/80 hover:text-white cursor-pointer"
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1445,7 +1657,7 @@ export default function GradeAgenda({
 
             <form onSubmit={handleConfirmarReagendamento} className="p-6 space-y-4">
               {reagendarErro && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
                   {reagendarErro}
                 </div>
               )}
@@ -1473,21 +1685,31 @@ export default function GradeAgenda({
               <div>
                 <label className="block text-xs font-bold text-dark mb-1">Novo Horário de Início</label>
                 <select
-                  value={reagendarHorario}
+                  disabled={slotsReagendamento.length === 0}
+                  value={horarioReagendamentoEfetivo}
                   onChange={e => setReagendarHorario(e.target.value)}
-                  className="w-full text-xs border border-gray/20 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/40 bg-white"
+                  className="w-full text-xs border border-gray/20 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/40 bg-white disabled:bg-gray-100 disabled:text-gray-500"
                 >
-                  {slots.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
+                  {slotsReagendamento.length === 0 ? (
+                    <option value="">Sem horários disponíveis nesta data</option>
+                  ) : (
+                    slotsReagendamento.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))
+                  )}
                 </select>
-                <span className="text-[10px] text-gray mt-1 block">Conforme jornada e exceções cadastradas</span>
+                <span className="text-[10px] text-gray mt-1 block">
+                  {janelasReagendamento && janelasReagendamento.length === 0
+                    ? 'Atenção: não há expediente configurado para este profissional nesta data.'
+                    : 'Conforme jornada e exceções cadastradas'}
+                </span>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-dark mb-1">Motivo do Reagendamento (Opcional)</label>
                 <input
                   type="text"
+                  maxLength={255}
                   placeholder="Ex: Pedido do paciente, imprevisto..."
                   value={reagendarMotivo}
                   onChange={e => setReagendarMotivo(e.target.value)}
@@ -1499,14 +1721,14 @@ export default function GradeAgenda({
                 <button
                   type="button"
                   onClick={() => setIsReagendarModalOpen(false)}
-                  className="flex-1 py-2.5 px-4 rounded-xl border border-gray/20 text-xs font-bold text-gray hover:bg-light-gray"
+                  className="flex-1 py-2.5 px-4 rounded-xl border border-gray/20 text-xs font-bold text-gray hover:bg-light-gray cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  disabled={reagendando}
-                  className="flex-1 py-2.5 px-4 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition-all disabled:opacity-50"
+                  disabled={reagendando || !horarioReagendamentoEfetivo}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {reagendando ? 'Validando...' : 'Confirmar Reagendamento'}
                 </button>
@@ -1518,8 +1740,20 @@ export default function GradeAgenda({
 
       {/* Modal de Criar Bloqueio de Horário (IK-87) */}
       {isBloquearModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-gray/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={e => {
+            if (e.target === e.currentTarget && !bloqueando) setIsBloquearModalOpen(false);
+          }}
+        >
+          <div
+            ref={dialogoBloquearRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Bloquear Horário na Agenda"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-gray/10 animate-in fade-in zoom-in-95 duration-200 focus:outline-none"
+          >
             <div className="bg-gray-800 text-white px-6 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-lg">🔒</span>
@@ -1529,8 +1763,10 @@ export default function GradeAgenda({
                 </div>
               </div>
               <button
+                type="button"
+                aria-label="Fechar bloqueio de horário"
                 onClick={() => setIsBloquearModalOpen(false)}
-                className="text-white/80 hover:text-white"
+                className="text-white/80 hover:text-white cursor-pointer"
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1540,7 +1776,7 @@ export default function GradeAgenda({
 
             <form onSubmit={handleCriarBloqueio} className="p-6 space-y-4">
               {bloqueioErro && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
                   {bloqueioErro}
                 </div>
               )}
@@ -1581,7 +1817,14 @@ export default function GradeAgenda({
                   <label className="block text-xs font-bold text-dark mb-1">Horário Início</label>
                   <select
                     value={bloqueioInicio}
-                    onChange={e => setBloqueioInicio(e.target.value)}
+                    onChange={e => {
+                      const novoInicio = e.target.value;
+                      setBloqueioInicio(novoInicio);
+                      if (timeToMinutes(bloqueioFim) <= timeToMinutes(novoInicio)) {
+                        const proximo = slotsFimBase.find(s => timeToMinutes(s) > timeToMinutes(novoInicio));
+                        if (proximo) setBloqueioFim(proximo);
+                      }
+                    }}
                     className="w-full text-xs border border-gray/20 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-400 bg-white"
                   >
                     {slots.map(s => (
@@ -1592,11 +1835,11 @@ export default function GradeAgenda({
                 <div>
                   <label className="block text-xs font-bold text-dark mb-1">Horário Término</label>
                   <select
-                    value={bloqueioFim}
+                    value={slotsFimBloqueio.includes(bloqueioFim) ? bloqueioFim : (slotsFimBloqueio[0] || bloqueioFim)}
                     onChange={e => setBloqueioFim(e.target.value)}
                     className="w-full text-xs border border-gray/20 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-400 bg-white"
                   >
-                    {slots.concat(['18:00']).map(s => (
+                    {slotsFimBloqueio.map(s => (
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
@@ -1608,6 +1851,7 @@ export default function GradeAgenda({
                 <input
                   type="text"
                   required
+                  maxLength={200}
                   placeholder="Ex: Almoço, Reunião de Equipe, Manutenção..."
                   value={bloqueioMotivo}
                   onChange={e => setBloqueioMotivo(e.target.value)}
@@ -1619,14 +1863,14 @@ export default function GradeAgenda({
                 <button
                   type="button"
                   onClick={() => setIsBloquearModalOpen(false)}
-                  className="flex-1 py-2.5 px-4 rounded-xl border border-gray/20 text-xs font-bold text-gray hover:bg-light-gray"
+                  className="flex-1 py-2.5 px-4 rounded-xl border border-gray/20 text-xs font-bold text-gray hover:bg-light-gray cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={bloqueando}
-                  className="flex-1 py-2.5 px-4 rounded-xl bg-gray-800 text-white text-xs font-bold hover:bg-gray-700 transition-all disabled:opacity-50"
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-gray-800 text-white text-xs font-bold hover:bg-gray-700 transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {bloqueando ? 'Criando Bloqueio...' : 'Confirmar Bloqueio'}
                 </button>
@@ -1667,28 +1911,26 @@ export default function GradeAgenda({
         />
       )}
 
-      {/* Modal Completo de Prontuário e Linha do Tempo ao selecionar paciente na Grade (Perfil PROFISSIONAL) */}
-      {agendamentoSelecionado && usuarioLogado?.perfil === 'PROFISSIONAL' && agendamentoSelecionado.paciente_id && (
+      {/* Modal Completo de Prontuário e Linha do Tempo (desacoplado de SSE para nunca perder rascunho) */}
+      {prontuarioAberto && usuarioLogado?.perfil === 'PROFISSIONAL' && (
         <ModalProntuarioPaciente
+          key={`${prontuarioAberto.pacienteId}:${prontuarioAberto.agendamentoId}`}
           isOpen={true}
-          onClose={() => setAgendamentoSelecionado(null)}
-          pacienteId={agendamentoSelecionado.paciente_id}
-          pacienteNome={agendamentoSelecionado.paciente_nome}
-          agendamentoInicialId={agendamentoSelecionado.id}
-          statusAgendamentoAtual={agendamentoSelecionado.status}
-          transicoesPermitidas={
-            (FLUXO_STATUS[agendamentoSelecionado.status] || []).filter(novoStatus =>
-              !(novoStatus === 'Na Recepção' && agendamentoSelecionado.exige_validacao_chegada && !podeValidarChegada)
-            )
-          }
+          somenteClinico={true}
+          onClose={() => setProntuarioAberto(null)}
+          pacienteId={prontuarioAberto.pacienteId}
+          pacienteNome={prontuarioAberto.pacienteNome}
+          agendamentoInicialId={prontuarioAberto.agendamentoId}
+          statusAgendamentoAtual={agAtualProntuario?.status}
+          transicoesPermitidas={transicoesProntuario}
           atualizandoStatus={atualizandoStatus}
-          onAtualizarStatus={novoStatus =>
-            void atualizarStatus(agendamentoSelecionado.id, { status: novoStatus as StatusAgendamento })
+          onAtualizarStatus={
+            agAtualProntuario
+              ? novoStatus =>
+                  void atualizarStatus(agAtualProntuario.id, { status: novoStatus as StatusAgendamento }, true)
+              : undefined
           }
-          onSaved={() => {
-            void buscarAgenda(dataSelecionada, profissionalSelecionadoId, modoVisualizacao);
-            onRefresh?.();
-          }}
+          onSaved={handleProntuarioSalvo}
         />
       )}
 

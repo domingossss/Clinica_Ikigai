@@ -12,7 +12,14 @@ const authorized = (provided: unknown, expected: string) => {
 export function createWhatsAppSimulationRouter(service: WhatsAppSimulationService, secret: string | undefined = process.env.WHATSAPP_SIMULATION_KEY) {
   const router = Router();
   router.post('/simular', async (req, res) => {
-    if (process.env.WHATSAPP_MODE !== 'simulation' || !isLocal(req.socket.remoteAddress)) {
+    const temForwarded = Boolean(req.header('x-forwarded-for'));
+    if (
+      process.env.NODE_ENV === 'production' ||
+      process.env.WHATSAPP_MODE !== 'simulation' ||
+      temForwarded ||
+      !isLocal(req.socket.remoteAddress) ||
+      !isLocal(req.ip)
+    ) {
       return res.status(404).json({ sucesso: false, erro: 'Simulação indisponível.' });
     }
     if (!authorized(req.header('x-ikigai-simulation-key'), secret || '')) {

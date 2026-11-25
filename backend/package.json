@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsc && concurrently --kill-others \"tsc --watch --preserveWatchOutput\" \"node --watch dist/server.js\"",
-    "test": "tsc && node dist/utils/test-runner.js",
+    "test": "tsc && node dist/utils/test-runner.js && node --test dist/utils/test-whatsapp-simulation.js dist/utils/test-whatsapp-baileys.js dist/utils/test-whatsapp-etapa2.js dist/utils/test-whatsapp-etapa3.js",
     "test:whatsapp": "tsc && node --test dist/utils/test-whatsapp-simulation.js dist/utils/test-whatsapp-baileys.js dist/utils/test-whatsapp-etapa2.js dist/utils/test-whatsapp-etapa3.js",
     "test:whatsapp:baileys": "tsc && node --test dist/utils/test-whatsapp-baileys.js",
     "test:whatsapp:etapa2": "tsc && node --test dist/utils/test-whatsapp-etapa2.js",

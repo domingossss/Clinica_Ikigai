@@ -1,46 +1,60 @@
-import { apiFetch } from '../api';
-import { useEffect, useRef, useState } from 'react';
+import { apiFetch, lerJsonSeguro } from '../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Chart from 'chart.js/auto';
 import './styles.css';
 import { initDashboard } from './app.js';
+import { useClinicUpdates } from '../services/clinicUpdates';
 
 
 export default function IndicadoresDashboard() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const consultaRef = useRef<AbortController | null>(null);
   const [dashboardData, setDashboardData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [atualizando, setAtualizando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  // 1. Busca dados da API
-  useEffect(() => {
-    let ativo = true;
+  // 1. Busca dados da API (inicial + atualização em tempo real via SSE)
+  const carregarDados = useCallback(async (silencioso = false) => {
+    consultaRef.current?.abort();
+    const controller = new AbortController();
+    consultaRef.current = controller;
+    if (silencioso) setAtualizando(true);
 
-    async function carregarDados() {
-      try {
-        const response = await apiFetch(`/api/dashboard/dados-painel`);
-        if (!response.ok) {
-          throw new Error(`Falha ao obter dados da clínica (Status HTTP: ${response.status})`);
-        }
-        const data = await response.json();
-        if (ativo) {
-          setDashboardData(data);
-          setLoading(false);
-        }
-      } catch (err) {
-        if (ativo) {
-          console.error('[Dashboard] Erro na API:', err);
-          setErro(err instanceof Error ? err.message : 'Falha ao conectar com o servidor da clínica.');
-          setLoading(false);
-        }
+    try {
+      const response = await apiFetch('/api/dashboard/dados-painel', { signal: controller.signal });
+      const data = await lerJsonSeguro<Record<string, unknown>>(response);
+      if (controller.signal.aborted) return;
+      if (!response.ok || !data) {
+        throw new Error('Não foi possível obter os indicadores da clínica no momento.');
+      }
+      setDashboardData(data);
+      setErro(null);
+      setLoading(false);
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      console.error('[Dashboard] Erro na API:', err);
+      setErro(err instanceof Error ? err.message : 'Falha ao conectar com o servidor da clínica.');
+      setLoading(false);
+    } finally {
+      if (!controller.signal.aborted) {
+        setAtualizando(false);
       }
     }
-
-    carregarDados();
-
-    return () => {
-      ativo = false;
-    };
   }, []);
+
+  useEffect(() => {
+    const inicio = window.setTimeout(() => { void carregarDados(false); }, 0);
+    return () => {
+      window.clearTimeout(inicio);
+      consultaRef.current?.abort();
+    };
+  }, [carregarDados]);
+
+  useClinicUpdates(
+    () => { void carregarDados(true); },
+    ['agendamentos', 'pacientes', 'profissionais', 'servicos', 'categorias', 'comunicacoes']
+  );
 
   // 2. Inicializa o dashboard assim que o DOM for montado com os dados
   useEffect(() => {
@@ -116,12 +130,20 @@ export default function IndicadoresDashboard() {
               className="rounded-xl border border-gray/20 bg-white px-3 py-1.5 text-xs font-semibold text-dark focus:outline-none focus:ring-2 focus:ring-primary/30"
             ></select>
           </label>
+          <button
+            type="button"
+            disabled={atualizando}
+            onClick={() => void carregarDados(true)}
+            className="rounded-xl border border-gray/20 bg-white px-3 py-1.5 text-xs font-bold text-dark hover:bg-light-gray disabled:opacity-50 transition-colors cursor-pointer"
+          >
+            {atualizando ? 'Atualizando…' : 'Atualizar'}
+          </button>
         </div>
       </div>
 
       <div className="wrap p-6">
         <p className="note">
-          Dados operacionais reais calculados a partir dos agendamentos no banco de dados da clínica; respostas da pesquisa são registradas neste navegador. Cada indicador informa sua fonte. As variações comparam com o período anterior de mesmo tamanho.
+          Dados operacionais reais calculados a partir dos registros de agendamentos da clínica; respostas da pesquisa são registradas neste navegador. Cada indicador informa sua fonte. As variações comparam com o período anterior de mesmo tamanho.
         </p>
 
         <div id="home">

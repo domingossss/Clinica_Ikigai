@@ -7,8 +7,6 @@ import { executarScriptSql } from './executarScriptSql.js';
 import {
   validarRegraAgendamento,
   validarHorarioExpediente,
-  converterHorarioParaMinutos,
-  converterMinutosParaHorario,
   verificarSobreposicao,
   calcularHorarioTermino,
   validarPeriodoBloqueio
@@ -335,6 +333,8 @@ async function testarEmBancoIsolado() {
     }
     await executarTestes();
   } finally {
+    const { aguardarPublicacoesPendentes } = await import('../services/alteracoesClinica.js');
+    await aguardarPublicacoesPendentes();
     const { default: pool } = await import('../config/database.js');
     await pool.end();
     // O nome é gerado aqui, nunca vem do ambiente ou do usuário.

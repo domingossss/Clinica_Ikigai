@@ -14,6 +14,10 @@ function formatMinsToTime(mins: number): string {
 }
 
 async function runAvailabilityTests() {
+  const [bancos]: any = await pool.query('SELECT DATABASE() AS nome');
+  if (!/^ikigai_verificacao_\d+$/.test(String(bancos?.[0]?.nome || ''))) {
+    throw new Error('Segurança: test-availability só pode ser executado em banco descartável (ikigai_verificacao_*).');
+  }
   console.log("================================================================");
   console.log("🧪 INICIANDO TESTES: MATRIZ DE DISPONIBILIDADE E OVERLAPS");
   console.log("================================================================");
@@ -33,7 +37,7 @@ async function runAvailabilityTests() {
     );
 
     // Helper para rodar a lógica da disponibilidade localmente (simulando a API)
-    const obterSlotsDisponiveis = async (servId: number, duracao: number) => {
+    const obterSlotsDisponiveis = async (_servId: number, duracao: number) => {
       const horaInicio = '08:00:00';
       const horaFim = '18:00:00';
 

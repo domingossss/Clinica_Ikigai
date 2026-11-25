@@ -27,8 +27,10 @@ async function lerResposta<T>(resposta: Response, mensagem: string): Promise<T> 
 }
 
 function horario(ocorrencia: string) {
+  if (!ocorrencia) return '—';
   const [data, hora] = ocorrencia.split(' ');
-  return data.split('-').reverse().join('/') + ' às ' + hora.slice(0, 5);
+  const dataFmt = data ? data.split('-').reverse().join('/') : ocorrencia;
+  return hora ? `${dataFmt} às ${hora.slice(0, 5)}` : dataFmt;
 }
 
 interface Props {
@@ -208,6 +210,7 @@ export default function Comunicacoes({
                 <label className="block text-xs font-bold text-dark mb-1">
                   Buscar agendamento
                   <input
+                    key={numeroAtendimento}
                     className={`${campo} mt-1`}
                     type="search"
                     name="termo"

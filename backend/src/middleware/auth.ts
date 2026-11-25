@@ -30,18 +30,17 @@ declare global {
 
 export const COOKIE_TOKEN_NAME = 'ikigai_token';
 export const DURACAO_SESSAO_SEGUNDOS = 12 * 60 * 60;
-const segredoDesenvolvimento = crypto.randomBytes(32).toString('hex');
 
 export function validarConfiguracaoSessao(): void {
   const segredo = process.env.SESSION_SECRET || process.env.JWT_SECRET;
-  if (process.env.NODE_ENV === 'production' && (!segredo || Buffer.byteLength(segredo.trim()) < 32)) {
-    throw new Error('Configure SESSION_SECRET com pelo menos 32 bytes para publicar a API.');
+  if (!segredo || Buffer.byteLength(segredo.trim()) < 32) {
+    throw new Error('Configure SESSION_SECRET com pelo menos 32 bytes no arquivo .env para executar a API.');
   }
 }
 
 export function identificarSessao(token: string): Buffer {
   validarConfiguracaoSessao();
-  const segredo = process.env.SESSION_SECRET || process.env.JWT_SECRET || segredoDesenvolvimento;
+  const segredo = (process.env.SESSION_SECRET || process.env.JWT_SECRET)!.trim();
   return crypto.createHmac('sha256', segredo).update(token).digest();
 }
 
@@ -95,6 +94,22 @@ export async function exigirAutenticacao(req: Request, res: Response, next: Next
   } catch {
     res.status(503).json({ sucesso: false, erro: 'Serviço de autenticação indisponível.' });
   }
+}
+
+/**
+ * Bloqueia acesso às rotas de negócio enquanto a conta estiver pendente de troca obrigatória de senha.
+ * Permite apenas /api/auth/me, /api/auth/trocar-senha e /api/auth/logout.
+ */
+export function exigirSenhaAtualizada(req: Request, res: Response, next: NextFunction): void {
+  if (req.usuario?.primeiro_acesso) {
+    res.status(403).json({
+      sucesso: false,
+      codigo: 'TROCA_SENHA_OBRIGATORIA',
+      erro: 'É obrigatório definir uma nova senha pessoal no primeiro acesso antes de utilizar o sistema.',
+    });
+    return;
+  }
+  next();
 }
 
 export function exigirPerfil(...perfisPermitidos: PerfilUsuario[]) {

@@ -9,6 +9,15 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 dotenv.config();
 
+if (
+  process.env.NODE_ENV === 'production' &&
+  (!process.env.DB_USER?.trim() ||
+    process.env.DB_USER.trim().toLowerCase() === 'root' ||
+    !(process.env.DB_PASS || process.env.DB_PASSWORD))
+) {
+  throw new Error('Em produção, configure explicitamente DB_USER e DB_PASS com uma conta dedicada (nunca root).');
+}
+
 // Criar o pool de conexões com o MySQL
 const pool = mysql.createPool({
   host: process.env.DB_HOST || '127.0.0.1',

@@ -1,6 +1,6 @@
 import { useDialogAcessivel } from '../hooks/useDialogAcessivel';
-import { aplicarMascaraCPF, aplicarMascaraTelefone } from '../utils/formatacao';
-import { apiFetch } from '../api';
+import { aplicarMascaraCPF, aplicarMascaraTelefone, obterDataClinicaISO } from '../utils/formatacao';
+import { apiFetch, lerJsonSeguro } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import React, { useState, useEffect, useMemo, useRef, useCallback, useId } from 'react';
 import Swal from 'sweetalert2';
@@ -76,9 +76,11 @@ function FormularioAgendamento({
   // Dados do Agendamento
   const [profissionalEscolhidoId, setProfissionalId] = useState<number>(initialProfissionalId || 1);
   const [servicoEscolhidoId, setServicoId] = useState<string>('');
-  const [data, setData] = useState<string>(initialDate || new Date().toISOString().substring(0, 10));
+  const [data, setData] = useState<string>(initialDate || obterDataClinicaISO());
   const [horaEscolhida, setHoraInicio] = useState<string>(initialTime || '');
-  const [iniciouAgendamento, setIniciouAgendamento] = useState(false);
+  const [iniciouAgendamento, setIniciouAgendamento] = useState(Boolean(initialPacienteId || initialTime));
+  const envioAgendamentoRef = useRef(false);
+  const envioPacienteRef = useRef(false);
   const [observacoes, setObservacoes] = useState<string>('');
   const [tipoAtendimento, setTipoAtendimento] = useState('Primeira_Consulta');
 
@@ -121,10 +123,11 @@ function FormularioAgendamento({
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const rota = excepcional ? '/api/agenda/pacientes?busca=' : '/api/pacientes?limite=10&busca=';
+        const rota = excepcional ? '/api/agenda/pacientes?agenda=true&busca=' : '/api/pacientes?limite=10&busca=';
         const res = await apiFetch(rota + encodeURIComponent(termoPesquisado), { signal: controller.signal });
         if (!res.ok) throw new Error(`Busca retornou ${res.status}`);
-        const { dados } = await res.json() as { dados: PacienteItem[] };
+        const json = await lerJsonSeguro<{ dados?: PacienteItem[] }>(res);
+        const dados = Array.isArray(json?.dados) ? json.dados : [];
         const resultados = dados.map(p => ({ ...p, nome: p.nome_completo || p.nome }));
         if (!controller.signal.aborted) setConsultaPacientes({ chave: chaveBusca, resultados });
       } catch {
@@ -269,6 +272,7 @@ function FormularioAgendamento({
   // Submeter Pré-Cadastro Rápido de Paciente
   const handleCriarPacienteRapido = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (envioPacienteRef.current) return;
     setErrorMessage(null);
 
     if (!novoNome.trim()) {
@@ -282,6 +286,7 @@ function FormularioAgendamento({
       return;
     }
 
+    envioPacienteRef.current = true;
     setSalvandoPaciente(true);
 
     try {
@@ -299,7 +304,7 @@ function FormularioAgendamento({
         setErrorMessage('O servidor não confirmou o cadastro. Busque o paciente antes de tentar novamente.');
         return;
       }
-      const dataRes = await res.json().catch(() => null);
+      const dataRes = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: { id: string; nome?: string; nome_completo?: string; whatsapp?: string } }>(res);
       if (!dataRes) {
         setErrorMessage('O servidor retornou uma resposta inválida. Busque o paciente antes de tentar novamente.');
         return;
@@ -329,7 +334,7 @@ function FormularioAgendamento({
           toast: true,
           position: 'top-end',
           icon: 'success',
-          title: 'Paciente cadastrado e selecionado',
+          titleText: 'Paciente cadastrado e selecionado',
           showConfirmButton: false,
           timer: 2500
         });
@@ -340,6 +345,7 @@ function FormularioAgendamento({
       console.error(err);
       setErrorMessage('Erro de conexão com o servidor ao cadastrar paciente.');
     } finally {
+      envioPacienteRef.current = false;
       setSalvandoPaciente(false);
     }
   };
@@ -347,6 +353,7 @@ function FormularioAgendamento({
   // Submeter Agendamento
   const handleSalvarAgendamento = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (envioAgendamentoRef.current) return;
     setErrorMessage(null);
 
     if (!selectedPaciente) {
@@ -363,10 +370,23 @@ function FormularioAgendamento({
       return;
     }
 
+    if (excepcional) {
+      const confirmacao = await Swal.fire({
+        icon: 'question',
+        titleText: 'Confirmar reserva excepcional?',
+        text: `Confirma a reserva para ${data.split('-').reverse().join('/')} às ${horaInicio}? A recepção precisará validar a chegada para liberar o prontuário.`,
+        showCancelButton: true,
+        confirmButtonText: 'Confirmar reserva',
+        cancelButtonText: 'Voltar',
+        confirmButtonColor: '#0f766e',
+      });
+      if (!confirmacao.isConfirmed) return;
+    }
+
+    envioAgendamentoRef.current = true;
     setSubmitting(true);
 
     try {
-      if (excepcional && !window.confirm('Confirmar a reserva excepcional para ' + data + ' às ' + horaInicio + '?')) return;
       const response = await apiFetch(`/api/agendamentos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -382,12 +402,12 @@ function FormularioAgendamento({
         })
       });
 
-      const result = await response.json();
+      const result = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; detalhes?: string }>(response);
 
-      if (result.sucesso) {
+      if (response.ok && result?.sucesso) {
         Swal.fire({
           icon: 'success',
-          title: 'Agendamento Confirmado',
+          titleText: 'Agendamento Confirmado',
           text: [selectedPaciente.nome, data.split('-').reverse().join('/'), horaInicio, servicoSelecionado?.nome].filter(Boolean).join(' · '),
           confirmButtonColor: '#1e3a8a',
           confirmButtonText: 'Concluir'
@@ -397,15 +417,16 @@ function FormularioAgendamento({
         onClose();
       } else {
         if (response.status === 409) atualizarHorarios();
-        const msg = result.erro && result.detalhes
+        const msg = result?.erro && result?.detalhes
           ? `${result.erro} ${result.detalhes}`
-          : (result.erro || result.detalhes || 'Não foi possível realizar o agendamento.');
+          : (result?.erro || result?.detalhes || 'Não foi possível realizar o agendamento.');
         setErrorMessage(msg);
       }
     } catch (err) {
       console.error(err);
       setErrorMessage('Falha na comunicação com o servidor ao salvar agendamento.');
     } finally {
+      envioAgendamentoRef.current = false;
       setSubmitting(false);
     }
   };
@@ -585,11 +606,16 @@ function FormularioAgendamento({
                         {!excepcional && <button
                           type="button"
                           onClick={() => {
-                            setNovoNome(termoBusca);
+                            const apenasDigitos = termoBusca.replace(/\D/g, '');
+                            if (apenasDigitos.length >= 8 && !/[a-zA-ZÀ-ÿ]/.test(termoBusca)) {
+                              setNovoWhatsapp(aplicarMascaraTelefone(termoBusca));
+                            } else {
+                              setNovoNome(termoBusca.trim());
+                            }
                             setModoPaciente('novo');
                             setMostrarDropdownBusca(false);
                           }}
-                          className="text-xs text-blue-600 font-semibold hover:underline"
+                          className="text-xs text-blue-600 font-semibold hover:underline cursor-pointer"
                         >
                           Cadastrar "{termoBusca}" como novo paciente
                         </button>}
@@ -637,6 +663,7 @@ function FormularioAgendamento({
                     <input
                       type="text"
                       id={`${tituloDialogo}-cpf`}
+                      maxLength={14}
                       placeholder="000.000.000-00"
                       value={novoCpf}
                       onChange={e => setNovoCpf(aplicarMascaraCPF(e.target.value))}
@@ -825,16 +852,12 @@ function FormularioAgendamento({
             type="button"
             onClick={() => setIniciouAgendamento(true)}
             disabled={!horaInicio}
-            className="rounded-lg bg-blue-600 px-5 py-2.5 text-xs font-semibold text-white disabled:bg-gray-400"
+            className="rounded-lg bg-blue-600 px-5 py-2.5 text-xs font-semibold text-white disabled:bg-gray-400 disabled:cursor-not-allowed cursor-pointer"
           >Agendar neste horário</button> : <button
             type="button"
             onClick={handleSalvarAgendamento}
             disabled={submitting || carregandoProfissionaisElegiveis || carregandoServicos || !selectedPaciente || !servicoSelecionado || !profissionalId || !horaInicio}
-            className={`px-5 py-2.5 rounded-lg font-semibold text-xs text-white shadow-xs transition-all flex items-center gap-2 ${
-              !selectedPaciente
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-blue-600 hover:bg-blue-700 active:scale-95'
-            }`}
+            className="px-5 py-2.5 rounded-lg font-semibold text-xs text-white shadow-xs transition-all flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-gray-400 disabled:cursor-not-allowed cursor-pointer"
           >
             {submitting ? (
               <>

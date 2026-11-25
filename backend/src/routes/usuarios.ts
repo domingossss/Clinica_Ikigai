@@ -1,11 +1,17 @@
-﻿import { Router, type Request, type Response } from 'express';
+﻿import { randomBytes } from 'node:crypto';
+import { Router, type Request, type Response } from 'express';
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import pool, { ErroOperacao, executarTransacao } from '../config/database.js';
 import { sanitizarTexto } from '../middleware/security.js';
 import { gerarHashSenha, type PerfilUsuario } from '../middleware/auth.js';
+import { encerrarConexoesUsuario } from '../services/alteracoesClinica.js';
 
 const router = Router();
-export const SENHA_PADRAO_USUARIO = 'Ikigai@123';
+
+/** Gera uma credencial inicial forte e exclusiva (12+ caracteres) por conta/reset. */
+function gerarCredencialTemporaria(): string {
+  return `Ik-${randomBytes(9).toString('base64url')}`;
+}
 
 export function gerarLoginBase(nome: string): string {
   const ignorar = new Set(['dr', 'dra', 'dr.', 'dra.', 'terapeuta', 'prof', 'prof.', 'de', 'da', 'do', 'dos', 'das', 'e']);
@@ -74,18 +80,19 @@ function lerUsuario(req: Request, novo: boolean) {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const perfil = String(req.body?.perfil ?? (novo ? 'RECEPCAO' : '')).toUpperCase() as PerfilUsuario;
   const senhaInformada = req.body?.senha ?? '';
-  const usarSenhaPadrao = (novo && (senhaInformada === '' || senhaInformada === undefined || req.body?.usar_senha_padrao === true)) ||
+  const usarSenhaTemporaria = (novo && (senhaInformada === '' || senhaInformada === undefined || req.body?.usar_senha_padrao === true)) ||
     (!novo && req.body?.resetar_senha_padrao === true);
-  const senha = usarSenhaPadrao ? SENHA_PADRAO_USUARIO : senhaInformada;
-  const precisaTrocarSenha = usarSenhaPadrao || Boolean(req.body?.primeiro_acesso || req.body?.precisa_trocar_senha);
+  const credencialTemporaria = usarSenhaTemporaria ? gerarCredencialTemporaria() : null;
+  const senha = credencialTemporaria ?? senhaInformada;
+  const precisaTrocarSenha = usarSenhaTemporaria || Boolean(req.body?.primeiro_acesso || req.body?.precisa_trocar_senha);
 
   if (nome.length < 2 || nome.length > 150) throw new ErroOperacao(400, 'Nome deve ter entre 2 e 150 caracteres.');
   if (email.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ErroOperacao(400, 'E-mail inválido.');
   if (!perfis.includes(perfil)) throw new ErroOperacao(400, 'Perfil inválido.');
-  if (typeof senha !== 'string' || ((novo || senha) && senha.length < 6)) {
-    throw new ErroOperacao(400, 'A senha deve ter pelo menos 6 caracteres.');
+  if (typeof senha !== 'string' || ((novo || senha) && (!senha.trim() || senha.length < 8 || senha.length > 128))) {
+    throw new ErroOperacao(400, 'A senha deve ter entre 8 e 128 caracteres.');
   }
-  return { nome, email, perfil, senha, precisaTrocarSenha };
+  return { nome, email, perfil, senha, precisaTrocarSenha, credencialTemporaria };
 }
 
 function responderErro(res: Response, erro: unknown) {
@@ -142,10 +149,11 @@ router.get('/', async (_req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { nome, email, senha, perfil, precisaTrocarSenha } = lerUsuario(req, true);
+    const usuarioLido = lerUsuario(req, true);
+    const { nome, email, senha, perfil, precisaTrocarSenha, credencialTemporaria } = usuarioLido;
     const hash = await gerarHashSenha(senha);
     const dados = await editarComoAdmin(req, null, async conexao => {
-      const profissional_id = await vincularProfissional(conexao, req, { nome, email, senha, perfil, precisaTrocarSenha }, null);
+      const profissional_id = await vincularProfissional(conexao, req, usuarioLido, null);
       const login = await resolverLoginUnico(conexao, nome, null);
       const [resultado] = await conexao.query<ResultSetHeader>(
         'INSERT INTO usuario (nome, login, email, senha_hash, precisa_trocar_senha, perfil, id_profissional, ativo) VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
@@ -156,7 +164,15 @@ router.post('/', async (req, res) => {
     res.status(201).json({
       sucesso: true,
       mensagem: 'Usuário criado com sucesso.',
-      dados: { ...dados, nome, email, perfil, primeiro_acesso: precisaTrocarSenha, ativo: 1 },
+      dados: {
+        ...dados,
+        nome,
+        email,
+        perfil,
+        primeiro_acesso: precisaTrocarSenha,
+        ativo: 1,
+        ...(credencialTemporaria ? { credencial_temporaria: credencialTemporaria } : {}),
+      },
     });
   } catch (erro) { responderErro(res, erro); }
 });
@@ -164,32 +180,49 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const id = lerId(req);
-    const { nome, email, senha, perfil, precisaTrocarSenha } = lerUsuario(req, false);
+    const usuarioLido = lerUsuario(req, false);
+    const { nome, email, senha, perfil, credencialTemporaria } = usuarioLido;
     if (req.usuario?.id === id && perfil !== 'ADMIN') throw new ErroOperacao(409, 'Não é possível remover seu próprio perfil de administrador.');
     const hash = senha ? await gerarHashSenha(senha) : null;
     const resultado = await editarComoAdmin(req, id, async conexao => {
       const [[anterior]] = await conexao.query<RowDataPacket[]>(
         'SELECT nome, login, perfil, id_profissional, precisa_trocar_senha FROM usuario WHERE id_usuario = ?', [id]);
-      const vinculo = await vincularProfissional(conexao, req, { nome, email, senha, perfil, precisaTrocarSenha }, id, anterior.id_profissional);
+      const vinculo = await vincularProfissional(conexao, req, usuarioLido, id, anterior.id_profissional);
       const login = (!anterior.login || anterior.nome !== nome)
         ? await resolverLoginUnico(conexao, nome, id)
         : String(anterior.login);
       const novoPrecisaTrocar = req.body?.resetar_senha_padrao === true
         ? 1
         : (hash ? 0 : Number(anterior.precisa_trocar_senha || 0));
-      const revogarSessao = anterior.perfil === 'PROFISSIONAL' &&
-        (anterior.id_profissional === null || anterior.id_profissional !== vinculo);
+      const rebaixouAdmin = anterior.perfil === 'ADMIN' && perfil !== 'ADMIN';
+      const revogarSessao = rebaixouAdmin || (anterior.perfil === 'PROFISSIONAL' &&
+        (anterior.id_profissional === null || anterior.id_profissional !== vinculo));
       await conexao.query(
         'UPDATE usuario SET nome = ?, login = ?, email = ?, perfil = ?, id_profissional = ?, precisa_trocar_senha = ?, senha_hash = COALESCE(?, senha_hash) WHERE id_usuario = ?',
         [nome, login, email, perfil, vinculo, novoPrecisaTrocar, hash, id]
       );
       if (hash || revogarSessao) await conexao.query('DELETE FROM sessao_usuario WHERE id_usuario = ?', [id]);
-      return { profissional_id: vinculo, login, primeiro_acesso: Boolean(novoPrecisaTrocar) };
+      return {
+        profissional_id: vinculo,
+        login,
+        primeiro_acesso: Boolean(novoPrecisaTrocar),
+        revogou: Boolean(hash || revogarSessao),
+      };
     });
+    if (resultado.revogou) encerrarConexoesUsuario(id);
     res.json({
       sucesso: true,
       mensagem: 'Usuário atualizado com sucesso.',
-      dados: { id, nome, email, perfil, ...resultado },
+      dados: {
+        id,
+        nome,
+        email,
+        perfil,
+        profissional_id: resultado.profissional_id,
+        login: resultado.login,
+        primeiro_acesso: resultado.primeiro_acesso,
+        ...(credencialTemporaria ? { credencial_temporaria: credencialTemporaria } : {}),
+      },
     });
   } catch (erro) { responderErro(res, erro); }
 });
@@ -204,6 +237,7 @@ router.patch('/:id/status', async (req, res) => {
       await conexao.query('UPDATE usuario SET ativo = ? WHERE id_usuario = ?', [ativo, id]);
       if (!ativo) await conexao.query('DELETE FROM sessao_usuario WHERE id_usuario = ?', [id]);
     });
+    if (!ativo) encerrarConexoesUsuario(id);
     res.json({ sucesso: true, mensagem: ativo ? 'Usuário ativado.' : 'Usuário inativado.', dados: { id, ativo } });
   } catch (erro) { responderErro(res, erro); }
 });
@@ -215,6 +249,7 @@ router.delete('/:id', async (req, res) => {
     await editarComoAdmin(req, id, async conexao => {
       await conexao.query('DELETE FROM usuario WHERE id_usuario = ?', [id]);
     });
+    encerrarConexoesUsuario(id);
     res.json({ sucesso: true, mensagem: 'Usuário excluído.' });
   } catch (erro) { responderErro(res, erro); }
 });

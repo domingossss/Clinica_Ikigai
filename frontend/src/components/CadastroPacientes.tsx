@@ -1,5 +1,5 @@
 import { aplicarMascaraCPF, aplicarMascaraTelefone } from '../utils/formatacao';
-import { apiFetch } from '../api';
+import { apiFetch, lerJsonSeguro } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Swal from 'sweetalert2';
@@ -100,14 +100,14 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
     if (!silencioso) setLoadingPacientes(true);
     try {
       const res = await apiFetch(`/api/pacientes?pagina=${pagina}&limite=50&busca=${encodeURIComponent(searchTerm)}`, { signal: controller.signal });
-      const data = await res.json();
+      const data = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: Paciente[]; total?: number }>(res);
       if (controller.signal.aborted) return;
-      if (res.ok && data.sucesso && Array.isArray(data.dados)) {
+      if (res.ok && data?.sucesso && Array.isArray(data.dados)) {
         setPacientes(data.dados);
-        setTotalPacientes(data.total);
+        setTotalPacientes(typeof data.total === 'number' ? data.total : data.dados.length);
       } else {
         setPacientes([]);
-        showToast(data.erro || 'Falha ao buscar pacientes.', 'error');
+        showToast(data?.erro || 'Falha ao buscar pacientes.', 'error');
       }
     } catch (err) {
       if (controller.signal.aborted) return;
@@ -276,10 +276,10 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
       const res = await apiFetch(`/api/pacientes/${id}`, {
         method: 'DELETE'
       });
-      const data = await res.json();
-      if (data.sucesso) {
+      const data = await lerJsonSeguro<{ sucesso?: boolean; erro?: string }>(res);
+      if (res.ok && data?.sucesso) {
         Swal.fire({
-          title: 'Excluído!',
+          titleText: 'Excluído!',
           text: 'Paciente excluído com sucesso.',
           icon: 'success',
           timer: 2000,
@@ -290,11 +290,11 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
         }
         carregarPacientes();
       } else {
-        Swal.fire('Erro!', data.erro || 'Falha ao excluir paciente.', 'error');
+        Swal.fire({ titleText: 'Erro!', text: data?.erro || 'Falha ao excluir paciente.', icon: 'error' });
       }
     } catch (err) {
       console.error(err);
-      Swal.fire('Erro!', 'Erro de rede ao conectar com o servidor.', 'error');
+      Swal.fire({ titleText: 'Erro!', text: 'Erro de rede ao conectar com o servidor.', icon: 'error' });
     }
   };
 
@@ -463,9 +463,9 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
 
             {isProfissional && !editingPacienteId ? (
               <div className="p-4 rounded-xl bg-secondary/10 border border-secondary/30 text-xs text-dark space-y-2">
-                <p className="font-bold text-primary-dark">Nenhum paciente selecionado</p>
+                <p className="font-bold text-primary-dark">Acesso ao Prontuário Clínico</p>
                 <p className="text-gray leading-relaxed">
-                  Selecione um paciente na tabela ao lado clicando no ícone de <strong>editar (lápis)</strong> para registrar ou atualizar a evolução clínica, etapa do tratamento e observações.
+                  Clique no <strong>nome do paciente</strong> ou no botão <strong>Prontuário</strong> na tabela ao lado para abrir o prontuário completo, registrar a evolução clínica, atualizar a etapa do tratamento e consultar a linha do tempo.
                 </p>
               </div>
             ) : (
@@ -501,6 +501,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                       <label className="block text-xs font-bold text-dark mb-1">CPF (apenas números)</label>
                       <input
                         type="text"
+                        maxLength={14}
                         placeholder="000.000.000-00"
                         value={form.cpf}
                         onChange={e => handleInputChange('cpf', e.target.value)}
@@ -600,7 +601,6 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                       >
                         <option value="Avaliação">Avaliação</option>
                         <option value="Em Tratamento">Em Tratamento</option>
-                        <option value="Tratamento">Tratamento</option>
                         <option value="Retorno">Retorno</option>
                         <option value="Manutenção">Manutenção</option>
                         <option value="Alta">Alta</option>
@@ -667,7 +667,7 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
               <div>
                 <h2 className="text-base font-bold text-dark flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-                  Pacientes Cadastrados ({filteredPacientes.length})
+                  Pacientes Cadastrados ({totalPacientes || filteredPacientes.length})
                 </h2>
                 <p className="text-[11px] text-gray mt-0.5">Lista geral de pacientes cadastrados na clínica</p>
               </div>
@@ -813,7 +813,9 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
       {/* Modal Completo de Prontuário e Linha do Tempo Vertical */}
       {prontuarioPaciente && (
         <ModalProntuarioPaciente
+          key={prontuarioPaciente.id}
           isOpen={true}
+          somenteClinico={isProfissional}
           onClose={() => setProntuarioPaciente(null)}
           pacienteId={prontuarioPaciente.id}
           pacienteNome={prontuarioPaciente.nome_completo}

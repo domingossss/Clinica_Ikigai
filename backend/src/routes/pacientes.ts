@@ -2,7 +2,7 @@ import type { ResultSetHeader } from 'mysql2/promise';
 import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import pool, { ErroOperacao, executarTransacao } from '../config/database.js';
-import { sanitizarTexto, validarCPF, registrarErro } from '../middleware/security.js';
+import { sanitizarTexto, validarCPF, validarFormatoData, registrarErro } from '../middleware/security.js';
 import { normalizarTelefone } from '../services/telefone.js';
 import { reservaExcepcionalNaOcorrencia } from '../services/reservasAgenda.js';
 const router = Router();
@@ -462,7 +462,8 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
       sucesso: true,
       mensagem: 'Paciente atualizado com sucesso!',
       dados: {
-        id,
+        id: pacienteUuid,
+        versao: req.body.versao + 1,
         nome_completo: nomeSanitizado,
         cpf: cleanCpf,
         telefone: cleanTelefone,
@@ -491,14 +492,15 @@ router.delete('/pacientes/:id', async (req: Request, res: Response): Promise<any
   try {
     const { id } = req.params;
 
-    // Verificar se o paciente existe
-    const [existing] = await pool.query('SELECT id FROM pacientes WHERE id = ?', [id]);
-    if ((existing as any[]).length === 0) {
+    // Verificar se o paciente existe (suporta UUID ou id_paciente numérico)
+    const [existing] = await consultarPaciente(req, id, 'p.uuid AS id');
+    if (existing.length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Paciente nao cadastrado.' });
     }
+    const pacienteUuid = existing[0].id;
 
     // A chave estrangeira impede excluir pacientes com histórico de agendamentos.
-    await pool.query('DELETE FROM pacientes WHERE id = ?', [id]);
+    await pool.query('DELETE FROM paciente WHERE uuid = ?', [pacienteUuid]);
 
     return res.status(200).json({
       sucesso: true,
@@ -530,39 +532,21 @@ router.get('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
       return res.status(400).json({ sucesso: false, erro: 'ID do paciente inválido.' });
     }
 
-    const chave = /^\d+$/.test(id) ? 'p.id_paciente' : 'p.uuid';
     const profissionalId = req.usuario?.perfil === 'PROFISSIONAL' ? Number(req.usuario.profissional_id) : null;
+    const camposProntuario = `p.uuid AS id, p.id_paciente, p.versao, p.nome AS nome_completo,
+      p.cpf, p.rg, DATE_FORMAT(p.data_nascimento, '%Y-%m-%d') AS data_nascimento,
+      p.sexo, p.filiacao, p.naturalidade, p.telefone, p.whatsapp, p.endereco,
+      p.etapa_tratamento, p.historico_clinico, p.observacoes, p.criado_em`;
 
-    const [pacientes]: any = await pool.query(
-      `SELECT p.uuid AS id, p.id_paciente, p.versao, p.nome AS nome_completo,
-              p.cpf, p.rg, DATE_FORMAT(p.data_nascimento, '%Y-%m-%d') AS data_nascimento,
-              p.sexo, p.filiacao, p.naturalidade, p.telefone, p.whatsapp, p.endereco,
-              p.etapa_tratamento, p.historico_clinico, p.observacoes, p.criado_em
-       FROM paciente AS p
-       WHERE ${chave} = ?
-       LIMIT 1`,
-      [id]
-    );
+    // Reutiliza consultarPaciente -> aplica vinculoAssistencial para PROFISSIONAL
+    // (exige atendimento não Cancelado/No_Show e checkin_recepcao=1 em reserva excepcional)
+    const [pacientes] = await consultarPaciente(req, id, camposProntuario);
 
     if (!pacientes.length) {
       return res.status(404).json({ sucesso: false, erro: 'Paciente não encontrado.' });
     }
 
     const paciente = pacientes[0];
-
-    // Se for PROFISSIONAL, verifica se o paciente possui agendamento com este profissional
-    if (profissionalId !== null) {
-      const [vinculo]: any = await pool.query(
-        `SELECT 1 FROM agendamento a
-         WHERE a.id_profissional = ?
-           AND (a.paciente_uuid = ? OR (COALESCE(a.paciente_uuid, '') = '' AND a.id_paciente = ?))
-         LIMIT 1`,
-        [profissionalId, paciente.id, paciente.id_paciente]
-      );
-      if (!vinculo.length) {
-        return res.status(404).json({ sucesso: false, erro: 'Paciente não vinculado à sua agenda.' });
-      }
-    }
 
     const [consultas]: any = await pool.query(
       `SELECT
@@ -573,11 +557,13 @@ router.get('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
          a.status,
          a.observacoes AS observacoes_agendamento,
          COALESCE(proc.nome, 'Consulta / Procedimento') AS servico_nome,
-         COALESCE(proc.duracao_minutos, 60) AS duracao_minutos,
+         COALESCE(pp.duracao_minutos_profissional, proc.duracao_minutos, 60) AS duracao_minutos,
          pr.id_profissional AS profissional_id,
          COALESCE(pr.nome, 'Profissional') AS profissional_nome,
          COALESCE(pr.especialidade_principal, 'Especialista') AS profissional_especialidade,
          pc.id_prontuario,
+         pc.autor_id,
+         pc.autor_nome,
          pc.anamnese,
          pc.exame_fisico,
          pc.hipoteses_diagnosticas,
@@ -587,6 +573,7 @@ router.get('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
          DATE_FORMAT(pc.atualizado_em, '%Y-%m-%dT%H:%i:%s') AS prontuario_atualizado_em
        FROM agendamento a
        LEFT JOIN procedimento proc ON a.id_procedimento = proc.id_procedimento
+       LEFT JOIN profissional_procedimento pp ON pp.id_profissional = a.id_profissional AND pp.id_procedimento = a.id_procedimento
        LEFT JOIN profissional pr ON a.id_profissional = pr.id_profissional
        LEFT JOIN prontuario_consulta pc ON pc.id_agendamento = a.id_agendamento
        WHERE (a.paciente_uuid = ? OR (COALESCE(a.paciente_uuid, '') = '' AND a.id_paciente = ?))
@@ -619,37 +606,28 @@ router.put('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
       return res.status(400).json({ sucesso: false, erro: 'ID do paciente inválido.' });
     }
 
-    const chave = /^\d+$/.test(id) ? 'p.id_paciente' : 'p.uuid';
     const profissionalId = req.usuario?.perfil === 'PROFISSIONAL' ? Number(req.usuario.profissional_id) : null;
+    const camposProntuario = `p.uuid AS id, p.id_paciente, p.versao, p.nome AS nome_completo,
+      p.cpf, p.rg, DATE_FORMAT(p.data_nascimento, '%Y-%m-%d') AS data_nascimento,
+      p.sexo, p.filiacao, p.naturalidade, p.telefone, p.whatsapp, p.endereco,
+      p.etapa_tratamento, p.historico_clinico, p.observacoes`;
 
-    const [pacientes]: any = await pool.query(
-      `SELECT p.uuid AS id, p.id_paciente, p.versao, p.nome AS nome_completo,
-              p.cpf, p.rg, DATE_FORMAT(p.data_nascimento, '%Y-%m-%d') AS data_nascimento,
-              p.sexo, p.filiacao, p.naturalidade, p.telefone, p.whatsapp, p.endereco,
-              p.etapa_tratamento, p.historico_clinico, p.observacoes
-       FROM paciente AS p
-       WHERE ${chave} = ?
-       LIMIT 1`,
-      [id]
-    );
+    // Exige vinculoAssistencial para PROFISSIONAL e retorna 404 uniforme (sem oráculo 403 vs 404)
+    const [pacientes] = await consultarPaciente(req, id, camposProntuario);
 
     if (!pacientes.length) {
       return res.status(404).json({ sucesso: false, erro: 'Paciente não encontrado.' });
     }
 
     const pacienteAtual = pacientes[0];
-
-    if (profissionalId !== null) {
-      const [vinculo]: any = await pool.query(
-        `SELECT 1 FROM agendamento a
-         WHERE a.id_profissional = ?
-           AND (a.paciente_uuid = ? OR (COALESCE(a.paciente_uuid, '') = '' AND a.id_paciente = ?))
-         LIMIT 1`,
-        [profissionalId, pacienteAtual.id, pacienteAtual.id_paciente]
-      );
-      if (!vinculo.length) {
-        return res.status(403).json({ sucesso: false, erro: 'Paciente não vinculado à sua agenda.' });
-      }
+    if (!Number.isSafeInteger(req.body?.versao) || req.body.versao < 0) {
+      return res.status(428).json({ sucesso: false, erro: 'Atualize o prontuário antes de salvar.' });
+    }
+    if (Number(pacienteAtual.versao) !== req.body.versao) {
+      return res.status(409).json({
+        sucesso: false,
+        erro: 'Este prontuário foi alterado em outra tela. Recarregue os dados antes de salvar.',
+      });
     }
 
     const limparOpcional = (val: unknown, max = 5000): string | null => {
@@ -658,31 +636,53 @@ router.put('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
       return texto ? texto.slice(0, max) : null;
     };
 
-    const dataNascRaw = typeof req.body?.data_nascimento === 'string' ? req.body.data_nascimento.trim() : undefined;
-    const dataNascFinal = dataNascRaw === undefined
-      ? pacienteAtual.data_nascimento
-      : (/^\d{4}-\d{2}-\d{2}$/.test(dataNascRaw) ? dataNascRaw : null);
+    const isProfissional = profissionalId !== null;
+    let dataNascFinal = pacienteAtual.data_nascimento;
+    let sexoFinal = pacienteAtual.sexo || 'Outro';
+    let filiacaoFinal = pacienteAtual.filiacao;
+    let naturalidadeFinal = pacienteAtual.naturalidade;
+    let rgFinal = pacienteAtual.rg;
+    let enderecoFinal = pacienteAtual.endereco;
 
-    const sexoValidos = ['Feminino', 'Masculino', 'Outro'];
-    const sexoFinal = typeof req.body?.sexo === 'string' && sexoValidos.includes(req.body.sexo)
-      ? req.body.sexo
-      : (pacienteAtual.sexo || 'Outro');
+    // PROFISSIONAL não pode alterar dados cadastrais do paciente pelo prontuário (somente ADMIN)
+    if (!isProfissional) {
+      const dataNascRaw = typeof req.body?.data_nascimento === 'string' ? req.body.data_nascimento.trim() : undefined;
+      if (dataNascRaw !== undefined) {
+        if (dataNascRaw === '') {
+          dataNascFinal = null;
+        } else {
+          if (!validarFormatoData(dataNascRaw)) {
+            return res.status(400).json({ sucesso: false, erro: 'Data de nascimento inválida.' });
+          }
+          const hojeClinica = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+          if (dataNascRaw > hojeClinica) {
+            return res.status(400).json({ sucesso: false, erro: 'A data de nascimento não pode ser futura.' });
+          }
+          dataNascFinal = dataNascRaw;
+        }
+      }
 
-    const filiacaoFinal = req.body?.filiacao !== undefined
-      ? limparOpcional(req.body.filiacao, 255)
-      : pacienteAtual.filiacao;
-    const naturalidadeFinal = req.body?.naturalidade !== undefined
-      ? limparOpcional(req.body.naturalidade, 120)
-      : pacienteAtual.naturalidade;
-    const rgFinal = req.body?.rg !== undefined
-      ? limparOpcional(req.body.rg, 30)
-      : pacienteAtual.rg;
+      const sexoValidos = ['Feminino', 'Masculino', 'Outro'];
+      sexoFinal = typeof req.body?.sexo === 'string' && sexoValidos.includes(req.body.sexo)
+        ? req.body.sexo
+        : (pacienteAtual.sexo || 'Outro');
+      filiacaoFinal = req.body?.filiacao !== undefined
+        ? limparOpcional(req.body.filiacao, 255)
+        : pacienteAtual.filiacao;
+      naturalidadeFinal = req.body?.naturalidade !== undefined
+        ? limparOpcional(req.body.naturalidade, 120)
+        : pacienteAtual.naturalidade;
+      rgFinal = req.body?.rg !== undefined
+        ? limparOpcional(req.body.rg, 30)
+        : pacienteAtual.rg;
+      enderecoFinal = req.body?.endereco !== undefined && String(req.body.endereco).trim()
+        ? (limparOpcional(req.body.endereco, 500) || pacienteAtual.endereco)
+        : pacienteAtual.endereco;
+    }
+
     const etapaFinal = req.body?.etapa_tratamento !== undefined
       ? (limparOpcional(req.body.etapa_tratamento, 100) || 'Avaliação')
       : (pacienteAtual.etapa_tratamento || 'Avaliação');
-    const enderecoFinal = req.body?.endereco !== undefined && String(req.body.endereco).trim()
-      ? (limparOpcional(req.body.endereco, 500) || pacienteAtual.endereco)
-      : pacienteAtual.endereco;
 
     const anamnese = limparOpcional(req.body?.anamnese);
     const exameFisico = limparOpcional(req.body?.exame_fisico);
@@ -691,18 +691,35 @@ router.put('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
     const evolucao = limparOpcional(req.body?.evolucao);
     const examesLaudos = limparOpcional(req.body?.exames_laudos);
 
-    const historicoGeralFinal = anamnese !== null
-      ? anamnese
-      : (req.body?.historico_clinico !== undefined ? limparOpcional(req.body.historico_clinico) : pacienteAtual.historico_clinico);
-    const observacoesGeralFinal = evolucao !== null
-      ? evolucao
-      : (req.body?.observacoes !== undefined ? limparOpcional(req.body.observacoes) : pacienteAtual.observacoes);
+    // Preserva historico_clinico e observacoes globais sem sobrescrevê-los com consultas antigas
+    const historicoGeralFinal = req.body?.historico_clinico !== undefined
+      ? limparOpcional(req.body.historico_clinico)
+      : pacienteAtual.historico_clinico;
+    const observacoesGeralFinal = req.body?.observacoes !== undefined
+      ? limparOpcional(req.body.observacoes)
+      : pacienteAtual.observacoes;
 
     const agendamentoId = req.body?.agendamento_id ? Number(req.body.agendamento_id) : null;
+    const novaVersao = req.body.versao + 1;
 
     await executarTransacao(async conexao => {
-      await conexao.query(
-        `UPDATE paciente
+      const clausulaEscopo = isProfissional ? ` AND ${vinculoAssistencial}` : '';
+      const paramsUpdate = [
+        dataNascFinal || null,
+        sexoFinal,
+        filiacaoFinal,
+        naturalidadeFinal,
+        rgFinal,
+        enderecoFinal,
+        etapaFinal,
+        historicoGeralFinal,
+        observacoesGeralFinal,
+        pacienteAtual.id,
+        req.body.versao,
+        ...(isProfissional ? [profissionalId] : []),
+      ];
+      const [resUpdate] = await conexao.query<ResultSetHeader>(
+        `UPDATE paciente AS p
          SET versao = versao + 1,
              data_nascimento = ?,
              sexo = ?,
@@ -713,42 +730,65 @@ router.put('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
              etapa_tratamento = ?,
              historico_clinico = ?,
              observacoes = ?
-         WHERE uuid = ?`,
-        [
-          dataNascFinal || null,
-          sexoFinal,
-          filiacaoFinal,
-          naturalidadeFinal,
-          rgFinal,
-          enderecoFinal,
-          etapaFinal,
-          historicoGeralFinal,
-          observacoesGeralFinal,
-          pacienteAtual.id,
-        ]
+         WHERE p.uuid = ? AND p.versao = ?${clausulaEscopo}`,
+        paramsUpdate
       );
+      if (!resUpdate.affectedRows) {
+        throw new ErroOperacao(409, 'Este prontuário foi alterado em outra tela. Recarregue os dados antes de salvar.');
+      }
+
+      if (req.usuario) {
+        const anterior = {
+          etapa_tratamento: pacienteAtual.etapa_tratamento,
+          historico_clinico: pacienteAtual.historico_clinico,
+          observacoes: pacienteAtual.observacoes,
+        };
+        const posterior = {
+          etapa_tratamento: etapaFinal,
+          historico_clinico: historicoGeralFinal,
+          observacoes: observacoesGeralFinal,
+        };
+        if (JSON.stringify(anterior) !== JSON.stringify(posterior)) {
+          await conexao.query(
+            `INSERT INTO paciente_evolucao (paciente_uuid, versao, autor_id, autor_nome, anterior, posterior)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [pacienteAtual.id, novaVersao, req.usuario.id, req.usuario.nome, JSON.stringify(anterior), JSON.stringify(posterior)]
+          );
+        }
+      }
 
       if (agendamentoId && Number.isSafeInteger(agendamentoId) && agendamentoId > 0) {
         const [ags]: any = await conexao.query(
-          `SELECT id_agendamento, id_profissional
-           FROM agendamento
-           WHERE id_agendamento = ?
-             AND (paciente_uuid = ? OR (COALESCE(paciente_uuid, '') = '' AND id_paciente = ?))
+          `SELECT a.id_agendamento, a.id_profissional, a.status, a.checkin_recepcao,
+                  ${reservaExcepcionalNaOcorrencia('a')} AS excepcional
+           FROM agendamento a
+           WHERE a.id_agendamento = ?
+             AND (a.paciente_uuid = ? OR (COALESCE(a.paciente_uuid, '') = '' AND a.id_paciente = ?))
            LIMIT 1`,
           [agendamentoId, pacienteAtual.id, pacienteAtual.id_paciente]
         );
         if (!ags.length) {
           throw new ErroOperacao(404, 'Consulta selecionada não pertence a este paciente.');
         }
-        if (profissionalId !== null && Number(ags[0].id_profissional) !== profissionalId) {
-          throw new ErroOperacao(403, 'Você só pode registrar o prontuário das suas próprias consultas.');
+        if (profissionalId !== null) {
+          if (Number(ags[0].id_profissional) !== profissionalId) {
+            throw new ErroOperacao(403, 'Você só pode registrar o prontuário das suas próprias consultas.');
+          }
+          if (['Cancelado', 'No_Show'].includes(String(ags[0].status))) {
+            throw new ErroOperacao(403, 'Não é permitido registrar prontuário em consulta cancelada ou com ausência.');
+          }
+          if (Number(ags[0].excepcional) === 1 && Number(ags[0].checkin_recepcao) !== 1) {
+            throw new ErroOperacao(403, 'A recepção precisa confirmar a chegada do paciente antes de liberar o prontuário desta reserva excepcional.');
+          }
         }
 
         await conexao.query(
           `INSERT INTO prontuario_consulta
-             (id_agendamento, paciente_uuid, id_profissional, anamnese, exame_fisico, hipoteses_diagnosticas, prescricoes, evolucao, exames_laudos)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             (id_agendamento, paciente_uuid, id_profissional, autor_id, autor_nome, anamnese, exame_fisico, hipoteses_diagnosticas, prescricoes, evolucao, exames_laudos)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
+             autor_id = VALUES(autor_id),
+             autor_nome = VALUES(autor_nome),
              anamnese = VALUES(anamnese),
              exame_fisico = VALUES(exame_fisico),
              hipoteses_diagnosticas = VALUES(hipoteses_diagnosticas),
@@ -759,6 +799,8 @@ router.put('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
             agendamentoId,
             pacienteAtual.id,
             Number(ags[0].id_profissional),
+            req.usuario?.id ?? null,
+            req.usuario?.nome ?? null,
             anamnese,
             exameFisico,
             hipotesesDiagnosticas,
@@ -773,6 +815,7 @@ router.put('/pacientes/:id/prontuario', async (req: Request, res: Response): Pro
     return res.status(200).json({
       sucesso: true,
       mensagem: 'Prontuário do paciente salvo com sucesso!',
+      dados: { versao: novaVersao },
     });
   } catch (error: any) {
     if (error instanceof ErroOperacao) return res.status(error.status).json({ sucesso: false, erro: error.message });

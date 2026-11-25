@@ -3,6 +3,7 @@ export type StatusConexaoWhatsApp = {
   mode: string;
   enabled: boolean;
   sendEnabled: boolean;
+  allowAnyNumber: boolean;
   sessionRecovered: boolean;
   reconnectAttempts: number;
   allowedNumbersCount: number;
@@ -46,6 +47,7 @@ export function obterStatusConexaoWhatsApp(env: NodeJS.ProcessEnv = process.env)
     mode: (env.WHATSAPP_MODE || 'simulation').trim(),
     enabled: env.WHATSAPP_BAILEYS_ENABLED === 'true',
     sendEnabled: env.WHATSAPP_SEND_ENABLED === 'true',
+    allowAnyNumber: env.WHATSAPP_ALLOW_ANY_NUMBER === 'true',
     sessionRecovered: false,
     reconnectAttempts: 0,
     allowedNumbersCount: allowedCount

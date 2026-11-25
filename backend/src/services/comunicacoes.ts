@@ -19,11 +19,15 @@ export function janelaLembrete(agora = new Date()) {
   const minutos = Number(process.env.LEMBRETE_ANTECEDENCIA_MINUTOS?.trim() || 1440);
   const fuso = process.env.LEMBRETE_FUSO?.trim() || 'America/Sao_Paulo';
   if (!fuso || !Number.isSafeInteger(minutos) || minutos < 1 || minutos > 10080) return null;
-  const formato = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: fuso, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  });
-  return { inicio: formato.format(agora), fim: formato.format(agora.getTime() + minutos * 60000) };
+  try {
+    const formato = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: fuso, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    });
+    return { inicio: formato.format(agora), fim: formato.format(agora.getTime() + minutos * 60000) };
+  } catch {
+    return null;
+  }
 }
 
 function elegivel(atendimento: RowDataPacket, tipo: Tipo, agora?: Date) {

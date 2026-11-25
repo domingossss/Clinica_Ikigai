@@ -224,9 +224,19 @@ export function extractTextFromWAMessage(msg: WAMessage): string | null {
  * Provedor de mensagens integrado ao socket Baileys com bloqueio por padrão,
  * allowlist obrigatória e proibição de disparos em massa.
  */
+const MAX_OUTBOX_BUFFER = 50;
+const MAX_CACHE_ENTRIES = 1000;
+
 export class BaileysMessageProvider implements MessageProvider {
   readonly sentOutbox: Array<{ phone: string; jid: string; text: string }> = [];
   readonly blockedOutbox: Array<{ phone: string; text: string; reason: string }> = [];
+
+  private pushBounded<T>(arr: T[], item: T): void {
+    // Em produção, não retém conteúdo de mensagens/PII em RAM; em dev/test mantém ring buffer pequeno.
+    if (process.env.NODE_ENV === 'production') return;
+    if (arr.length >= MAX_OUTBOX_BUFFER) arr.shift();
+    arr.push(item);
+  }
 
   constructor(
     private readonly getSocket: () => BaileysSocketLike | null,
@@ -241,13 +251,13 @@ export class BaileysMessageProvider implements MessageProvider {
   async send(phone: string, text: string): Promise<void> {
     const normalizedPhone = normalizePhoneDigits(phone);
     if (!normalizedPhone || !this.isAllowedPhone(normalizedPhone)) {
-      this.blockedOutbox.push({ phone, text, reason: 'unauthorized_recipient' });
+      this.pushBounded(this.blockedOutbox, { phone, text, reason: 'unauthorized_recipient' });
       this.log(`[WhatsApp Baileys] phone=${maskPhone(phone)} result=send_blocked_unauthorized`);
       throw new Error('UNAUTHORIZED_RECIPIENT');
     }
 
     if (!this.isSendEnabled()) {
-      this.blockedOutbox.push({ phone: normalizedPhone, text, reason: 'send_disabled_by_config' });
+      this.pushBounded(this.blockedOutbox, { phone: normalizedPhone, text, reason: 'send_disabled_by_config' });
       this.log(`[WhatsApp Baileys] phone=${maskPhone(normalizedPhone)} result=send_blocked_by_config`);
       return;
     }
@@ -262,14 +272,14 @@ export class BaileysMessageProvider implements MessageProvider {
     const sent = await socket.sendMessage(replyJid, { text });
     const sentId = sent?.key?.id ?? undefined;
     this.onMessageSent(sentId);
-    this.sentOutbox.push({ phone: normalizedPhone, jid: replyJid, text });
+    this.pushBounded(this.sentOutbox, { phone: normalizedPhone, jid: replyJid, text });
     this.log(`[WhatsApp Baileys] phone=${maskPhone(normalizedPhone)} result=sent`);
   }
 
   async sendActive(phone: string, text: string): Promise<ResultadoEnvioAtivoWhatsApp> {
     const normalizedPhone = normalizePhoneDigits(phone);
     if (!normalizedPhone || !this.isAllowedPhone(normalizedPhone)) {
-      this.blockedOutbox.push({ phone, text, reason: 'unauthorized_recipient' });
+      this.pushBounded(this.blockedOutbox, { phone, text, reason: 'unauthorized_recipient' });
       this.log(`[WhatsApp Baileys] phone=${maskPhone(phone)} result=active_send_blocked_unauthorized`);
       return {
         ok: false,
@@ -279,7 +289,7 @@ export class BaileysMessageProvider implements MessageProvider {
     }
 
     if (!this.isSendEnabled()) {
-      this.blockedOutbox.push({ phone: normalizedPhone, text, reason: 'send_disabled_by_config' });
+      this.pushBounded(this.blockedOutbox, { phone: normalizedPhone, text, reason: 'send_disabled_by_config' });
       this.log(`[WhatsApp Baileys] phone=${maskPhone(normalizedPhone)} result=active_send_blocked_by_config`);
       return {
         ok: false,
@@ -303,7 +313,7 @@ export class BaileysMessageProvider implements MessageProvider {
       const sent = await socket.sendMessage(replyJid, { text });
       const sentId = sent?.key?.id ?? undefined;
       this.onMessageSent(sentId);
-      this.sentOutbox.push({ phone: normalizedPhone, jid: replyJid, text });
+      this.pushBounded(this.sentOutbox, { phone: normalizedPhone, jid: replyJid, text });
       this.log(`[WhatsApp Baileys] phone=${maskPhone(normalizedPhone)} result=active_sent`);
       return { ok: true, messageId: sentId };
     } catch {
@@ -402,6 +412,7 @@ export class WhatsAppBaileysConnector implements ConectorWhatsAppAtivo {
       mode: this.config.mode,
       enabled: this.config.enabled,
       sendEnabled: this.config.sendEnabled,
+      allowAnyNumber: this.allowAnyNumber,
       sessionRecovered: this.sessionRecovered,
       reconnectAttempts: this.reconnectAttempts,
       allowedNumbersCount: this.allowedNumbers.size
@@ -438,6 +449,18 @@ export class WhatsAppBaileysConnector implements ConectorWhatsAppAtivo {
       this.log('[WhatsApp Baileys] state=session_recovered');
     } else {
       this.log('[WhatsApp Baileys] state=initializing_new_session');
+    }
+
+    if (this.socket) {
+      try {
+        this.socket.ev.removeAllListeners?.('creds.update');
+        this.socket.ev.removeAllListeners?.('connection.update');
+        this.socket.ev.removeAllListeners?.('messages.upsert');
+        void Promise.resolve(this.socket.end?.(undefined)).catch(() => {});
+      } catch {
+        // Ignora erro ao encerrar socket anterior antes da reconexão
+      }
+      this.socket = null;
     }
 
     const silentLogger = createSilentLogger();
@@ -509,6 +532,7 @@ export class WhatsAppBaileysConnector implements ConectorWhatsAppAtivo {
             });
           }
         }, this.config.reconnectIntervalMs);
+        this.reconnectTimer.unref?.();
       } else {
         this.status = 'stopped';
         this.socket = null;
@@ -581,7 +605,12 @@ export class WhatsAppBaileysConnector implements ConectorWhatsAppAtivo {
       return null;
     }
 
-    // Registrar JID de resposta normalizado e encaminhar ao serviço existente da Etapa 1
+    // Registrar JID de resposta normalizado com teto LRU simples para evitar vazamento de memória
+    if (this.replyJids.has(phone)) this.replyJids.delete(phone);
+    else if (this.replyJids.size >= MAX_CACHE_ENTRIES) {
+      const oldestKey = this.replyJids.keys().next().value;
+      if (oldestKey !== undefined) this.replyJids.delete(oldestKey);
+    }
     this.replyJids.set(phone, replyJid);
     const sanitizedMessageId = rawId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 100);
 
@@ -602,6 +631,18 @@ export class WhatsAppBaileysConnector implements ConectorWhatsAppAtivo {
   private checkAndRecordRateLimit(phone: string): boolean {
     const currentMs = this.now();
     const windowStart = currentMs - 60_000;
+    // Limpa janelas expiradas periodicamente quando o mapa cresce
+    if (this.rateLimitWindows.size >= MAX_CACHE_ENTRIES) {
+      for (const [key, timestamps] of this.rateLimitWindows.entries()) {
+        const ativos = timestamps.filter(ts => ts > windowStart);
+        if (ativos.length === 0) this.rateLimitWindows.delete(key);
+        else this.rateLimitWindows.set(key, ativos);
+      }
+      if (this.rateLimitWindows.size >= MAX_CACHE_ENTRIES) {
+        const oldestKey = this.rateLimitWindows.keys().next().value;
+        if (oldestKey !== undefined) this.rateLimitWindows.delete(oldestKey);
+      }
+    }
     const history = (this.rateLimitWindows.get(phone) ?? []).filter(ts => ts > windowStart);
 
     if (history.length >= this.config.maxMessagesPerMinute) {

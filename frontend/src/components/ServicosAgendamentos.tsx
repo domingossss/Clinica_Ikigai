@@ -80,6 +80,7 @@ export default function ServicosAgendamentos({
   const [showNewCatInput, setShowNewCatInput] = useState(false);
   const [novaCategoriaNome, setNovaCategoriaNome] = useState('');
   const [showGerenciarCategorias, setShowGerenciarCategorias] = useState(false);
+  const dialogoCategorias = useDialogAcessivel(showGerenciarCategorias, () => setShowGerenciarCategorias(false));
   const [loadingServicos, setLoadingServicos] = useState(true);
   const [submittingServico, setSubmittingServico] = useState(false);
 
@@ -328,7 +329,7 @@ export default function ServicosAgendamentos({
       : 'Tem certeza de que deseja excluir esta categoria? Esta ação não poderá ser desfeita.';
 
     const result = await Swal.fire({
-      title: `Excluir "${nome}"?`,
+      titleText: `Excluir "${nome}"?`,
       text: textoAviso,
       icon: 'warning',
       showCancelButton: true,
@@ -480,7 +481,7 @@ export default function ServicosAgendamentos({
 
   const handleExcluirProfissional = async (p: ProfissionalItem) => {
     const result = await Swal.fire({
-      title: `Excluir "${p.nome}"?`,
+      titleText: `Excluir "${p.nome}"?`,
       text: 'Tem certeza de que deseja remover este profissional da equipe? Ele deixará de aparecer na grade de horários.',
       icon: 'warning',
       showCancelButton: true,
@@ -512,7 +513,7 @@ export default function ServicosAgendamentos({
         await carregarProfissionais();
         onProfissionaisAtualizados?.();
       } else {
-        Swal.fire('Atenção!', data.erro || 'Não foi possível excluir o profissional.', 'error');
+        Swal.fire({ titleText: 'Atenção!', text: data.erro || 'Não foi possível excluir o profissional.', icon: 'error' });
       }
     } catch (err) {
       console.error(err);
@@ -561,7 +562,7 @@ export default function ServicosAgendamentos({
 
         ToastSwal.fire({
           icon: novoStatus ? 'success' : 'info',
-          title: novoStatus
+          titleText: novoStatus
             ? `${p.nome}: Ativo na Grade`
             : `${p.nome}: Inativo na Grade`,
           text: novoStatus
@@ -1543,8 +1544,20 @@ export default function ServicosAgendamentos({
 
       {/* Modal: Gerenciador Completo de Categorias */}
       {showGerenciarCategorias && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-premium max-w-lg w-full p-6 border border-gray/10 flex flex-col max-h-[85vh]">
+        <div
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={e => {
+            if (e.target === e.currentTarget) setShowGerenciarCategorias(false);
+          }}
+        >
+          <div
+            ref={dialogoCategorias}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Gerenciar Categorias"
+            tabIndex={-1}
+            className="bg-white rounded-2xl shadow-premium max-w-lg w-full p-6 border border-gray/10 flex flex-col max-h-[85vh] focus:outline-none"
+          >
             <div className="flex items-center justify-between pb-4 border-b border-gray/10">
               <div>
                 <h3 className="text-base font-bold text-dark flex items-center gap-2">
@@ -1920,7 +1933,7 @@ export default function ServicosAgendamentos({
                           <input
                             type="time"
                             aria-label={`Início do intervalo em ${d.dia_nome}`}
-                            value={d.intervalo_inicio || '12:00'}
+                            value={d.intervalo_inicio || ''}
                             onChange={e => {
                               const v = e.target.value;
                               setJornadaDias(prev => prev.map((item, i) => i === idx ? { ...item, intervalo_inicio: v } : item));
@@ -1931,7 +1944,7 @@ export default function ServicosAgendamentos({
                           <input
                             type="time"
                             aria-label={`Fim do intervalo em ${d.dia_nome}`}
-                            value={d.intervalo_fim || '13:00'}
+                            value={d.intervalo_fim || ''}
                             onChange={e => {
                               const v = e.target.value;
                               setJornadaDias(prev => prev.map((item, i) => i === idx ? { ...item, intervalo_fim: v } : item));

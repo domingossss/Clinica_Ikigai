@@ -1,12 +1,14 @@
 export function aplicarMascaraCPF(value: string) {
-  if (value.trimStart().startsWith('+')) return '+' + value.replace(/\D/g, '').slice(0, 15);
-  const digitos = value.replace(/\D/g, '');
-  if (digitos.length > 11) return '+' + digitos.slice(0, 15);
-  const limpo = digitos;
+  const limpo = value.replace(/\D/g, '').slice(0, 11);
   if (limpo.length <= 3) return limpo;
   if (limpo.length <= 6) return `${limpo.slice(0, 3)}.${limpo.slice(3)}`;
   if (limpo.length <= 9) return `${limpo.slice(0, 3)}.${limpo.slice(3, 6)}.${limpo.slice(6)}`;
   return `${limpo.slice(0, 3)}.${limpo.slice(3, 6)}.${limpo.slice(6, 9)}-${limpo.slice(9)}`;
+}
+
+/** Retorna a data atual no fuso oficial da clínica (America/Sao_Paulo) no formato YYYY-MM-DD. */
+export function obterDataClinicaISO(referencia: Date = new Date()): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(referencia);
 }
 
 export function aplicarMascaraTelefone(value: string) {

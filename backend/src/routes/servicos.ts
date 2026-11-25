@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import pool, { ErroOperacao } from '../config/database.js';
 import { sanitizarTexto, validarIdNumerico, registrarErro } from '../middleware/security.js';
 const router = Router();
-router.get('/categorias', async (req: Request, res: Response): Promise<any> => {
+router.get('/categorias', async (_req: Request, res: Response): Promise<any> => {
   try {
     const [rows] = await pool.query('SELECT id, nome FROM categorias ORDER BY nome');
     return res.status(200).json({ sucesso: true, dados: rows });
@@ -41,9 +41,6 @@ router.post('/categorias', async (req: Request, res: Response): Promise<any> => 
     if (error.code === 'ER_ROW_IS_REFERENCED_2') return res.status(409).json({ sucesso:false, erro:'Registro com vínculos ou histórico não pode ser excluído.' });
     if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ sucesso:false, erro:'Já existe um cadastro com esses dados.' });
     registrarErro('Erro ao criar categoria:', error);
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ sucesso: false, erro: 'Uma categoria com este nome já existe.' });
-    }
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao criar categoria.' });
   }
 });
@@ -82,9 +79,6 @@ router.put('/categorias/:id', async (req: Request, res: Response): Promise<any> 
     if (error.code === 'ER_ROW_IS_REFERENCED_2') return res.status(409).json({ sucesso:false, erro:'Registro com vínculos ou histórico não pode ser excluído.' });
     if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ sucesso:false, erro:'Já existe um cadastro com esses dados.' });
     registrarErro('Erro ao atualizar categoria:', error);
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ sucesso: false, erro: 'Uma categoria com este nome já existe.' });
-    }
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao atualizar categoria.' });
   }
 });
@@ -205,9 +199,6 @@ router.post('/servicos', async (req: Request, res: Response): Promise<any> => {
     if (error.code === 'ER_ROW_IS_REFERENCED_2') return res.status(409).json({ sucesso:false, erro:'Registro com vínculos ou histórico não pode ser excluído.' });
     if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ sucesso:false, erro:'Já existe um cadastro com esses dados.' });
     registrarErro('Erro ao criar serviço:', error);
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ sucesso: false, erro: 'Um serviço com este nome já existe.' });
-    }
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao criar serviço.' });
   }
 });
@@ -284,9 +275,6 @@ router.put('/servicos/:id', async (req: Request, res: Response): Promise<any> =>
     if (error.code === 'ER_ROW_IS_REFERENCED_2') return res.status(409).json({ sucesso:false, erro:'Registro com vínculos ou histórico não pode ser excluído.' });
     if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ sucesso:false, erro:'Já existe um cadastro com esses dados.' });
     registrarErro('Erro ao atualizar serviço:', error);
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ sucesso: false, erro: 'Um serviço com este nome já existe.' });
-    }
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao atualizar serviço.' });
   }
 });

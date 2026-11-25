@@ -16,7 +16,43 @@ export const MENU =
   '2 - Consultar agendamento\n' +
   '3 - Confirmar presença\n' +
   '4 - Reagendar consulta\n' +
-  '5 - Avaliar atendimento (NPS)';
+  '5 - Avaliar atendimento (NPS)\n' +
+  '6 - Falar com a recepção / atendente';
+
+export function ehSolicitacaoTransbordoHumano(raw: string, etapa: ConversationStep): boolean {
+  const normalizado = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[!?.,;:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  if (!normalizado) return false;
+
+  // Em etapas de texto livre (nome ou comentário NPS), aceita apenas comandos diretos
+  if (etapa === 'AGUARDANDO_NOME_CADASTRO' || etapa === 'AGUARDANDO_COMENTARIO_NPS') {
+    return /^(atendente|humano|secretaria|recepcao|falar com (o |a |um |uma )?(atendente|humano|recepcao|secretaria))$/.test(normalizado);
+  }
+
+  if (normalizado === '6' && (etapa === 'MENU_PRINCIPAL' || etapa === 'AGUARDANDO_CPF')) {
+    return true;
+  }
+
+  if (/\b(atendente|atendimento humano|suporte humano|ajuda humana|pessoa real|recepcao|recepcionista|secretaria)\b/.test(normalizado)) {
+    return true;
+  }
+
+  if (/^(humano|suporte|ajuda|preciso de ajuda|quero ajuda)$/.test(normalizado)) {
+    return true;
+  }
+
+  if (/(falar|conversar|transferir|chamar|passar)\s+(com\s+|para\s+)?(um\s+|uma\s+|o\s+|a\s+)?(atendente|humano|alguem|pessoa|recepcao|recepcionista|secretaria|equipe|clinica|suporte)/.test(normalizado)) {
+    return true;
+  }
+
+  return false;
+}
 
 export type { Intent, ConversationStep };
 export type MessageOrigin = 'n8n-local-simulation' | 'baileys-local';
@@ -61,10 +97,12 @@ function isClinicRepository(obj: unknown): obj is WhatsAppClinicRepository {
 }
 
 export function formatarDataIsoLocal(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
 }
 
 export function formatarDataBr(dataIso: string): string {
@@ -227,6 +265,20 @@ export class WhatsAppSimulationService {
       sessao.contexto.contatoFinal = contatoFinal;
     }
 
+    const preservarBloqueio = (novo: Record<string, unknown>) => {
+      const bloqueioAte = Number((sessao.contexto as Record<string, unknown>).bloqueioAuthAte || 0);
+      const tentativasAtuais = !sessao.pacienteUuid ? Number(sessao.contexto.tentativasAuth || 0) : 0;
+      const base: Record<string, unknown> = {
+        ...(contatoFinal ? { contatoFinal } : {}),
+        ...(bloqueioAte > this.now().getTime() ? { bloqueioAuthAte: bloqueioAte } : {}),
+        ...(tentativasAtuais > 0 ? { tentativasAuth: tentativasAtuais } : {}),
+        ...(sessao.contexto.escalonadoEm ? { escalonadoEm: sessao.contexto.escalonadoEm } : {}),
+        ...(sessao.contexto.escalonadoMotivo ? { escalonadoMotivo: sessao.contexto.escalonadoMotivo } : {}),
+        ...novo,
+      };
+      return base as typeof sessao.contexto;
+    };
+
     // 1. Comandos globais de saudação, menu ou retorno ao menu principal
     // Observação: na etapa AGUARDANDO_NOTA_NPS, '0' é uma nota válida (0 a 10).
     if (
@@ -236,24 +288,23 @@ export class WhatsAppSimulationService {
     ) {
       sessao.etapa = 'MENU_PRINCIPAL';
       sessao.intencaoAtual = 'menu';
-      sessao.contexto = contatoFinal ? { contatoFinal } : {};
+      sessao.contexto = preservarBloqueio({});
       return { intent: 'menu', reply: MENU };
     }
 
-    // 2. Solicitação explícita de transbordo humano
-    if (/^(atendente|humano|secret[aá]ria|recep[cç][aã]o|falar com atendente|falar com humano)$/i.test(value)) {
+    // 2. Solicitação explícita ou em linguagem natural de transbordo humano (inclusive opção 6 do menu)
+    if (ehSolicitacaoTransbordoHumano(value, sessao.etapa)) {
       sessao.etapa = 'MENU_PRINCIPAL';
       sessao.intencaoAtual = 'menu';
-      sessao.contexto = {
-        contatoFinal,
+      sessao.contexto = preservarBloqueio({
         escalonadoEm: this.now().toISOString(),
-        escalonadoMotivo: 'Solicitação explícita de atendimento humano via WhatsApp'
-      };
+        escalonadoMotivo: 'Solicitação de atendimento humano via WhatsApp'
+      });
       return {
         intent: 'menu',
         reply:
           'Solicitação de atendimento humano registrada! Nossa equipe de recepção da Clínica IKIGAI dará continuidade ao seu atendimento.\n\nCaso deseje retornar ao autoatendimento, digite *menu* a qualquer momento.',
-        opcoesSessao: { escalonadoHumano: true }
+        opcoesSessao: { statusSessaoChatbot: 'Em_Andamento', escalonadoHumano: true }
       };
     }
 
@@ -327,13 +378,38 @@ export class WhatsAppSimulationService {
       escalonadoHumano?: boolean;
     };
   }> {
+    const bloqueioAtivo = Number((sessao.contexto as Record<string, unknown>).bloqueioAuthAte || 0);
+    const tentativasAtuais = !sessao.pacienteUuid ? Number(sessao.contexto.tentativasAuth || 0) : 0;
+    const manterSeguranca = (extra: Record<string, unknown>) => ({
+      ...(sessao.contexto.contatoFinal ? { contatoFinal: sessao.contexto.contatoFinal } : {}),
+      ...(bloqueioAtivo > this.now().getTime() ? { bloqueioAuthAte: bloqueioAtivo } : {}),
+      ...(tentativasAtuais > 0 ? { tentativasAuth: tentativasAtuais } : {}),
+      ...extra,
+    } as typeof sessao.contexto);
+
+    if (['1', '2', '3', '4', '5'].includes(value) && !sessao.pacienteUuid && bloqueioAtivo > this.now().getTime()) {
+      const mapaIntencao: Record<string, Intent> = {
+        '1': 'agendar',
+        '2': 'consultar',
+        '3': 'confirmar',
+        '4': 'reagendar',
+        '5': 'avaliar',
+      };
+      sessao.etapa = 'MENU_PRINCIPAL';
+      sessao.intencaoAtual = mapaIntencao[value];
+      return {
+        intent: mapaIntencao[value],
+        reply: 'Muitas tentativas inválidas de validação. Por segurança, aguarde alguns minutos antes de tentar novamente ou digite *atendente* para falar com a recepção.'
+      };
+    }
+
     if (value === '1') {
       sessao.intencaoAtual = 'agendar';
       if (sessao.pacienteUuid) {
         return this.iniciarFluxoAgendamento(sessao);
       }
       sessao.etapa = 'AGUARDANDO_CPF';
-      sessao.contexto = { intencaoPendente: 'agendar', tentativasAuth: 0 };
+      sessao.contexto = manterSeguranca({ intencaoPendente: 'agendar' });
       return {
         intent: 'agendar',
         reply:
@@ -347,7 +423,7 @@ export class WhatsAppSimulationService {
         return this.executarConsultaAgendamentos(sessao, dataHoje);
       }
       sessao.etapa = 'AGUARDANDO_CPF';
-      sessao.contexto = { intencaoPendente: 'consultar', tentativasAuth: 0 };
+      sessao.contexto = manterSeguranca({ intencaoPendente: 'consultar' });
       return {
         intent: 'consultar',
         reply:
@@ -361,7 +437,7 @@ export class WhatsAppSimulationService {
         return this.iniciarFluxoConfirmacaoPresenca(sessao, dataHoje);
       }
       sessao.etapa = 'AGUARDANDO_CPF';
-      sessao.contexto = { ...sessao.contexto, intencaoPendente: 'confirmar', tentativasAuth: 0 };
+      sessao.contexto = manterSeguranca({ intencaoPendente: 'confirmar' });
       return {
         intent: 'confirmar',
         reply:
@@ -375,7 +451,7 @@ export class WhatsAppSimulationService {
         return this.iniciarFluxoReagendamento(sessao, dataHoje);
       }
       sessao.etapa = 'AGUARDANDO_CPF';
-      sessao.contexto = { ...sessao.contexto, intencaoPendente: 'reagendar', tentativasAuth: 0 };
+      sessao.contexto = manterSeguranca({ intencaoPendente: 'reagendar' });
       return {
         intent: 'reagendar',
         reply:
@@ -389,7 +465,7 @@ export class WhatsAppSimulationService {
         return this.iniciarFluxoAvaliacaoNps(sessao);
       }
       sessao.etapa = 'AGUARDANDO_CPF';
-      sessao.contexto = { ...sessao.contexto, intencaoPendente: 'avaliar', tentativasAuth: 0 };
+      sessao.contexto = manterSeguranca({ intencaoPendente: 'avaliar' });
       return {
         intent: 'avaliar',
         reply:
@@ -399,7 +475,7 @@ export class WhatsAppSimulationService {
 
     sessao.etapa = 'MENU_PRINCIPAL';
     sessao.intencaoAtual = 'invalida';
-    sessao.contexto = sessao.contexto.contatoFinal ? { contatoFinal: sessao.contexto.contatoFinal } : {};
+    sessao.contexto = manterSeguranca({});
     return {
       intent: 'invalida',
       reply: `Opção inválida.\n\n${MENU}`
@@ -423,6 +499,16 @@ export class WhatsAppSimulationService {
     const intencaoAlvo: Intent = sessao.contexto.intencaoPendente || 'agendar';
     sessao.intencaoAtual = intencaoAlvo;
 
+    // Bloqueio anti-força-bruta / anti-enumeração verificado ANTES de qualquer consulta ao banco
+    const bloqueioAte = Number((sessao.contexto as Record<string, unknown>).bloqueioAuthAte || 0);
+    if (bloqueioAte > this.now().getTime()) {
+      sessao.etapa = 'MENU_PRINCIPAL';
+      return {
+        intent: intencaoAlvo,
+        reply: 'Muitas tentativas inválidas de validação. Por segurança, aguarde alguns minutos antes de tentar novamente ou digite *atendente* para falar com a recepção.'
+      };
+    }
+
     const auth = await this.repository.autenticarPacientePorTelefoneECpf(phone, value);
 
     if (auth.status === 'AUTENTICADO') {
@@ -445,23 +531,13 @@ export class WhatsAppSimulationService {
       return this.iniciarFluxoConfirmacaoPresenca(sessao, dataHoje);
     }
 
-    if (auth.status === 'NOVO_PACIENTE_CPF_VALIDO') {
-      if (intencaoAlvo === 'agendar') {
-        sessao.etapa = 'AGUARDANDO_NOME_CADASTRO';
-        sessao.contexto.cpfValidadoParaCadastro = auth.cpfLimpo;
-        return {
-          intent: 'agendar',
-          reply:
-            'CPF validado! Como ainda não localizamos seu cadastro neste número, digite seu *Nome Completo* para realizarmos seu pré-cadastro e continuar o agendamento (ou digite *0* para cancelar):'
-        };
-      }
-
-      sessao.etapa = 'MENU_PRINCIPAL';
-      sessao.contexto = {};
+    if (auth.status === 'NOVO_PACIENTE_CPF_VALIDO' && intencaoAlvo === 'agendar') {
+      sessao.etapa = 'AGUARDANDO_NOME_CADASTRO';
+      sessao.contexto.cpfValidadoParaCadastro = auth.cpfLimpo;
       return {
-        intent: intencaoAlvo,
+        intent: 'agendar',
         reply:
-          'Não localizamos cadastro nem agendamentos ativos vinculados a este WhatsApp e CPF.\n\nDigite *1* caso deseje realizar seu pré-cadastro e agendar uma consulta, ou envie *menu* para ver as opções.'
+          'CPF validado! Como ainda não localizamos seu cadastro neste número, digite seu *Nome Completo* para realizarmos seu pré-cadastro e continuar o agendamento (ou digite *0* para cancelar):'
       };
     }
 
@@ -473,30 +549,29 @@ export class WhatsAppSimulationService {
       };
     }
 
+    // Nas opções de consulta/confirmação/reagendamento/avaliação, NOVO_PACIENTE_CPF_VALIDO
+    // recebe exatamente o mesmo tratamento de falha e contagem de lockout que CPF_VINCULADO_OUTRO_TELEFONE
+    // para eliminar qualquer oráculo de existência de CPF (LGPD).
     const tentativas = (sessao.contexto.tentativasAuth || 0) + 1;
     sessao.contexto.tentativasAuth = tentativas;
 
     if (tentativas >= 3) {
       sessao.etapa = 'MENU_PRINCIPAL';
-      sessao.contexto = {};
+      sessao.contexto = {
+        ...(sessao.contexto.contatoFinal ? { contatoFinal: sessao.contexto.contatoFinal } : {}),
+        bloqueioAuthAte: this.now().getTime() + 15 * 60_000,
+      } as typeof sessao.contexto;
       return {
         intent: intencaoAlvo,
-        reply: `Não foi possível validar o CPF após 3 tentativas. Por segurança, a sessão foi reiniciada.\n\n${MENU}`
+        reply: `Não foi possível validar o CPF após 3 tentativas. Por segurança, a sessão foi reiniciada e novas tentativas foram temporariamente bloqueadas.\n\n${MENU}`
       };
     }
 
-    if (auth.status === 'CPF_VINCULADO_OUTRO_TELEFONE') {
-      return {
-        intent: intencaoAlvo,
-        reply:
-          'Por segurança, o CPF informado está vinculado a outro número de contato no sistema. Informe o CPF do titular deste WhatsApp, fale com a recepção ou digite *0* para voltar ao menu:'
-      };
-    }
-
+    // Resposta unificada para não expor se o CPF pertence a outro paciente da clínica (anti-enumeração LGPD)
     return {
       intent: intencaoAlvo,
       reply:
-        'CPF inválido ou não localizado para este número. Informe os *11 dígitos do CPF* válido (ou os *4 últimos dígitos* do CPF já cadastrado neste WhatsApp). Digite *0* para voltar ao menu:'
+        'Não foi possível validar o CPF para este número de WhatsApp. Informe os *11 dígitos do CPF* válido do titular (ou os *4 últimos dígitos* do CPF já cadastrado neste número), fale com a recepção ou digite *0* para voltar ao menu:'
     };
   }
 

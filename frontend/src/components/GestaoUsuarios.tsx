@@ -1,7 +1,7 @@
 import Swal from 'sweetalert2';
-import { apiFetch } from '../api';
-import { useState, useEffect, useCallback, type FormEvent } from 'react';
-import { gerarLoginPreview, PERFIL_LABELS, SENHA_PADRAO_INICIAL, type PerfilUsuario } from '../services/auth';
+import { apiFetch, lerJsonSeguro } from '../api';
+import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
+import { gerarLoginPreview, PERFIL_LABELS, type PerfilUsuario } from '../services/auth';
 
 interface UsuarioItem {
   id: number;
@@ -48,32 +48,46 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
   const [salvandoEspecialidade, setSalvandoEspecialidade] = useState(false);
   const [resetarSenhaPadrao, setResetarSenhaPadrao] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [processandoId, setProcessandoId] = useState<number | null>(null);
+  const envioRef = useRef(false);
 
-  const carregarDados = useCallback(() => {
-    return Promise.all([apiFetch('/api/usuarios'), apiFetch('/api/categorias')])
-      .then(async ([resUsers, resCats]) => {
-        const jsonUsers = await resUsers.json();
-        if (!resUsers.ok || !jsonUsers.sucesso) {
-          throw new Error(jsonUsers.erro || 'Não foi possível carregar usuários.');
-        }
-        setErro(null);
-        setUsuarios(jsonUsers.dados || []);
+  const carregarDados = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const [resUsers, resCats] = await Promise.all([
+        apiFetch('/api/usuarios', { signal }),
+        apiFetch('/api/categorias', { signal }),
+      ]);
+      if (signal?.aborted) return;
+      const jsonUsers = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: UsuarioItem[] }>(resUsers);
+      if (!resUsers.ok || !jsonUsers?.sucesso) {
+        throw new Error(jsonUsers?.erro || 'Não foi possível carregar usuários.');
+      }
+      setErro(null);
+      setUsuarios(jsonUsers.dados || []);
 
-        if (resCats.ok) {
-          const jsonCats = await resCats.json();
-          if (jsonCats.sucesso && Array.isArray(jsonCats.dados)) {
-            setEspecialidades(jsonCats.dados);
-          }
+      if (resCats.ok) {
+        const jsonCats = await lerJsonSeguro<{ sucesso?: boolean; dados?: CategoriaEspecialidade[] }>(resCats);
+        if (jsonCats?.sucesso && Array.isArray(jsonCats.dados)) {
+          setEspecialidades(jsonCats.dados);
         }
-      })
-      .catch((err: unknown) => {
-        setErro(err instanceof Error ? err.message : 'Erro ao buscar usuários.');
-      })
-      .finally(() => setCarregando(false));
+      }
+    } catch (err: unknown) {
+      if (signal?.aborted) return;
+      setErro(err instanceof Error ? err.message : 'Erro ao buscar usuários.');
+    } finally {
+      if (!signal?.aborted) setCarregando(false);
+    }
   }, []);
 
   useEffect(() => {
-    void carregarDados();
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void carregarDados(controller.signal);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [carregarDados]);
 
   function limparFormulario() {
@@ -111,9 +125,9 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nome: nomeLimpo }),
       });
-      const json = await res.json();
-      if (!res.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Não foi possível criar a especialidade.');
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: { nome?: string } }>(res);
+      if (!res.ok || !json?.sucesso) {
+        throw new Error(json?.erro || 'Não foi possível criar a especialidade.');
       }
       await carregarDados();
       setEspecialidade(json.dados?.nome || nomeLimpo);
@@ -129,11 +143,17 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
 
   async function handleSalvar(e: FormEvent) {
     e.preventDefault();
+    if (envioRef.current) return;
+    if (!nome.trim() || nome.trim().length < 2) {
+      onNotify?.('Informe um nome válido (mínimo de 2 caracteres).', 'error');
+      return;
+    }
     const espFinal = criandoNovaEspecialidade ? novaEspecialidadeNome.trim() : especialidade.trim();
     if (perfil === 'PROFISSIONAL' && !espFinal) {
       onNotify?.('Selecione ou crie uma especialidade para o profissional.', 'error');
       return;
     }
+    envioRef.current = true;
     setSalvando(true);
     try {
       const url = editandoId ? `/api/usuarios/${editandoId}` : `/api/usuarios`;
@@ -158,15 +178,28 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
         credentials: 'include',
         body: JSON.stringify(body),
       });
-      const json = await res.json();
-      if (!res.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Falha ao salvar usuário.');
+      const json = await lerJsonSeguro<{
+        sucesso?: boolean;
+        erro?: string;
+        dados?: { login?: string; credencial_temporaria?: string };
+      }>(res);
+      if (!res.ok || !json?.sucesso) {
+        throw new Error(json?.erro || 'Falha ao salvar usuário.');
       }
       const loginGerado = json.dados?.login || gerarLoginPreview(nome);
+      const credencialTemporaria = json.dados?.credencial_temporaria;
+      if (credencialTemporaria) {
+        await Swal.fire({
+          titleText: editandoId ? 'Senha temporária gerada' : 'Usuário cadastrado com sucesso',
+          text: `Login: ${loginGerado} | Senha temporária (uso único no 1º acesso): ${credencialTemporaria}. Copie e entregue com segurança ao usuário — ela não será exibida novamente.`,
+          icon: 'success',
+          confirmButtonText: 'Entendi',
+        });
+      }
       onNotify?.(
         editandoId
           ? `Usuário atualizado! Login: ${loginGerado}`
-          : `Usuário cadastrado! Login: "${loginGerado}" | Senha inicial: ${SENHA_PADRAO_INICIAL}`,
+          : `Usuário cadastrado! Login: "${loginGerado}"`,
         'success'
       );
       limparFormulario();
@@ -175,12 +208,28 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
     } catch (err) {
       onNotify?.(err instanceof Error ? err.message : 'Erro ao salvar usuário.', 'error');
     } finally {
+      envioRef.current = false;
       setSalvando(false);
     }
   }
 
   async function alternarStatus(u: UsuarioItem) {
+    if (processandoId !== null) return;
     const novoAtivo = !u.ativo;
+    if (!novoAtivo) {
+      const confirmacao = await Swal.fire({
+        titleText: 'Inativar usuário?',
+        text: `${u.nome} perderá imediatamente o acesso ao sistema e todas as sessões ativas serão encerradas.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Inativar acesso',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: '#b91c1c',
+        focusCancel: true,
+      });
+      if (!confirmacao.isConfirmed) return;
+    }
+    setProcessandoId(u.id);
     try {
       const res = await apiFetch(`/api/usuarios/${u.id}/status`, {
         method: 'PATCH',
@@ -188,20 +237,24 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
         credentials: 'include',
         body: JSON.stringify({ ativo: novoAtivo }),
       });
-      const json = await res.json();
-      if (!res.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Falha ao alterar status.');
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string }>(res);
+      if (!res.ok || !json?.sucesso) {
+        throw new Error(json?.erro || 'Falha ao alterar status.');
       }
       onNotify?.(novoAtivo ? 'Usuário ativado.' : 'Usuário inativado.', 'success');
       await carregarDados();
+      onProfissionaisChange?.();
     } catch (err) {
       onNotify?.(err instanceof Error ? err.message : 'Erro ao alterar status.', 'error');
+    } finally {
+      setProcessandoId(null);
     }
   }
 
   async function excluirUsuario(u: UsuarioItem) {
+    if (processandoId !== null) return;
     const confirmacao = await Swal.fire({
-      title: 'Excluir usuário?',
+      titleText: 'Excluir usuário?',
       text: `O acesso de ${u.nome} (${u.email}) será removido definitivamente.`,
       icon: 'warning',
       showCancelButton: true,
@@ -211,14 +264,19 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
       focusCancel: true,
     });
     if (!confirmacao.isConfirmed) return;
+    setProcessandoId(u.id);
     try {
       const res = await apiFetch(`/api/usuarios/${u.id}`, { method: 'DELETE' });
-      const json = await res.json();
-      if (!res.ok || !json.sucesso) throw new Error(json.erro || 'Falha ao excluir usuário.');
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string }>(res);
+      if (!res.ok || !json?.sucesso) throw new Error(json?.erro || 'Falha ao excluir usuário.');
+      if (editandoId === u.id) limparFormulario();
       onNotify?.('Usuário excluído.', 'success');
       await carregarDados();
+      onProfissionaisChange?.();
     } catch (err) {
       onNotify?.(err instanceof Error ? err.message : 'Falha ao excluir usuário.', 'error');
+    } finally {
+      setProcessandoId(null);
     }
   }
 
@@ -368,13 +426,13 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
           {!editandoId ? (
             <div className="p-3 rounded-xl bg-light-gray/60 border border-gray/15 text-xs space-y-1">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-dark">🔑 Senha inicial padrão:</span>
-                <code className="px-2 py-0.5 rounded bg-white border border-gray/20 font-mono font-bold text-primary">
-                  {SENHA_PADRAO_INICIAL}
-                </code>
+                <span className="font-bold text-dark">🔑 Senha temporária exclusiva</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white border border-gray/20 text-primary">
+                  Gerada automaticamente
+                </span>
               </div>
               <p className="text-[11px] text-gray">
-                O usuário entrará com o login <strong>{loginPreview || 'nome.ultimonome'}</strong> e a senha padrão acima, sendo solicitado a definir uma nova senha pessoal no primeiro acesso.
+                O usuário entrará com o login <strong>{loginPreview || 'nome.ultimonome'}</strong> e uma senha temporária aleatória exibida uma única vez após o cadastro, com troca obrigatória no primeiro acesso.
               </p>
             </div>
           ) : (
@@ -386,9 +444,9 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
                 className="mt-0.5 rounded border-amber-300 text-primary focus:ring-primary"
               />
               <span>
-                <strong className="text-amber-900 block">Redefinir para a senha padrão ({SENHA_PADRAO_INICIAL})</strong>
+                <strong className="text-amber-900 block">Gerar nova senha temporária de primeiro acesso</strong>
                 <span className="text-[11px] text-amber-800">
-                  O usuário deverá criar uma nova senha no próximo login.
+                  Revoga sessões ativas e exige que o usuário crie uma nova senha pessoal no próximo login.
                 </span>
               </span>
             </label>
@@ -452,7 +510,7 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
                       </span>
                       {(u.primeiro_acesso || u.precisa_trocar_senha) && (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
-                          Senha padrão (1º acesso pendente)
+                          Senha temporária (1º acesso pendente)
                         </span>
                       )}
                     </div>
@@ -484,8 +542,9 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
                     {u.id !== usuarioLogadoId && (
                       <button
                         type="button"
-                        onClick={() => alternarStatus(u)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${
+                        disabled={processandoId === u.id}
+                        onClick={() => void alternarStatus(u)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer disabled:opacity-50 ${
                           ativo
                             ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100'
                             : 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
@@ -497,8 +556,9 @@ export default function GestaoUsuarios({ usuarioLogadoId, onNotify, onProfission
                     {u.id !== usuarioLogadoId && (
                       <button
                         type="button"
+                        disabled={processandoId === u.id}
                         onClick={() => void excluirUsuario(u)}
-                        className="rounded-lg px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 cursor-pointer"
+                        className="rounded-lg px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 cursor-pointer disabled:opacity-50"
                       >
                         Excluir
                       </button>

@@ -181,7 +181,7 @@ class InMemoryStore {
     });
   }
 
-  reagendarAgendamento(id: number, data: string, horario_inicio: string, motivo?: string) {
+  reagendarAgendamento(id: number, data: string, horario_inicio: string, _motivo?: string) {
     const ag = this.agendamentos.find(a => a.id === Number(id));
     if (!ag) {
       throw new Error('Agendamento não encontrado.');

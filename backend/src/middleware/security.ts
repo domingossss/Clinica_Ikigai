@@ -112,8 +112,13 @@ export function validarIdNumerico(id: string): boolean {
   return !isNaN(parsed) && parsed > 0 && parsed.toString() === id;
 }
 
-/** Registra o contexto e o código, sem SQL, parâmetros, credenciais ou dados de pacientes. */
+/** Registra o contexto, código e origem técnica (sem SQL, parâmetros, credenciais ou dados de pacientes). */
 export function registrarErro(contexto: string, erro: unknown): void {
-  const codigo = typeof erro === 'object' && erro !== null && 'code' in erro && typeof erro.code === 'string' ? erro.code : 'ERRO_INTERNO';
-  console.error(contexto, { codigo });
+  const codigo = typeof erro === 'object' && erro !== null && 'code' in erro && typeof erro.code === 'string'
+    ? erro.code
+    : (erro instanceof Error ? erro.name : 'ERRO_INTERNO');
+  const origem = erro instanceof Error && erro.stack
+    ? erro.stack.split('\n')[1]?.trim().slice(0, 180)
+    : undefined;
+  console.error(contexto, origem ? { codigo, origem } : { codigo });
 }

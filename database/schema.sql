@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS profissional_especialidade (
 CREATE TABLE IF NOT EXISTS profissional_procedimento (
     id_profissional INT NOT NULL,
     id_procedimento INT NOT NULL,
+    duracao_minutos_profissional INT NULL,
+    preco_profissional DECIMAL(10, 2) NULL,
+    ativo_profissional TINYINT(1) NOT NULL DEFAULT 1,
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id_profissional, id_procedimento),
     CONSTRAINT fk_pp_profissional
@@ -117,10 +120,8 @@ CREATE TABLE IF NOT EXISTS paciente (
     observacoes TEXT NULL,
     historico_clinico TEXT NULL,
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_paciente_uuid (uuid),
     INDEX idx_paciente_nascimento (data_nascimento),
-    INDEX idx_paciente_whatsapp (whatsapp),
-    INDEX idx_paciente_cpf (cpf)
+    INDEX idx_paciente_whatsapp (whatsapp)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =====================================================================
@@ -135,7 +136,8 @@ CREATE TABLE IF NOT EXISTS sessao_chatbot (
     escalonado_humano TINYINT(1) NOT NULL DEFAULT 0,
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_sessao_data_inicio (data_hora_inicio),
-    INDEX idx_sessao_status (status_sessao)
+    INDEX idx_sessao_status (status_sessao),
+    INDEX idx_sessao_escalonado (escalonado_humano)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =====================================================================
@@ -207,6 +209,7 @@ CREATE TABLE IF NOT EXISTS agendamento (
     INDEX idx_agendamento_procedimento (id_procedimento),
     INDEX idx_agendamento_paciente (id_paciente),
     INDEX idx_agendamento_paciente_uuid (paciente_uuid),
+    INDEX idx_agendamento_paciente_data_status (paciente_uuid, data, status),
     INDEX idx_agendamento_origem (origem)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -280,7 +283,8 @@ CREATE TABLE IF NOT EXISTS historico_status_agendamento (
     CONSTRAINT fk_historico_agendamento
         FOREIGN KEY (id_agendamento) REFERENCES agendamento (id_agendamento)
         ON DELETE CASCADE ON UPDATE CASCADE,
-    INDEX idx_historico_agendamento (id_agendamento)
+    INDEX idx_historico_agendamento (id_agendamento),
+    INDEX idx_historico_ag_status_tipo (id_agendamento, status_novo, tipo_evento)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =====================================================================
@@ -360,9 +364,6 @@ FOR EACH ROW
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM paciente WHERE id_paciente = NEW.id_paciente AND uuid = NEW.paciente_uuid) THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Identificadores do paciente inconsistentes';
-    END IF;
-    IF NEW.horario_fim <= NEW.horario_inicio THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Intervalo de agendamento invalido';
     END IF;
     IF NEW.data != OLD.data OR NEW.horario_inicio != OLD.horario_inicio THEN
         SET NEW.data_hora_agendamento = TIMESTAMP(NEW.data, NEW.horario_inicio);
@@ -582,6 +583,8 @@ CREATE TABLE IF NOT EXISTS prontuario_consulta (
     id_agendamento INT NOT NULL UNIQUE,
     paciente_uuid VARCHAR(36) NOT NULL,
     id_profissional INT NOT NULL,
+    autor_id INT NULL,
+    autor_nome VARCHAR(150) NULL,
     anamnese TEXT NULL,
     exame_fisico TEXT NULL,
     hipoteses_diagnosticas TEXT NULL,

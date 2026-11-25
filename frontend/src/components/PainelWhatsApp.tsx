@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Swal from 'sweetalert2';
+import { apiFetch, lerJsonSeguro } from '../api';
 import { useClinicUpdates } from '../services/clinicUpdates';
 
 type StatusConexao =
@@ -16,6 +17,7 @@ interface ConexaoWhatsApp {
   mode: string;
   enabled: boolean;
   sendEnabled: boolean;
+  allowAnyNumber?: boolean;
   sessionRecovered: boolean;
   reconnectAttempts: number;
   allowedNumbersCount: number;
@@ -143,49 +145,75 @@ export default function PainelWhatsApp({
   const [resolvendoId, setResolvendoId] = useState<number | null>(null);
   const [processandoFila, setProcessandoFila] = useState(false);
 
+  const consultaRef = useRef<AbortController | null>(null);
+
   const carregar = useCallback(async () => {
+    consultaRef.current?.abort();
+    const controller = new AbortController();
+    consultaRef.current = controller;
     try {
       const qs = new URLSearchParams();
       if (filtroEstado) qs.set('estado', filtroEstado);
       if (filtroTipo) qs.set('tipo', filtroTipo);
       const sufixo = qs.toString() ? `?${qs}` : '';
-      const resposta = await apiFetch('/api/comunicacoes/whatsapp/painel' + sufixo);
-      const json = await resposta.json();
-      if (!resposta.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Não foi possível carregar o painel do WhatsApp.');
+      const resposta = await apiFetch('/api/comunicacoes/whatsapp/painel' + sufixo, {
+        signal: controller.signal,
+      });
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: DadosPainelWhatsApp }>(resposta);
+      if (controller.signal.aborted) return;
+      if (!resposta.ok || !json?.sucesso || !json.dados) {
+        throw new Error(json?.erro || 'Não foi possível carregar o painel do WhatsApp.');
       }
       setDados(json.dados);
       setErro('');
       onTransbordosPendentesChange?.(json.dados.resumo.transbordosPendentes);
     } catch (e) {
+      if (controller.signal.aborted) return;
       setErro(e instanceof Error ? e.message : 'Erro ao consultar o painel do WhatsApp.');
     } finally {
-      setCarregando(false);
+      if (!controller.signal.aborted) {
+        setCarregando(false);
+      }
     }
   }, [filtroEstado, filtroTipo, onTransbordosPendentesChange]);
 
   useEffect(() => {
-    void carregar();
-    const timer = setInterval(() => { void carregar(); }, 30000);
-    return () => clearInterval(timer);
+    const inicio = window.setTimeout(() => { void carregar(); }, 0);
+    const timer = window.setInterval(() => { void carregar(); }, 30000);
+    return () => {
+      window.clearTimeout(inicio);
+      window.clearInterval(timer);
+      consultaRef.current?.abort();
+    };
   }, [carregar]);
 
   useClinicUpdates(carregar, ['comunicacoes', 'agendamentos']);
 
   async function resolverTransbordo(idSessao: number) {
+    const confirmacao = await Swal.fire({
+      icon: 'question',
+      titleText: 'Marcar atendimento como concluído?',
+      text: `Confirme que a recepção já atendeu a solicitação da sessão #${idSessao}.`,
+      showCancelButton: true,
+      confirmButtonText: 'Marcar como atendido',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#0f766e',
+    });
+    if (!confirmacao.isConfirmed) return;
+
     setResolvendoId(idSessao);
     try {
       const resposta = await apiFetch(`/api/comunicacoes/whatsapp/transbordos/${idSessao}/resolver`, {
         method: 'PATCH'
       });
-      const json = await resposta.json();
-      if (!resposta.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Não foi possível encerrar o transbordo.');
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string }>(resposta);
+      if (!resposta.ok || !json?.sucesso) {
+        throw new Error(json?.erro || 'Não foi possível encerrar o atendimento.');
       }
       onNotify?.(`Atendimento humano #${idSessao} marcado como atendido.`, 'success');
       await carregar();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao atualizar transbordo.';
+      const msg = e instanceof Error ? e.message : 'Falha ao atualizar atendimento.';
       setErro(msg);
       onNotify?.(msg, 'error');
     } finally {
@@ -199,9 +227,13 @@ export default function PainelWhatsApp({
       const resposta = await apiFetch('/api/comunicacoes/whatsapp/processar-lembretes', {
         method: 'POST'
       });
-      const json = await resposta.json();
-      if (!resposta.ok || !json.sucesso) {
-        throw new Error(json.erro || 'Não foi possível processar a fila de lembretes.');
+      const json = await lerJsonSeguro<{
+        sucesso?: boolean;
+        erro?: string;
+        dados?: { motivo?: string; lembretesEnfileirados?: number };
+      }>(resposta);
+      if (!resposta.ok || !json?.sucesso || !json.dados) {
+        throw new Error(json?.erro || 'Não foi possível processar a fila de lembretes.');
       }
       const res = json.dados;
       const msg =
@@ -209,7 +241,7 @@ export default function PainelWhatsApp({
           ? 'Canal de envio desabilitado na configuração.'
           : res.motivo === 'provedor_nao_pronto'
             ? 'WhatsApp não está conectado com envio ativo no momento.'
-            : `Fila processada: ${res.lembretesEnfileirados} lembrete(s) disparado(s).`;
+            : `Fila processada: ${res.lembretesEnfileirados ?? 0} lembrete(s) disparado(s).`;
       onNotify?.(msg, res.motivo === 'ok' ? 'success' : 'info');
       await carregar();
     } catch (e) {
@@ -242,7 +274,7 @@ export default function PainelWhatsApp({
               )}
             </div>
             <p className="text-xs text-gray">
-              Monitoramento de conexão, fila de transbordo humano, lembretes automáticos e confirmações de pacientes.
+              Monitoramento de conexão, atendimentos aguardando a recepção, lembretes automáticos e confirmações de pacientes.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -272,32 +304,38 @@ export default function PainelWhatsApp({
           </p>
         )}
 
+        {dados && conexao && conexao.enabled && conexao.allowAnyNumber === false && conexao.allowedNumbersCount === 0 && (
+          <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+            Atenção: o WhatsApp está ativado, mas nenhum número está autorizado para conversar com o robô de atendimento no momento. Enquanto a lista de números autorizados estiver vazia (e o atendimento aberto desativado), mensagens recebidas não serão processadas nem encaminhadas para Pendentes.
+          </p>
+        )}
+
         {carregando && !dados ? (
           <p role="status" className="mt-4 text-sm text-gray">Consultando status do WhatsApp…</p>
         ) : dados && conexao && (
           <>
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl border border-gray/10 bg-light-gray/60 p-4">
-                <p className="text-xs font-semibold text-gray">Provedor de Comunicação</p>
+                <p className="text-xs font-semibold text-gray">Canal de Comunicação</p>
                 <p className="mt-1 text-base font-bold text-dark">
                   {conexao.provedorAtivo === 'whatsapp'
                     ? 'WhatsApp (Ativo)'
                     : conexao.provedorAtivo === 'simulado'
-                      ? 'Simulado (Teste)'
+                      ? 'Simulação (Teste)'
                       : 'Desabilitado'}
                 </p>
                 <p className="mt-0.5 text-[11px] text-gray">
-                  Envio real: <strong>{conexao.sendEnabled ? 'Liberado' : 'Bloqueado'}</strong> · Modo: {conexao.mode}
+                  Envio automático: <strong>{conexao.sendEnabled ? 'Liberado' : 'Pausado'}</strong>
                 </p>
               </div>
 
               <div className={`rounded-xl border p-4 ${dados.resumo.transbordosPendentes > 0 ? 'border-amber-300 bg-amber-50/70' : 'border-gray/10 bg-light-gray/60'}`}>
-                <p className="text-xs font-semibold text-gray">Transbordos Humanos Pendentes</p>
+                <p className="text-xs font-semibold text-gray">Aguardando Recepção</p>
                 <p className={`mt-1 text-2xl font-extrabold ${dados.resumo.transbordosPendentes > 0 ? 'text-amber-800' : 'text-primary'}`}>
                   {dados.resumo.transbordosPendentes}
                 </p>
                 <p className="mt-0.5 text-[11px] text-gray">
-                  Total escalonado: {dados.resumo.transbordosTotal} sessão(ões)
+                  Total encaminhado: {dados.resumo.transbordosTotal} conversa(s)
                 </p>
               </div>
 
@@ -328,9 +366,9 @@ export default function PainelWhatsApp({
         <section className="rounded-2xl border border-gray/10 bg-white p-5 shadow-premium sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-lg font-bold text-primary">Atendimentos com Transbordo Humano</h3>
+              <h3 className="text-lg font-bold text-primary">Atendimentos Encaminhados para a Recepção</h3>
               <p className="text-xs text-gray">
-                Conversas em que o paciente solicitou falar com a recepção (<code>escalonado_humano = 1</code>).
+                Conversas em que o paciente solicitou falar diretamente com a recepção.
               </p>
             </div>
             <div className="flex items-center gap-1 rounded-xl border border-gray/15 bg-light-gray p-1 text-xs font-semibold">
@@ -484,7 +522,7 @@ export default function PainelWhatsApp({
                       {m.profissional ? ` · ${m.profissional}` : ''}
                     </p>
                     <p className="text-[11px] text-gray">
-                      Tentativa {m.tentativa} via {m.canal} ({m.provedor}) em {new Date(m.criado_em).toLocaleString('pt-BR')}
+                      Tentativa {m.tentativa} via {m.canal === 'WHATSAPP' ? 'WhatsApp' : m.canal} em {new Date(m.criado_em).toLocaleString('pt-BR')}
                     </p>
                     {m.erro && <p className="text-xs font-medium text-red-700">{m.erro}</p>}
                   </div>
@@ -510,7 +548,7 @@ export default function PainelWhatsApp({
       {dados && dados.avaliacoesRecentes.length > 0 && (
         <section className="rounded-2xl border border-gray/10 bg-white p-5 shadow-premium sm:p-6">
           <h3 className="text-lg font-bold text-primary">Avaliações NPS Recentes</h3>
-          <p className="text-xs text-gray">Respostas gravadas diretamente em <code>avaliacao_atendimento</code> e refletidas no Dashboard Gerencial.</p>
+          <p className="text-xs text-gray">Respostas coletadas após o atendimento e refletidas nos indicadores da clínica.</p>
           <ul className="mt-4 divide-y divide-gray/10">
             {dados.avaliacoesRecentes.map(av => (
               <li key={av.id_avaliacao} className="flex flex-wrap items-start justify-between gap-3 py-3">

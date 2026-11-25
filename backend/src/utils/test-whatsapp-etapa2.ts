@@ -193,13 +193,25 @@ test('Etapa 2: segurança na identificação por CPF, bloqueio de CPF de outro t
   });
   assert.equal(spoofAttempt.authenticated, false);
   assert.equal(spoofAttempt.step, 'AGUARDANDO_CPF');
-  assert.match(spoofAttempt.reply, /vinculado a outro número de contato/i);
+  assert.match(spoofAttempt.reply, /Não foi possível validar o CPF para este número/i);
 
-  // 2. Mais duas tentativas inválidas reiniciam a sessão por segurança
+  // 2. Trocar de opção/menu após 2 erros NÃO zera o contador parcial; 3ª falha dispara lockout
   await service.process({
     messageId: 'sec-3',
     phone: '5511977776666',
     text: '0000',
+    origin: 'baileys-local'
+  });
+  await service.process({
+    messageId: 'sec-3b',
+    phone: '5511977776666',
+    text: 'menu',
+    origin: 'baileys-local'
+  });
+  await service.process({
+    messageId: 'sec-3c',
+    phone: '5511977776666',
+    text: '1',
     origin: 'baileys-local'
   });
   const lockout = await service.process({
@@ -210,6 +222,30 @@ test('Etapa 2: segurança na identificação por CPF, bloqueio de CPF de outro t
   });
   assert.equal(lockout.step, 'MENU_PRINCIPAL');
   assert.match(lockout.reply, /após 3 tentativas/i);
+
+  // 2.1. Durante o cooldown de 15 min, nem 'menu' nem opções 1/2/3 derrubam o bloqueio (anti-enumeração LGPD)
+  await service.process({
+    messageId: 'sec-4b',
+    phone: '5511977776666',
+    text: 'menu',
+    origin: 'baileys-local'
+  });
+  const bloqueadoOp1 = await service.process({
+    messageId: 'sec-4c',
+    phone: '5511977776666',
+    text: '1',
+    origin: 'baileys-local'
+  });
+  assert.equal(bloqueadoOp1.step, 'MENU_PRINCIPAL');
+  assert.match(bloqueadoOp1.reply, /Muitas tentativas inválidas/i);
+  const bloqueadoOp2 = await service.process({
+    messageId: 'sec-4d',
+    phone: '5511977776666',
+    text: '2',
+    origin: 'baileys-local'
+  });
+  assert.equal(bloqueadoOp2.step, 'MENU_PRINCIPAL');
+  assert.match(bloqueadoOp2.reply, /Muitas tentativas inválidas/i);
 
   // 3. Número compartilhado entre Carlos e Fernanda (ambos terminam em 8901): exige CPF completo de 11 dígitos
   await service.process({
@@ -523,16 +559,30 @@ test('Etapa 2: pré-cadastro rápido de novo paciente no fluxo de agendamento, e
   assert.equal(aposExpirar.step, 'AGUARDANDO_CPF');
   assert.equal(repo.sessoesChatbot[0].status_sessao, 'Abandonada');
 
-  // 4. Solicitação de transbordo humano ("atendente") marca escalonado_humano = 1
+  // 4. Solicitação de transbordo humano ("atendente", frases naturais ou opção 6) marca escalonado_humano = 1 e mantém status Em_Andamento
   const transbordo = await service.process({
     messageId: 'new-5',
     phone: novoTelefone,
-    text: 'atendente',
+    text: 'Quero falar com um atendente, por favor!',
     origin: 'baileys-local'
   });
   assert.equal(transbordo.step, 'MENU_PRINCIPAL');
   assert.match(transbordo.reply, /atendimento humano registrada/i);
   assert.equal(repo.sessoesChatbot[1].escalonado_humano, 1);
+  assert.equal(repo.sessoesChatbot[1].status_sessao, 'Em_Andamento');
+
+  // 5. Mesmo após 31 minutos de inatividade, sessão com transbordo humano pendente NÃO é abandonada automaticamente
+  currentMs += 31 * 60 * 1000;
+  const opcao6 = await service.process({
+    messageId: 'new-6',
+    phone: novoTelefone,
+    text: '6',
+    origin: 'baileys-local'
+  });
+  assert.equal(repo.sessoesChatbot[1].status_sessao, 'Em_Andamento');
+  assert.match(opcao6.reply, /atendimento humano registrada/i);
+  assert.equal(repo.sessoesChatbot[2].escalonado_humano, 1);
+  assert.equal(repo.sessoesChatbot[2].status_sessao, 'Em_Andamento');
 });
 
 test('Etapa 2: MySqlWhatsAppClinicRepository executa transações, locks FOR UPDATE e persistência durável no MySQL', async () => {
@@ -574,7 +624,7 @@ test('Etapa 2: MySqlWhatsAppClinicRepository executa transações, locks FOR UPD
         return [[{ nome: 'Sessão de Acupuntura Sistêmica', duracao_minutos: 60, preco: 220, ativo: 1 }]];
       }
       if (normalized.includes('FROM profissional_procedimento WHERE id_profissional = ? AND id_procedimento = ?')) {
-        return [[{ 1: 1 }]];
+        return [[{ ativo_profissional: 1, duracao_minutos_profissional: null, preco_profissional: null }]];
       }
       if (normalized.includes('FROM jornada_profissional')) {
         return [[{ ativo: 1, horario_inicio: '08:00', horario_fim: '18:00', intervalo_inicio: '12:00', intervalo_fim: '13:00' }]];

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { efetuarLogin, type UsuarioSessao } from '../services/auth';
 import CampoSenha from './CampoSenha';
 
@@ -11,17 +11,26 @@ export default function TelaLogin({ onLoginSuccess }: TelaLoginProps) {
   const [senha, setSenha] = useState('');
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const envioRef = useRef(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (envioRef.current) return;
+    const identificador = email.trim();
+    if (!identificador || !senha) {
+      setErro('Informe seu usuário ou e-mail e sua senha.');
+      return;
+    }
+    envioRef.current = true;
     setErro(null);
     setCarregando(true);
     try {
-      const usuario = await efetuarLogin(email.trim(), senha);
+      const usuario = await efetuarLogin(identificador, senha);
       onLoginSuccess(usuario);
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Não foi possível conectar ao servidor.');
     } finally {
+      envioRef.current = false;
       setCarregando(false);
     }
   }
@@ -46,7 +55,7 @@ export default function TelaLogin({ onLoginSuccess }: TelaLoginProps) {
 
           <div>
             <label htmlFor="login-email" className="block text-xs font-bold text-dark mb-1.5">
-              Usuário (nome.ultimonome)
+              Usuário (nome.ultimonome) ou e-mail
             </label>
             <input
               id="login-email"

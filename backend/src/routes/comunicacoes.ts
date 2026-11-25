@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import pool, { ErroOperacao } from '../config/database.js';
+import { publicarAlteracao } from '../services/alteracoesClinica.js';
 import { confirmar, consultarAtendimento, prepararConfirmacaoWhatsApp, processarFila } from '../services/comunicacoes.js';
 import { obterProvedor } from '../services/provedorMensagens.js';
 import { obterStatusConexaoWhatsApp } from '../services/whatsappRuntime.js';
@@ -300,6 +301,7 @@ router.patch('/whatsapp/transbordos/:idSessao/resolver', async (req: Request, re
     if (result.affectedRows === 0) {
       throw new ErroOperacao(404, 'Sessão com transbordo humano não encontrada.');
     }
+    void publicarAlteracao('comunicacoes');
     res.json({
       sucesso: true,
       mensagem: 'Transbordo humano marcado como atendido.',
