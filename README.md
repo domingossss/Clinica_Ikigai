@@ -29,9 +29,8 @@ Clinica_Ikigai/
 │       ├── controllers/      # Consultas do dashboard
 │       ├── middleware/       # Validações e tratamento seguro de erros
 │       ├── routes/           # Endpoints da operação e dos indicadores
-│       ├── scripts/          # Migração e backup
+│       ├── scripts/          # Migração, backup e carga de apresentação
 │       ├── services/         # Serviços de negócio
-│       ├── types/            # Tipos compartilhados do backend
 │       └── utils/            # Regras auxiliares e testes existentes
 ├── database/
 │   ├── schema.sql            # Estrutura, relacionamentos, views e gatilhos
@@ -191,6 +190,16 @@ EXIT;
 ```
 
 A instalação inicial não exige dados fictícios. Cadastre categorias, serviços e profissionais pela aplicação e configure os vínculos e jornadas antes de agendar.
+
+#### Dados fictícios para apresentação (opcional)
+
+Para carregar a base completa de demonstração (38 pacientes com CPFs válidos, agendamentos distribuídos de 01/06/2026 até 30/11/2026 em todos os status, avaliações NPS, sessões do robô WhatsApp, pendências de transbordo humano e snapshots de capacidade para os Indicadores), execute após `schema.sql`, `seed.sql` e `npm run db:migrate`:
+
+```powershell
+npm run db:seed:apresentacao
+```
+
+O script é idempotente: pode ser executado novamente sem duplicar pacientes nem agendamentos fictícios.
 
 #### Primeiro administrador
 

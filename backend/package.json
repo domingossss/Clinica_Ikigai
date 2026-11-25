@@ -16,7 +16,8 @@
     "whatsapp:baileys": "tsc && node dist/utils/run-whatsapp-baileys.js",
     "admin:provisionar": "tsc && node dist/scripts/provisionar-admin.js",
     "db:migrate": "tsc && node dist/scripts/migrate.js",
-    "db:backup": "tsc && node dist/scripts/backup.js"
+    "db:backup": "tsc && node dist/scripts/backup.js",
+    "db:seed:apresentacao": "tsc && node dist/scripts/seed-apresentacao.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc14",

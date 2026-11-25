@@ -22,7 +22,8 @@
     "lint": "npm run lint --workspace frontend",
     "admin:provisionar": "npm run admin:provisionar --workspace backend",
     "db:migrate": "npm run db:migrate --workspace backend",
-    "db:backup": "npm run db:backup --workspace backend"
+    "db:backup": "npm run db:backup --workspace backend",
+    "db:seed:apresentacao": "npm run db:seed:apresentacao --workspace backend"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
