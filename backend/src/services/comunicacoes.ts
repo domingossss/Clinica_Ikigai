@@ -8,8 +8,12 @@ type Tipo = PedidoMensagem['tipo'];
 const statusElegiveis = ['Agendado', 'Confirmado', 'Reagendado'];
 const formatoOcorrencia = "DATE_FORMAT(a.data_hora_agendamento, '%Y-%m-%d %H:%i:%s')";
 const consultaAtendimento = `SELECT a.id_agendamento AS id, p.nome AS paciente, p.whatsapp,
-  a.status, ${formatoOcorrencia} AS ocorrencia FROM agendamento a
-  JOIN paciente p ON p.id_paciente = a.id_paciente WHERE a.id_agendamento = ?`;
+  a.status, ${formatoOcorrencia} AS ocorrencia,
+  pr.nome AS profissional, s.nome AS procedimento FROM agendamento a
+  JOIN paciente p ON p.id_paciente = a.id_paciente
+  LEFT JOIN profissional pr ON pr.id_profissional = a.id_profissional
+  LEFT JOIN procedimento s ON s.id_procedimento = a.id_procedimento
+  WHERE a.id_agendamento = ?`;
 
 export function janelaLembrete(agora = new Date()) {
   const minutos = Number(process.env.LEMBRETE_ANTECEDENCIA_MINUTOS?.trim() || 1440);
@@ -98,7 +102,16 @@ async function processar(id: number, provedor: ProvedorMensagens, agora?: Date) 
       return;
     }
     await db.query("UPDATE comunicacao_agendamento SET estado = 'INCERTA', erro = 'Aguardando resultado do provedor.' WHERE id = ?", [id]);
-    return { id, whatsapp, ocorrencia: mensagem.ocorrencia, tipo: mensagem.tipo } satisfies PedidoMensagem;
+    return {
+      id,
+      whatsapp,
+      ocorrencia: mensagem.ocorrencia,
+      tipo: mensagem.tipo,
+      agendamentoId: Number(atendimento.id),
+      pacienteNome: typeof atendimento.paciente === 'string' ? atendimento.paciente : undefined,
+      profissionalNome: typeof atendimento.profissional === 'string' ? atendimento.profissional : undefined,
+      procedimentoNome: typeof atendimento.procedimento === 'string' ? atendimento.procedimento : undefined,
+    } satisfies PedidoMensagem;
   });
   if (!pedido) return;
   let resultado: ResultadoEnvio;
@@ -119,25 +132,29 @@ export async function confirmar(id: number, ocorrencia: string, anterior: number
 
 export async function processarFila(agora?: Date) {
   const provedor = obterProvedor();
-  if (!provedor) return;
+  if (!provedor) return { processados: 0, lembretesEnfileirados: 0, motivo: 'provedor_desabilitado' as const };
+  if (provedor.pronto && !provedor.pronto()) return { processados: 0, lembretesEnfileirados: 0, motivo: 'provedor_nao_pronto' as const };
   const [pendentes] = await pool.query<RowDataPacket[]>(`SELECT id FROM comunicacao_agendamento
     WHERE estado = 'PENDENTE' AND provedor = ? ORDER BY id LIMIT 100`, [provedor.nome]);
   for (const row of pendentes) await processar(row.id, provedor, agora);
   const janela = janelaLembrete(agora);
-  if (!janela) return;
+  if (!janela) return { processados: pendentes.length, lembretesEnfileirados: 0, motivo: 'janela_invalida' as const };
   const [candidatos] = await pool.query<RowDataPacket[]>(`SELECT a.id_agendamento AS id, ${formatoOcorrencia} AS ocorrencia
     FROM agendamento a WHERE a.data_hora_agendamento > ? AND a.data_hora_agendamento <= ?
       AND a.status IN (?) AND NOT EXISTS (SELECT 1 FROM comunicacao_agendamento c WHERE c.id_agendamento = a.id_agendamento
         AND c.tipo = 'LEMBRETE' AND c.ocorrencia = a.data_hora_agendamento)
     ORDER BY a.data_hora_agendamento, a.id_agendamento LIMIT 100`, [janela.inicio, janela.fim, statusElegiveis]);
+  let lembretesEnfileirados = 0;
   for (const row of candidatos) {
     try {
       const id = await registrar(row.id, 'LEMBRETE', row.ocorrencia, null, provedor, agora);
       await processar(id, provedor, agora);
+      lembretesEnfileirados++;
     } catch (erro) {
       if (!(erro instanceof ErroOperacao && [404, 409].includes(erro.status))) throw erro;
     }
   }
+  return { processados: pendentes.length, lembretesEnfileirados, motivo: 'ok' as const };
 }
 
 export function iniciarLembretes() {

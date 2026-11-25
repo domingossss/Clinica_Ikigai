@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../api';
+import PainelWhatsApp from './PainelWhatsApp';
 
 const rotulos = {
   PENDENTE: 'Pendente', SUBMETIDA: 'Submetida ao provedor', ENTREGUE: 'Entrega confirmada',
@@ -33,9 +34,18 @@ function horario(ocorrencia: string) {
 interface Props {
   buscaUrl: string;
   onNavegar: (endereco: string) => void;
+  isAdmin?: boolean;
+  onTransbordosPendentesChange?: (quantidade: number) => void;
+  onNotify?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export default function Comunicacoes({ buscaUrl, onNavegar }: Props) {
+export default function Comunicacoes({
+  buscaUrl,
+  onNavegar,
+  isAdmin = true,
+  onTransbordosPendentesChange,
+  onNotify,
+}: Props) {
   const params = new URLSearchParams(buscaUrl);
   const numeroAtendimento = params.get('agendamento') || '';
   const estadoFiltro = params.get('estado') || '';
@@ -59,7 +69,7 @@ export default function Comunicacoes({ buscaUrl, onNavegar }: Props) {
   const [erroBusca, setErroBusca] = useState('');
 
   useEffect(() => {
-    if (numeroInvalido) return;
+    if (!isAdmin || numeroInvalido) return;
     const controller = new AbortController();
     async function carregar() {
       const filtros = new URLSearchParams();
@@ -76,7 +86,7 @@ export default function Comunicacoes({ buscaUrl, onNavegar }: Props) {
     }
     void carregar();
     return () => controller.abort();
-  }, [buscaUrl, numeroAtendimento, estadoFiltro, paginaFiltro, numeroInvalido, revisao]);
+  }, [isAdmin, buscaUrl, numeroAtendimento, estadoFiltro, paginaFiltro, numeroInvalido, revisao]);
 
   function aplicarFiltros(alteracao: { agendamento?: string; estado?: string; pagina?: string }) {
     const filtros = new URLSearchParams(buscaUrl);
@@ -156,133 +166,153 @@ export default function Comunicacoes({ buscaUrl, onNavegar }: Props) {
   const podeConfirmar = !!atendimento?.contatoFinal && ['Agendado', 'Confirmado', 'Reagendado'].includes(atendimento.status);
   const provedor = consulta?.provedor;
 
+  if (!isAdmin) {
+    return (
+      <PainelWhatsApp
+        isAdmin={false}
+        onTransbordosPendentesChange={onTransbordosPendentesChange}
+        onNotify={onNotify}
+      />
+    );
+  }
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* COLUNA ESQUERDA: Busca de Agendamento e Filtro de Estado */}
-      <div className="lg:col-span-1 space-y-6">
-        <section className="bg-white rounded-2xl shadow-premium border border-gray/10 p-6 space-y-4">
-          <div>
-            <h2 className="text-base font-bold text-dark flex items-center gap-2">
-              <span className="p-1.5 bg-primary/10 rounded-lg text-primary text-xs font-bold">
-                Canais
-              </span>
-              Comunicação com Pacientes
-            </h2>
-            <p className="text-xs text-gray mt-1">
-              Pesquise agendamentos e filtre o status de confirmações e lembretes enviados.
-            </p>
-          </div>
-
-          <form onSubmit={buscar} className="space-y-3">
+    <div className="space-y-6">
+      <PainelWhatsApp
+        isAdmin
+        compacto
+        onTransbordosPendentesChange={onTransbordosPendentesChange}
+        onNotify={(msg, type) => {
+          setAviso(msg);
+          onNotify?.(msg, type);
+        }}
+      />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* COLUNA ESQUERDA: Busca de Agendamento e Filtro de Estado */}
+        <div className="lg:col-span-1 space-y-6">
+          <section className="bg-white rounded-2xl shadow-premium border border-gray/10 p-6 space-y-4">
             <div>
-              <label className="block text-xs font-bold text-dark mb-1">
-                Buscar agendamento
-                <input
-                  className={`${campo} mt-1`}
-                  type="search"
-                  name="termo"
-                  required
-                  maxLength={150}
-                  defaultValue={numeroAtendimento}
-                  placeholder="Nome, CPF, telefone ou nº do agendamento"
-                />
-              </label>
+              <h2 className="text-base font-bold text-dark flex items-center gap-2">
+                <span className="p-1.5 bg-primary/10 rounded-lg text-primary text-xs font-bold">
+                  Canais
+                </span>
+                Comunicação com Pacientes
+              </h2>
+              <p className="text-xs text-gray mt-1">
+                Pesquise agendamentos e filtre o status de confirmações e lembretes enviados.
+              </p>
             </div>
-            <button className={`${botao} w-full`} disabled={buscando}>
-              {buscando ? 'Buscando…' : 'Buscar'}
-            </button>
-          </form>
 
-          {erroBusca && (
-            <p role="alert" className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800">
-              {erroBusca}
-            </p>
-          )}
+            <form onSubmit={buscar} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-dark mb-1">
+                  Buscar agendamento
+                  <input
+                    className={`${campo} mt-1`}
+                    type="search"
+                    name="termo"
+                    required
+                    maxLength={150}
+                    defaultValue={numeroAtendimento}
+                    placeholder="Nome, CPF, telefone ou nº do agendamento"
+                  />
+                </label>
+              </div>
+              <button className={`${botao} w-full`} disabled={buscando}>
+                {buscando ? 'Buscando…' : 'Buscar'}
+              </button>
+            </form>
 
-          {busca && (
-            <div aria-live="polite" className="pt-2 border-t border-gray/10 space-y-2">
-              <h3 className="text-xs font-bold text-dark uppercase tracking-wider">
-                Agendamentos encontrados
-              </h3>
-              {!busca.dados.length ? (
-                <p className="text-xs text-gray py-2">Nenhum agendamento encontrado.</p>
-              ) : (
-                <ul className="divide-y divide-gray/10 max-h-64 overflow-y-auto rounded-xl border border-gray/10 bg-light-gray/20">
-                  {busca.dados.map(item => (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        onClick={() => aplicarFiltros({ agendamento: String(item.id), pagina: '' })}
-                        className="w-full text-left block py-2.5 px-3 hover:bg-white transition-colors cursor-pointer"
-                      >
-                        <strong className="text-xs font-bold text-primary block">
-                          {item.paciente} · #{item.id}
-                        </strong>
-                        <p className="text-[11px] text-dark mt-0.5">
-                          {horario(item.ocorrencia)} · <span className="font-semibold">{item.status}</span>
-                        </p>
-                        <p className="text-[11px] text-gray">
-                          {item.procedimento} · {item.profissional}
-                        </p>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+            {erroBusca && (
+              <p role="alert" className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800">
+                {erroBusca}
+              </p>
+            )}
+
+            {busca && (
+              <div aria-live="polite" className="pt-2 border-t border-gray/10 space-y-2">
+                <h3 className="text-xs font-bold text-dark uppercase tracking-wider">
+                  Agendamentos encontrados
+                </h3>
+                {!busca.dados.length ? (
+                  <p className="text-xs text-gray py-2">Nenhum agendamento encontrado.</p>
+                ) : (
+                  <ul className="divide-y divide-gray/10 max-h-64 overflow-y-auto rounded-xl border border-gray/10 bg-light-gray/20">
+                    {busca.dados.map(item => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          onClick={() => aplicarFiltros({ agendamento: String(item.id), pagina: '' })}
+                          className="w-full text-left block py-2.5 px-3 hover:bg-white transition-colors cursor-pointer"
+                        >
+                          <strong className="text-xs font-bold text-primary block">
+                            {item.paciente} · #{item.id}
+                          </strong>
+                          <p className="text-[11px] text-dark mt-0.5">
+                            {horario(item.ocorrencia)} · <span className="font-semibold">{item.status}</span>
+                          </p>
+                          <p className="text-[11px] text-gray">
+                            {item.procedimento} · {item.profissional}
+                          </p>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {busca.temMais && (
+                  <p className="text-[11px] text-gray">
+                    Mostrando os primeiros 20 resultados. Refine a busca para encontrar outro atendimento.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <form
+              className="pt-4 border-t border-gray/10 space-y-3"
+              onSubmit={e => {
+                e.preventDefault();
+                const estadoForm = String(new FormData(e.currentTarget).get('estado') || '');
+                aplicarFiltros({ estado: estadoForm, pagina: '' });
+              }}
+            >
+              <div>
+                <label className="block text-xs font-bold text-dark mb-1">
+                  Estado da mensagem
+                  <select key={estadoFiltro} name="estado" className={`${campo} mt-1`} defaultValue={estadoFiltro}>
+                    <option value="">Todos</option>
+                    {Object.entries(rotulos).map(([id, titulo]) => (
+                      <option key={id} value={id}>
+                        {titulo}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <button className="w-full rounded-xl border border-gray/25 bg-light-gray/60 px-3.5 py-2 text-xs font-bold text-dark hover:bg-light-gray transition-all cursor-pointer">
+                Filtrar histórico
+              </button>
+            </form>
+
+            <div className="pt-3 border-t border-gray/10 flex flex-col gap-2">
+              {numeroAtendimento && (
+                <button
+                  type="button"
+                  onClick={() => aplicarFiltros({ agendamento: '', pagina: '' })}
+                  className="w-full rounded-xl border border-gray/25 px-3 py-2 text-xs font-bold text-gray hover:text-dark hover:bg-light-gray transition-colors cursor-pointer"
+                >
+                  Limpar atendimento #{numeroAtendimento}
+                </button>
               )}
-              {busca.temMais && (
-                <p className="text-[11px] text-gray">
-                  Mostrando os primeiros 20 resultados. Refine a busca para encontrar outro atendimento.
-                </p>
-              )}
-            </div>
-          )}
-
-          <form
-            className="pt-4 border-t border-gray/10 space-y-3"
-            onSubmit={e => {
-              e.preventDefault();
-              const estadoForm = String(new FormData(e.currentTarget).get('estado') || '');
-              aplicarFiltros({ estado: estadoForm, pagina: '' });
-            }}
-          >
-            <div>
-              <label className="block text-xs font-bold text-dark mb-1">
-                Estado da mensagem
-                <select key={estadoFiltro} name="estado" className={`${campo} mt-1`} defaultValue={estadoFiltro}>
-                  <option value="">Todos</option>
-                  {Object.entries(rotulos).map(([id, titulo]) => (
-                    <option key={id} value={id}>
-                      {titulo}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <button className="w-full rounded-xl border border-gray/25 bg-light-gray/60 px-3.5 py-2 text-xs font-bold text-dark hover:bg-light-gray transition-all cursor-pointer">
-              Filtrar histórico
-            </button>
-          </form>
-
-          <div className="pt-3 border-t border-gray/10 flex flex-col gap-2">
-            {numeroAtendimento && (
               <button
                 type="button"
-                onClick={() => aplicarFiltros({ agendamento: '', pagina: '' })}
-                className="w-full rounded-xl border border-gray/25 px-3 py-2 text-xs font-bold text-gray hover:text-dark hover:bg-light-gray transition-colors cursor-pointer"
+                onClick={() => onNavegar('/agendamentos')}
+                className="w-full rounded-xl border border-gray/25 px-3 py-2 text-xs font-bold text-dark hover:bg-light-gray transition-colors cursor-pointer"
               >
-                Limpar atendimento #{numeroAtendimento}
+                Voltar à agenda
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => onNavegar('/agendamentos')}
-              className="w-full rounded-xl border border-gray/25 px-3 py-2 text-xs font-bold text-dark hover:bg-light-gray transition-colors cursor-pointer"
-            >
-              Voltar à agenda
-            </button>
-          </div>
-        </section>
-      </div>
+            </div>
+          </section>
+        </div>
 
       {/* COLUNA DIREITA: Detalhes do Atendimento Selecionado e Histórico de Mensagens */}
       <div className="lg:col-span-2 space-y-6">
@@ -299,6 +329,12 @@ export default function Comunicacoes({ buscaUrl, onNavegar }: Props) {
           <p role="alert" className="rounded-2xl bg-red-50 border border-red-200 p-4 text-xs text-red-800">
             Informe um número de agendamento válido. O telefone fica no cadastro do paciente.
           </p>
+        )}
+
+        {provedor === 'whatsapp' && (
+          <div className="rounded-2xl border border-secondary/30 bg-secondary-light/60 px-4 py-3 text-xs font-semibold text-primary-dark">
+            Canal WhatsApp configurado para envios ativos e lembretes automáticos.
+          </div>
         )}
 
         {provedor === 'simulado' && (
@@ -490,6 +526,7 @@ export default function Comunicacoes({ buscaUrl, onNavegar }: Props) {
             </div>
           ) : null}
         </section>
+      </div>
       </div>
     </div>
   );

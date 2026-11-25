@@ -12,7 +12,12 @@ import authRouter from './routes/auth.js';
 import usuariosRouter from './routes/usuarios.js';
 import { controlarPermissoesApi } from './middleware/permissoes.js';
 import comunicacoesRouter from './routes/comunicacoes.js';
-import { iniciarLembretes } from './services/comunicacoes.js';
+import { iniciarLembretes, processarFila } from './services/comunicacoes.js';
+import { createWhatsAppSimulationRouter } from './routes/whatsappSimulation.js';
+import { SimulatedMessageProvider, WhatsAppSimulationService } from './services/whatsappSimulation.js';
+import { WhatsAppBaileysConnector, loadWhatsAppBaileysConfigFromEnv } from './services/whatsappBaileys.js';
+import { createWhatsAppClinicRepository } from './services/whatsappClinicRepository.js';
+import { registrarConectorWhatsApp } from './services/whatsappRuntime.js';
 import { exigirAutenticacao, validarConfiguracaoSessao } from './middleware/auth.js';
 import pool, { testarConexao } from './config/database.js';
 import { acompanharAlteracoes, notificarAlteracoes } from './services/alteracoesClinica.js';
@@ -105,6 +110,7 @@ async function verificarSaude(_req: express.Request, res: express.Response) {
   }
 }
 app.get('/api/health', verificarSaude);
+app.use('/api/integracoes/whatsapp', createWhatsAppSimulationRouter(new WhatsAppSimulationService(new SimulatedMessageProvider())));
 app.use('/api', exigirAutenticacao, controlarPermissoesApi, notificarAlteracoes);
 app.use('/api/usuarios', usuariosRouter);
 app.use('/api/dashboard', dashboardRoutes);
@@ -154,6 +160,35 @@ async function bootstrap() {
     console.log(`[Server] Healthcheck: http://localhost:${PORT}/health`);
     console.log(`[Security] Helmet ativo | Rate limit: ${process.env.RATE_LIMIT_MAX || 100} req/min | Body limit: 10kb`);
     console.log(`[Security] CORS origins: ${allowedOrigins.join(', ')}`);
+
+    // Inicialização não bloqueante do conector Baileys (somente quando explicitamente habilitado)
+    const baileysConfig = loadWhatsAppBaileysConfigFromEnv();
+    if (baileysConfig.mode === 'baileys' && baileysConfig.enabled) {
+      const dbModeEnv = (process.env.WHATSAPP_DB_MODE || 'auto').trim().toLowerCase();
+      const repoMode: 'memory' | 'mysql' =
+        dbModeEnv === 'mysql' ? 'mysql' : dbModeEnv === 'memory' ? 'memory' : dbConnected ? 'mysql' : 'memory';
+      const baileysConnector = new WhatsAppBaileysConnector(baileysConfig, {
+        repository: createWhatsAppClinicRepository(repoMode),
+        onConnected: () => {
+          void processarFila().catch(() => {
+            console.error('[Comunicação] Falha ao processar a fila ao conectar o WhatsApp.');
+          });
+        }
+      });
+      registrarConectorWhatsApp(baileysConnector);
+      void baileysConnector.start().catch(() => {
+        console.error('[WhatsApp Baileys] Falha controlada ao inicializar conector.');
+      });
+
+      const shutdown = () => {
+        registrarConectorWhatsApp(null);
+        void baileysConnector.stop();
+      };
+      process.once('SIGINT', shutdown);
+      process.once('SIGTERM', shutdown);
+    } else {
+      console.log(`[WhatsApp] Modo ativo: ${baileysConfig.mode} (conector Baileys desabilitado por padrao).`);
+    }
   });
 }
 

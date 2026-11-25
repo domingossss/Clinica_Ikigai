@@ -1,0 +1,84 @@
+{
+  "id": "NLJiS0DRCT3dCRil",
+  "name": "IKIGAI - WhatsApp Etapa 1 (simulação local)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ikigai-whatsapp-simulacao",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-simulation",
+      "name": "Webhook de teste",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "ikigai-whatsapp-etapa-1",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IKWbhAuthEtapa11",
+          "name": "IKIGAI webhook local"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body; if (!body || body.origin !== 'n8n-local-simulation' || typeof body.messageId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(body.messageId) || typeof body.phone !== 'string' || !/^55[1-9][0-9]{9,10}$/.test(body.phone) || typeof body.text !== 'string' || body.text.length > 1000) { throw new Error('Evento de teste inválido'); } return [{ json: { messageId: body.messageId, phone: body.phone, text: body.text, origin: body.origin } }];"
+      },
+      "id": "validate-simulation",
+      "name": "Validar evento de teste",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:3000/api/integracoes/whatsapp/simular",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "call-backend",
+      "name": "API IKIGAI simulada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IKApiAuthEtapa11",
+          "name": "IKIGAI API simulada local"
+        }
+      },
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.error ? { sucesso: false, erro: 'Backend IKIGAI indisponível.' } : $json) }}",
+        "options": {
+          "responseCode": "={{ $json.error ? 502 : 200 }}"
+        }
+      },
+      "id": "show-result",
+      "name": "Mostrar resultado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook de teste": { "main": [[{ "node": "Validar evento de teste", "type": "main", "index": 0 }]] },
+    "Validar evento de teste": { "main": [[{ "node": "API IKIGAI simulada", "type": "main", "index": 0 }]] },
+    "API IKIGAI simulada": { "main": [[{ "node": "Mostrar resultado", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "none", "saveDataErrorExecution": "none" },
+  "active": false,
+  "pinData": {}
+}

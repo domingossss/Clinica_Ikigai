@@ -42,6 +42,9 @@ const regras: [RegExp, Regra][] = [
   [/^\/comunicacoes\/buscar-atendimentos$/, { POST: admin }],
   [/^\/comunicacoes\/\d+\/confirmacao$/, { POST: admin }],
   [/^\/comunicacoes\/\d+\/confirmacao\/whatsapp$/, { GET: admin }],
+  [/^\/comunicacoes\/whatsapp\/painel$/, { GET: recepcao }],
+  [/^\/comunicacoes\/whatsapp\/transbordos\/\d+\/resolver$/, { PATCH: recepcao }],
+  [/^\/comunicacoes\/whatsapp\/processar-lembretes$/, { POST: admin }],
 ];
 
 export const controlarPermissoesApi: RequestHandler = (req, res, next) => {

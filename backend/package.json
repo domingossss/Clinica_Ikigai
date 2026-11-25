@@ -9,22 +9,30 @@
     "start": "node dist/server.js",
     "dev": "tsc && concurrently --kill-others \"tsc --watch --preserveWatchOutput\" \"node --watch dist/server.js\"",
     "test": "tsc && node dist/utils/test-runner.js",
+    "test:whatsapp": "tsc && node --test dist/utils/test-whatsapp-simulation.js dist/utils/test-whatsapp-baileys.js dist/utils/test-whatsapp-etapa2.js dist/utils/test-whatsapp-etapa3.js",
+    "test:whatsapp:baileys": "tsc && node --test dist/utils/test-whatsapp-baileys.js",
+    "test:whatsapp:etapa2": "tsc && node --test dist/utils/test-whatsapp-etapa2.js",
+    "test:whatsapp:etapa3": "tsc && node --test dist/utils/test-whatsapp-etapa3.js",
+    "whatsapp:baileys": "tsc && node dist/utils/run-whatsapp-baileys.js",
     "admin:provisionar": "tsc && node dist/scripts/provisionar-admin.js",
     "db:migrate": "tsc && node dist/scripts/migrate.js",
     "db:backup": "tsc && node dist/scripts/backup.js"
   },
   "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
-    "mysql2": "^3.12.0"
+    "mysql2": "^3.12.0",
+    "qrcode-terminal": "0.12.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.13.1",
+    "@types/qrcode-terminal": "0.12.2",
     "typescript": "^5.7.3"
   },
   "private": true

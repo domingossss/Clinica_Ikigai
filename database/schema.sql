@@ -628,3 +628,37 @@ CREATE TABLE IF NOT EXISTS revisao_clinica (
     recurso VARCHAR(32) PRIMARY KEY,
     revisao BIGINT UNSIGNED NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =====================================================================
+-- 15. TABELAS WHATSAPP ETAPA 2: SESSÃO CONVERSACIONAL E IDEMPOTÊNCIA DURÁVEL
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS whatsapp_sessao_conversa (
+    conversation_id VARCHAR(64) PRIMARY KEY,
+    telefone_hash VARCHAR(64) NOT NULL,
+    id_sessao_chatbot INT NULL,
+    paciente_uuid VARCHAR(36) NULL,
+    etapa VARCHAR(60) NOT NULL DEFAULT 'MENU_PRINCIPAL',
+    intencao_atual VARCHAR(30) NOT NULL DEFAULT 'menu',
+    contexto_json TEXT NULL,
+    expira_em DATETIME NOT NULL,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_whatsapp_sessao_expira (expira_em),
+    INDEX idx_whatsapp_sessao_paciente (paciente_uuid),
+    CONSTRAINT fk_whatsapp_sessao_chatbot
+        FOREIGN KEY (id_sessao_chatbot) REFERENCES sessao_chatbot (id_sessao)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS whatsapp_evento_processado (
+    message_id VARCHAR(100) PRIMARY KEY,
+    conversation_id VARCHAR(64) NOT NULL,
+    origem VARCHAR(40) NOT NULL,
+    intencao VARCHAR(30) NOT NULL DEFAULT 'menu',
+    resposta TEXT NULL,
+    estado_envio ENUM('PROCESSANDO', 'ENVIADO', 'FALHA') NOT NULL DEFAULT 'PROCESSANDO',
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expira_em DATETIME NOT NULL,
+    INDEX idx_whatsapp_evento_expira (expira_em),
+    INDEX idx_whatsapp_evento_conversa (conversation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

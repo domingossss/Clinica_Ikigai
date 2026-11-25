@@ -28,9 +28,9 @@ const rotaPadrao = (usuario: UsuarioSessao) => usuario.perfil === 'ADMIN' ? '/in
 
 function rotaPermitida(rota: string, usuario: UsuarioSessao) {
   if (rota === '/acesso') return false;
-  if (['/inicio', '/servicos', '/usuarios', '/comunicacao'].includes(rota)) return usuario.perfil === 'ADMIN';
+  if (['/inicio', '/servicos', '/usuarios'].includes(rota)) return usuario.perfil === 'ADMIN';
   if (rota === '/procedimentos') return usuario.perfil === 'PROFISSIONAL';
-  if (rota === '/dashboard' || rota === '/indicadores') return usuario.perfil !== 'PROFISSIONAL';
+  if (rota === '/dashboard' || rota === '/indicadores' || rota === '/comunicacao') return usuario.perfil !== 'PROFISSIONAL';
   return true;
 }
 

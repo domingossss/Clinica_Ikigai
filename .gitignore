@@ -11,3 +11,18 @@ backend/dist/
 # Backups locais contêm dados sensíveis
 backend/backups/
 frontend/src/indicadores_backup/
+
+# Antigravity / AI agents configuration & scripts locais
+.agents/
+.agentes/
+iniciar-mysql.bat
+.n8n-local/
+
+# Sessoes e credenciais locais do WhatsApp (Baileys)
+.whatsapp-session/
+whatsapp-session/
+auth_info_baileys/
+backend/.whatsapp-session/
+backend/whatsapp-session/
+backend/auth_info_baileys/
+docs/

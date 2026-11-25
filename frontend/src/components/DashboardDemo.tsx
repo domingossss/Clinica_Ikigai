@@ -73,6 +73,7 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
     (Object.keys(ROTA_POR_ABA) as AbaAgenda[]).find(aba => ROTA_POR_ABA[aba] === rota) ?? 'grade';
 
   const selecionarAba = (aba: AbaAgenda) => onNavegar(ROTA_POR_ABA[aba]);
+  const [transbordosPendentes, setTransbordosPendentes] = useState<number>(0);
 
   // Controle de data e atualização da Grade
   const [gradeData, setGradeData] = useState<string>(dataHoje());
@@ -138,6 +139,29 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
     void fetchDashboardData();
     return () => consulta.current?.abort();
   }, [fetchDashboardData]);
+
+  useEffect(() => {
+    if (!usuario || usuario.perfil === 'PROFISSIONAL') return;
+    let ativo = true;
+    const consultarResumoWhatsApp = async () => {
+      try {
+        const res = await apiFetch('/api/comunicacoes/whatsapp/painel');
+        if (!res.ok) return;
+        const json = await res.json();
+        if (ativo && json.sucesso) {
+          setTransbordosPendentes(Number(json.dados?.resumo?.transbordosPendentes || 0));
+        }
+      } catch {
+        // Silencioso no badge de topo
+      }
+    };
+    void consultarResumoWhatsApp();
+    const timer = setInterval(() => { void consultarResumoWhatsApp(); }, 45000);
+    return () => {
+      ativo = false;
+      clearInterval(timer);
+    };
+  }, [usuario]);
 
   useClinicUpdates(() => { void fetchDashboardData(); }, ['pacientes', 'servicos', 'categorias', 'profissionais']);
 
@@ -303,17 +327,22 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
                 Usuários
               </button>
             )}
-            {usuario?.perfil === 'ADMIN' && (
+            {usuario && usuario.perfil !== 'PROFISSIONAL' && (
               <button
                 onClick={() => selecionarAba('comunicacao')}
                 aria-current={currentTab === 'comunicacao' ? 'page' : undefined}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                   currentTab === 'comunicacao'
                     ? 'bg-white text-primary font-extrabold shadow-sm'
                     : 'text-gray hover:text-dark hover:bg-white/50'
                 }`}
               >
                 Comunicação
+                {transbordosPendentes > 0 && (
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-extrabold text-white">
+                    {transbordosPendentes}
+                  </span>
+                )}
               </button>
             )}
             {usuario?.perfil !== 'PROFISSIONAL' && (
@@ -440,8 +469,14 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
           />
         )}
 
-        {currentTab === 'comunicacao' && usuario?.perfil === 'ADMIN' && (
-          <Comunicacoes buscaUrl={buscaUrl} onNavegar={onNavegar} />
+        {currentTab === 'comunicacao' && usuario && usuario.perfil !== 'PROFISSIONAL' && (
+          <Comunicacoes
+            buscaUrl={buscaUrl}
+            onNavegar={onNavegar}
+            isAdmin={usuario.perfil === 'ADMIN'}
+            onTransbordosPendentesChange={setTransbordosPendentes}
+            onNotify={showToast}
+          />
         )}
 
         {currentTab === 'indicadores' && usuario?.perfil !== 'PROFISSIONAL' && (

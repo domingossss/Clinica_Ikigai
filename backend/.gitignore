@@ -6,6 +6,9 @@ dist/
 .env
 .env.local
 .env.*.local
+.whatsapp-session/
+whatsapp-session/
+auth_info_baileys/
 
 # === Logs ===
 logs/

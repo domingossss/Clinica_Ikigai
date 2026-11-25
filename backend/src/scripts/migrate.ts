@@ -22,6 +22,7 @@ const versaoAuditoria = '2026-11-23-auditoria-clinica-e-reagendamento';
 const versaoRevisoes = '2026-11-23-revisoes-clinica';
 const versaoCheckin = '2026-11-23-validacao-checkin-recepcao';
 const versaoProntuarioELogin = '2026-11-24-prontuario-consulta-e-login-usuario';
+const versaoWhatsAppEtapa2 = '2026-11-24-whatsapp-etapa-2';
 const trava = createHash('sha256').update(`ikigai:migracao:${esquema}`).digest('hex');
 
 async function colunas(tabela: string) {
@@ -60,8 +61,11 @@ async function migrarBase(schema: string) {
   ]]);
 }
 
-async function criarTabelaDoSchema(schema: string, tabela: 'paciente_evolucao' | 'revisao_clinica' | 'prontuario_consulta') {
-  const padrao = new RegExp(`^CREATE TABLE IF NOT EXISTS ${tabela} \\([\\s\\S]*?;$`, 'm');
+async function criarTabelaDoSchema(
+  schema: string,
+  tabela: 'paciente_evolucao' | 'revisao_clinica' | 'prontuario_consulta' | 'whatsapp_sessao_conversa' | 'whatsapp_evento_processado'
+) {
+  const padrao = new RegExp(`^CREATE TABLE IF NOT EXISTS ${tabela} \\([\\s\\S]*?;\\r?$`, 'm');
   const definicao = schema.match(padrao)?.[0];
   if (!definicao) throw new Error(`Tabela ${tabela} ausente na definição do banco.`);
   await conexao.query(definicao);
@@ -122,6 +126,10 @@ try {
       await conexao.query('ALTER TABLE paciente ADD COLUMN naturalidade VARCHAR(120) NULL AFTER filiacao');
     }
     await criarTabelaDoSchema(schema, 'prontuario_consulta');
+  });
+  await aplicarVersao(versaoWhatsAppEtapa2, async () => {
+    await criarTabelaDoSchema(schema, 'whatsapp_sessao_conversa');
+    await criarTabelaDoSchema(schema, 'whatsapp_evento_processado');
   });
   console.log('Estrutura atualizada. Dados existentes preservados.');
 } finally {

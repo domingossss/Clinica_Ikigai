@@ -184,6 +184,42 @@ export async function runComunicacaoTests() {
     await processarFila(new Date(agora.getTime() + 10 * 60000));
     const [ocorrencias] = await pool.query<RowDataPacket[]>("SELECT COUNT(DISTINCT ocorrencia) AS total FROM comunicacao_agendamento WHERE tipo = 'LEMBRETE' AND id_agendamento = ?", [id]);
     verificar(Number(ocorrencias[0].total) === 2, 'novo horário elegível registra ocorrência própria');
+
+    // Etapa 3: Painel WhatsApp (transbordo humano, status e comunicações) acessível para ADMIN e RECEPCAO, negado para PROFISSIONAL
+    const [sessaoTransbordo] = await pool.query<ResultSetHeader>(
+      "INSERT INTO sessao_chatbot (identificador_chat, data_hora_inicio, status_sessao, escalonado_humano) VALUES (?, NOW(), 'Em_Andamento', 1)",
+      ['WA-TESTE-TRANSBORDO-' + randomUUID().slice(0, 8)]
+    );
+    const cookieRecepcao = await sessao('RECEPCAO');
+    const cookieProf = await sessao('PROFISSIONAL');
+    const painelRecepcaoRes = await fetch(url + '/comunicacoes/whatsapp/painel', { headers: { Cookie: cookieRecepcao } });
+    const painelRecepcaoJson = await painelRecepcaoRes.json() as any;
+    verificar(
+      painelRecepcaoRes.ok &&
+      painelRecepcaoJson.sucesso === true &&
+      painelRecepcaoJson.dados.transbordos.some((t: { id_sessao: number; pendente: boolean }) => t.id_sessao === sessaoTransbordo.insertId && t.pendente) &&
+      painelRecepcaoJson.dados.comunicacoes.length > 0 &&
+      typeof painelRecepcaoJson.dados.conexao.status === 'string',
+      'RECEPCAO visualiza transbordos humanos, status WhatsApp e histórico de comunicações no painel'
+    );
+    verificar(
+      (await fetch(url + '/comunicacoes/whatsapp/painel', { headers: { Cookie: cookieProf } })).status === 403,
+      'PROFISSIONAL tem acesso negado ao painel WhatsApp'
+    );
+    verificar(
+      (await fetch(url + '/comunicacoes/whatsapp/processar-lembretes', { method: 'POST', headers: { Cookie: cookieRecepcao } })).status === 403,
+      'disparo manual da fila de lembretes permanece restrito a ADMIN'
+    );
+    const resolverRes = await fetch(url + `/comunicacoes/whatsapp/transbordos/${sessaoTransbordo.insertId}/resolver`, {
+      method: 'PATCH', headers: { Cookie: cookieRecepcao }
+    });
+    const painelPosResolver = await (await fetch(url + '/comunicacoes/whatsapp/painel', { headers: { Cookie: cookie } })).json() as any;
+    verificar(
+      resolverRes.ok &&
+      painelPosResolver.dados.transbordos.some((t: { id_sessao: number; pendente: boolean; status_sessao: string }) =>
+        t.id_sessao === sessaoTransbordo.insertId && !t.pendente && t.status_sessao === 'Duvida_Resolvida'),
+      'RECEPCAO marca transbordo humano como atendido preservando histórico gerencial'
+    );
     return { pass, fail: 0 };
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
