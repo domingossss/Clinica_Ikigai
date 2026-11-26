@@ -54,7 +54,7 @@ const ROTA_POR_ABA: Record<AbaAgenda, string> = {
   grade: '/agendamentos',
   cadastro: '/pacientes',
   procedimentos: '/procedimentos',
-  servicos: '/servicos',
+  servicos: '/configuracoes',
   usuarios: '/usuarios',
   comunicacao: '/comunicacao',
   indicadores: '/indicadores',
@@ -70,6 +70,7 @@ interface Props {
 
 export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNavegar }: Props) {
   const currentTab = rota === '/dashboard' ? 'indicadores' :
+    rota === '/servicos' ? 'servicos' :
     (Object.keys(ROTA_POR_ABA) as AbaAgenda[]).find(aba => ROTA_POR_ABA[aba] === rota) ?? 'grade';
 
   const selecionarAba = (aba: AbaAgenda) => onNavegar(ROTA_POR_ABA[aba]);
@@ -217,7 +218,7 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
     }
     if (isProfissional) itens.push({ aba: 'procedimentos', rotulo: 'Meus Procedimentos' });
     if (isAdmin) {
-      itens.push({ aba: 'servicos', rotulo: 'Serviços e Configurações' });
+      itens.push({ aba: 'servicos', rotulo: 'Configurações' });
       itens.push({ aba: 'usuarios', rotulo: 'Usuários' });
     }
     if (usuario && !isProfissional) {
@@ -284,7 +285,19 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
             {usuario && (usuario.perfil !== 'PROFISSIONAL' || usuario.profissional_id) && (
               <button
                 disabled={Boolean(apiError)}
-                onClick={() => setIsBookingModalOpen(true)}
+                onClick={() => {
+                  setBookingInitialPacienteId(undefined);
+                  setBookingInitialData(currentTab === 'grade' ? gradeData : undefined);
+                  setBookingInitialHorario(undefined);
+                  setBookingInitialProfissionalId(
+                    usuario.perfil === 'PROFISSIONAL'
+                      ? (usuario.profissional_id ?? undefined)
+                      : (currentTab === 'grade' && gradeProfissionalSelecionadoId !== null
+                          ? gradeProfissionalSelecionadoId
+                          : undefined)
+                  );
+                  setIsBookingModalOpen(true);
+                }}
                 className="bg-primary hover:bg-primary-dark text-white font-bold text-xs px-3 sm:px-4 py-2 rounded-xl shadow-md shadow-primary/10 hover:shadow-primary/25 active:scale-95 transition-all duration-150 flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
               >
                 <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">

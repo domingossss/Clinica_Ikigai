@@ -1352,7 +1352,7 @@ export default function GradeAgenda({
               </div>
               <h3 className="text-sm font-bold text-dark mb-1">Nenhum profissional cadastrado</h3>
               <p className="text-xs text-gray max-w-sm">
-                Cadastre profissionais na aba <strong>Serviços e Configurações</strong> para exibir as colunas de atendimento aqui na grade.
+                Cadastre profissionais na aba <strong>Usuários</strong> para exibir as colunas de atendimento aqui na grade.
               </p>
             </div>
           ) : profissionalAtivo && modoVisualizacao === 'semana' ? (

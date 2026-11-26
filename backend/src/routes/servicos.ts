@@ -116,12 +116,25 @@ router.delete('/categorias/:id', async (req: Request, res: Response): Promise<an
 // ============================================================================
 router.get('/servicos', async (req: Request, res: Response): Promise<any> => {
   try {
-    const { apenas_ativos, ativos } = req.query;
+    const { apenas_ativos, ativos, profissional_id } = req.query;
+    const params: any[] = [];
     let sql = `
       SELECT s.id, s.nome, s.preco, s.duracao_minutos, COALESCE(s.ativo, 1) as ativo, c.id as categoria_id, c.nome as categoria_nome 
       FROM servicos s 
       JOIN categorias c ON s.categoria_id = c.id 
     `;
+
+    if (profissional_id !== undefined && profissional_id !== '') {
+      const profId = Number(profissional_id);
+      if (!Number.isSafeInteger(profId) || profId <= 0) {
+        return res.status(400).json({ sucesso: false, erro: 'Identificador de profissional inválido.' });
+      }
+      if (req.usuario?.perfil === 'PROFISSIONAL' && req.usuario.profissional_id !== profId) {
+        return res.status(403).json({ sucesso: false, erro: 'Acesso restrito aos procedimentos do próprio profissional.' });
+      }
+      sql += ' INNER JOIN profissional_procedimento pp ON pp.id_procedimento = s.id AND pp.id_profissional = ? ';
+      params.push(profId);
+    }
 
     if (apenas_ativos === 'true' || ativos === '1') {
       sql += ' WHERE (s.ativo = 1 OR s.ativo IS NULL)';
@@ -129,7 +142,7 @@ router.get('/servicos', async (req: Request, res: Response): Promise<any> => {
 
     sql += ' ORDER BY s.nome';
 
-    const [rows] = await pool.query(sql);
+    const [rows] = await pool.query(sql, params);
     return res.status(200).json({ sucesso: true, dados: rows });
   } catch (error: any) {
     if (error instanceof ErroOperacao) return res.status(error.status).json({sucesso:false,erro:error.message});

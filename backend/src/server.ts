@@ -1,3 +1,4 @@
+import './config/webcrypto.js';
 import { registrarCapacidadeHoje } from './services/capacidadeAgenda.js';
 import express from 'express';
 import path from 'node:path';

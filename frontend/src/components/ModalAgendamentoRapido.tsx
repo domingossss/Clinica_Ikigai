@@ -73,8 +73,16 @@ function FormularioAgendamento({
   const consultaServicos = useRef<AbortController | null>(null);
   const selecaoServicoInicializada = useRef(false);
 
+  const profissionalRestritoId = initialProfissionalId && Number(initialProfissionalId) > 0
+    ? Number(initialProfissionalId)
+    : null;
+  const profissionalRestrito = useMemo(() => {
+    if (!profissionalRestritoId) return null;
+    return profissionais.find(p => Number(p.id) === profissionalRestritoId) ?? null;
+  }, [profissionais, profissionalRestritoId]);
+
   // Dados do Agendamento
-  const [profissionalEscolhidoId, setProfissionalId] = useState<number>(initialProfissionalId || 1);
+  const [profissionalEscolhidoId, setProfissionalId] = useState<number>(profissionalRestritoId || 1);
   const [servicoEscolhidoId, setServicoId] = useState<string>('');
   const [data, setData] = useState<string>(initialDate || obterDataClinicaISO());
   const [horaEscolhida, setHoraInicio] = useState<string>(initialTime || '');
@@ -116,7 +124,11 @@ function FormularioAgendamento({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const servicoIndisponivel = servicosCarregados && !!servicoEscolhidoId && !servicos.some(s => String(s.id) === servicoEscolhidoId);
   const servicoId = servicoIndisponivel ? '' : servicoEscolhidoId;
-  const avisoServico = servicoIndisponivel ? AVISO_SERVICO_INDISPONIVEL : null;
+  const avisoServico = servicoIndisponivel
+    ? (profissionalRestritoId
+        ? 'O procedimento selecionado foi removido, inativado ou desvinculado deste profissional. Escolha outro procedimento.'
+        : AVISO_SERVICO_INDISPONIVEL)
+    : null;
 
   useEffect(() => {
     if (!isOpen || termoPesquisado.length < 2 || modoPaciente !== 'busca' || !mostrarDropdownBusca) return;
@@ -143,11 +155,17 @@ function FormularioAgendamento({
     consultaServicos.current?.abort();
     const controller = new AbortController();
     consultaServicos.current = controller;
-    return apiFetch('/api/servicos?apenas_ativos=true', { signal: controller.signal, cache: 'no-store' }).then(async res => {
-      const json = await res.json();
-      if (!res.ok || !json.sucesso || !Array.isArray(json.dados)) throw new Error(json.erro || 'Não foi possível consultar os serviços ativos.');
+    const url = profissionalRestritoId
+      ? `/api/profissionais/${profissionalRestritoId}/procedimentos`
+      : '/api/servicos?apenas_ativos=true';
+    return apiFetch(url, { signal: controller.signal, cache: 'no-store' }).then(async res => {
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: ServicoItem[]; vinculados?: ServicoItem[] }>(res);
+      const listaBruta = profissionalRestritoId ? json?.vinculados : json?.dados;
+      if (!res.ok || !json?.sucesso || !Array.isArray(listaBruta)) {
+        throw new Error(json?.erro || 'Não foi possível consultar os serviços ativos.');
+      }
       if (controller.signal.aborted) return;
-      const ativos = json.dados.filter((servico: ServicoItem) => servico.ativo === 1 || servico.ativo === true);
+      const ativos = listaBruta.filter((servico: ServicoItem) => servico.ativo === 1 || servico.ativo === true);
       setServicos(ativos);
       if (!selecaoServicoInicializada.current) {
         selecaoServicoInicializada.current = true;
@@ -159,22 +177,33 @@ function FormularioAgendamento({
       setServicos([]);
       setErrorMessage(erro instanceof Error ? erro.message : 'Não foi possível atualizar os serviços.');
     }).finally(() => { if (!controller.signal.aborted) setCarregandoServicos(false); });
-  }, []);
+  }, [profissionalRestritoId]);
 
   useEffect(() => {
     void atualizarServicosAtivos();
     return () => consultaServicos.current?.abort();
   }, [atualizarServicosAtivos]);
 
-  useClinicUpdates(() => { if (isOpen) void atualizarServicosAtivos(); }, ['servicos', 'categorias']);
+  useClinicUpdates(() => { if (isOpen) void atualizarServicosAtivos(); }, ['servicos', 'categorias', 'profissionais']);
 
   const [elegibilidade, setElegibilidade] = useState<{servicoId: string; profissionais: ProfissionalItem[]}>({servicoId:'', profissionais:[]});
-  const carregandoProfissionaisElegiveis = !!servicoId && elegibilidade.servicoId !== servicoId;
-  const profissionaisDoServico = !servicoId ? profissionais : carregandoProfissionaisElegiveis ? [] : elegibilidade.profissionais;
-  const profissionaisElegiveis = excepcional
-    ? profissionaisDoServico.filter(p => p.id === initialProfissionalId)
+  const carregandoProfissionaisElegiveis = !profissionalRestritoId && !!servicoId && elegibilidade.servicoId !== servicoId;
+  const profissionaisBase = profissionalRestritoId
+    ? profissionais.filter(p => Number(p.id) === profissionalRestritoId)
+    : profissionais;
+  const profissionaisDoServico = profissionalRestritoId
+    ? profissionaisBase
+    : !servicoId
+      ? profissionaisBase
+      : carregandoProfissionaisElegiveis
+        ? []
+        : elegibilidade.profissionais;
+  const profissionaisElegiveis = profissionalRestritoId
+    ? profissionaisBase
     : profissionaisDoServico;
-  const profissionalId = profissionaisElegiveis.some(p => p.id === profissionalEscolhidoId) ? profissionalEscolhidoId : profissionaisElegiveis[0]?.id || 0;
+  const profissionalId = profissionaisElegiveis.some(p => Number(p.id) === Number(profissionalEscolhidoId))
+    ? Number(profissionalEscolhidoId)
+    : (profissionaisElegiveis[0]?.id ? Number(profissionaisElegiveis[0].id) : 0);
 
   const [revisaoHorarios, setRevisaoHorarios] = useState(0);
   const [consultaHorarios, setConsultaHorarios] = useState<{ chave: string; livres: string[]; erro?: string }>();
@@ -206,7 +235,7 @@ function FormularioAgendamento({
   }, [chaveHorarios, parametros]);
 
   useEffect(() => {
-    if (!servicoId) return;
+    if (!servicoId || profissionalRestritoId) return;
     const controller = new AbortController();
     apiFetch('/api/servicos/' + servicoId + '/profissionais', {signal:controller.signal})
       .then(async res => {
@@ -696,22 +725,49 @@ function FormularioAgendamento({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Serviço */}
             <div>
-              <label htmlFor={`${tituloDialogo}-servico`} className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
-                Serviço / Procedimento *
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor={`${tituloDialogo}-servico`} className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
+                  Serviço / Procedimento *
+                </label>
+                {profissionalRestritoId && servicosCarregados && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                    servicos.length === 0
+                      ? 'text-red-700 bg-red-50 border-red-200'
+                      : 'text-blue-700 bg-blue-50 border-blue-200'
+                  }`}>
+                    {servicos.length} do profissional
+                  </span>
+                )}
+              </div>
               <select
                 id={`${tituloDialogo}-servico`}
                 value={servicoId}
+                disabled={carregandoServicos || (servicosCarregados && servicos.length === 0)}
                 onChange={e => { setServicoId(e.target.value); setErrorMessage(anterior => anterior === AVISO_SERVICO_INDISPONIVEL ? null : anterior); }}
-                className="w-full p-2.5 border border-gray-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900"
+                className={`w-full p-2.5 border rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900 ${
+                  servicosCarregados && servicos.length === 0
+                    ? 'border-amber-300 bg-amber-50/50 text-amber-800'
+                    : 'border-gray-300'
+                }`}
               >
-                <option value="">{carregandoServicos ? 'Atualizando serviços...' : 'Selecione o serviço...'}</option>
+                <option value="">
+                  {carregandoServicos
+                    ? 'Atualizando serviços...'
+                    : servicos.length === 0 && profissionalRestritoId
+                      ? 'Nenhum procedimento vinculado a este profissional'
+                      : 'Selecione o serviço...'}
+                </option>
                 {servicos.map(s => (
                   <option key={s.id} value={s.id}>
                     {s.nome} ({s.duracao_minutos} min) {s.preco ? `- R$ ${Number(s.preco).toFixed(2)}` : ''}
                   </option>
                 ))}
               </select>
+              {!carregandoServicos && servicosCarregados && servicos.length === 0 && profissionalRestritoId && (
+                <p className="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
+                  <span>⚠️</span> Nenhum procedimento ativo vinculado a {profissionalRestrito?.nome || 'este profissional'}.
+                </p>
+              )}
             </div>
 
             {/* Profissional Elegível */}
@@ -720,28 +776,32 @@ function FormularioAgendamento({
                 <label htmlFor={`${tituloDialogo}-profissional`} className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
                   Profissional / Terapeuta *
                 </label>
-                {servicoId && (
+                {(servicoId || profissionalRestritoId) && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                    profissionaisElegiveis.length === 0
+                    !carregandoProfissionaisElegiveis && profissionaisElegiveis.length === 0
                       ? 'text-red-700 bg-red-50 border-red-200'
                       : 'text-blue-700 bg-blue-50 border-blue-200'
                   }`}>
                     {carregandoProfissionaisElegiveis
                       ? 'Filtrando...'
-                      : `${profissionaisElegiveis.length} habilitado(s)`}
+                      : profissionalRestritoId
+                        ? (excepcional ? 'Sua agenda' : 'Profissional filtrado')
+                        : `${profissionaisElegiveis.length} habilitado(s)`}
                   </span>
                 )}
               </div>
               <select
                 id={`${tituloDialogo}-profissional`}
                 value={profissionalId}
-                disabled={carregandoProfissionaisElegiveis || profissionaisElegiveis.length === 0}
+                disabled={carregandoProfissionaisElegiveis || profissionaisElegiveis.length === 0 || Boolean(profissionalRestritoId)}
                 onChange={e => setProfissionalId(Number(e.target.value))}
-                className={`w-full p-2.5 border rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900 ${
-                  profissionaisElegiveis.length === 0 ? 'border-amber-300 bg-amber-50/50 text-amber-800' : 'border-gray-300'
+                className={`w-full p-2.5 border rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-xs text-gray-900 disabled:bg-gray-100 disabled:text-gray-700 ${
+                  !carregandoProfissionaisElegiveis && profissionaisElegiveis.length === 0 ? 'border-amber-300 bg-amber-50/50 text-amber-800' : 'border-gray-300'
                 }`}
               >
-                {profissionaisElegiveis.length === 0 ? (
+                {carregandoProfissionaisElegiveis ? (
+                  <option value="0">Carregando profissional...</option>
+                ) : profissionaisElegiveis.length === 0 ? (
                   <option value="0">Nenhum profissional habilitado para este serviço</option>
                 ) : (
                   profissionaisElegiveis.map(prof => (
@@ -751,7 +811,7 @@ function FormularioAgendamento({
                   ))
                 )}
               </select>
-              {servicoId && profissionaisElegiveis.length === 0 && (
+              {servicoId && !carregandoProfissionaisElegiveis && profissionaisElegiveis.length === 0 && (
                 <p className="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
                   <span>⚠️</span> Nenhum profissional habilitado para este procedimento.
                 </p>

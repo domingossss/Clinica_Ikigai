@@ -1,3 +1,4 @@
+import '../config/webcrypto.js';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import zlib from 'node:zlib';
