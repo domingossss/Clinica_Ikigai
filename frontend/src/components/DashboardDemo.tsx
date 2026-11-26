@@ -253,19 +253,18 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
       </div>
 
       {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-40 border-b border-gray/10 bg-white/95 shadow-sm backdrop-blur-md">
-        {/* Linha superior: Marca e ações principais */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+      <header className="sticky top-0 z-40 bg-white border-b border-gray/10 shadow-sm backdrop-blur-md bg-white/80">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-16 py-3 flex flex-wrap gap-3 items-center justify-between">
+          <div className="flex items-center gap-3">
             <img
               src="/logo.png"
               alt="Clínica Ikigai Logo"
-              className="h-9 w-9 sm:h-10 sm:w-10 shrink-0 rounded-full object-cover shadow-sm border border-secondary/30"
+              className="h-11 w-11 rounded-full object-cover shadow-sm border border-secondary/30 transform hover:scale-105 transition-transform duration-300"
             />
-            <div className="min-w-0">
-              <h1 className="text-base sm:text-lg font-bold tracking-tight text-dark flex flex-wrap items-center gap-x-2 gap-y-0.5 leading-tight">
-                <span className="truncate">Clínica Ikigai</span>
-                <span className="text-[11px] bg-secondary/15 text-primary-dark font-semibold px-2 py-0.5 rounded-full border border-secondary/30 whitespace-nowrap">
+            <div>
+              <h1 className="text-lg font-bold tracking-tight text-dark flex items-center gap-2">
+                Clínica Ikigai
+                <span className="text-[11px] bg-secondary/15 text-primary-dark font-semibold px-2 py-0.5 rounded-full border border-secondary/30">
                   {usuario
                     ? usuario.perfil === 'PROFISSIONAL'
                       ? `Profissional • ${usuario.profissional_nome || usuario.nome}`
@@ -273,7 +272,7 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
                     : 'Recepção'}
                 </span>
               </h1>
-              <p className="hidden sm:block text-xs text-gray truncate">
+              <p className="text-xs text-gray">
                 {usuario?.perfil === 'PROFISSIONAL' && usuario.profissional_especialidade
                   ? `Modo Consultório • ${usuario.profissional_especialidade}`
                   : 'Sistema de Gestão da Clínica'}
@@ -281,7 +280,36 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+          {/* Menu de Abas Padronizado */}
+          <nav
+            aria-label="Navegação principal"
+            className="flex flex-wrap items-center gap-1 bg-light-gray p-1 rounded-xl border border-gray/10"
+          >
+            {abasNavegacao.map(item => (
+              <button
+                key={item.aba}
+                type="button"
+                onClick={() => selecionarAba(item.aba)}
+                aria-current={currentTab === item.aba ? 'page' : undefined}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                  item.capitalizar ? 'capitalize' : ''
+                } ${
+                  currentTab === item.aba
+                    ? 'bg-white text-primary font-extrabold shadow-sm'
+                    : 'text-gray hover:text-dark hover:bg-white/50'
+                }`}
+              >
+                {item.rotulo}
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-extrabold text-white">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </nav>
+
+          <div className="flex items-center gap-3">
             {usuario && (usuario.perfil !== 'PROFISSIONAL' || usuario.profissional_id) && (
               <button
                 disabled={Boolean(apiError)}
@@ -298,66 +326,30 @@ export default function DashboardDemo({ usuario, onLogout, rota, buscaUrl, onNav
                   );
                   setIsBookingModalOpen(true);
                 }}
-                className="bg-primary hover:bg-primary-dark text-white font-bold text-xs px-3 sm:px-4 py-2 rounded-xl shadow-md shadow-primary/10 hover:shadow-primary/25 active:scale-95 transition-all duration-150 flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                className="bg-primary hover:bg-primary-dark text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-md shadow-primary/10 hover:shadow-primary/25 active:scale-95 transition-all duration-150 flex items-center gap-1.5 cursor-pointer"
               >
-                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
                 </svg>
-                <span className="hidden sm:inline">
-                  {usuario?.perfil === 'PROFISSIONAL' ? 'Reserva excepcional' : 'Novo Agendamento'}
-                </span>
-                <span className="sm:hidden">Agendar</span>
+                {usuario?.perfil === 'PROFISSIONAL' ? 'Reserva excepcional' : 'Novo Agendamento'}
               </button>
             )}
             {usuario && onLogout && (
               <button
                 type="button"
                 onClick={onLogout}
-                title={usuario.email}
-                className="px-3 py-2 rounded-xl border border-gray/25 text-xs font-bold text-dark hover:bg-light-gray transition-colors whitespace-nowrap cursor-pointer"
+                title={usuario.login || usuario.email}
+                className="px-3 py-2 rounded-xl border border-gray/25 text-xs font-bold text-dark hover:bg-light-gray transition-colors cursor-pointer"
               >
                 Sair
               </button>
             )}
           </div>
         </div>
-
-        {/* Faixa de navegação fixa e consistente em todas as telas */}
-        <div className="border-t border-gray/10 bg-light-gray/50">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-1.5">
-            <nav
-              aria-label="Navegação principal"
-              className="flex items-center gap-1 overflow-x-auto no-scrollbar"
-            >
-              {abasNavegacao.map(item => (
-                <button
-                  key={item.aba}
-                  type="button"
-                  onClick={() => selecionarAba(item.aba)}
-                  aria-current={currentTab === item.aba ? 'page' : undefined}
-                  className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-                    item.capitalizar ? 'capitalize' : ''
-                  } ${
-                    currentTab === item.aba
-                      ? 'bg-white text-primary shadow-sm ring-1 ring-primary/15'
-                      : 'text-gray hover:text-dark hover:bg-white/70'
-                  }`}
-                >
-                  {item.rotulo}
-                  {item.badge !== undefined && item.badge > 0 && (
-                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-extrabold text-white">
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </nav>
-          </div>
-        </div>
       </header>
 
       {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 lg:py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Banner de Erro da API */}
         {apiError && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-xl flex items-center justify-between shadow-sm">
