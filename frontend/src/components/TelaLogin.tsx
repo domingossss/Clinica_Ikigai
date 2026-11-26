@@ -18,7 +18,7 @@ export default function TelaLogin({ onLoginSuccess }: TelaLoginProps) {
     if (envioRef.current) return;
     const identificador = email.trim();
     if (!identificador || !senha) {
-      setErro('Informe seu usuário ou e-mail e sua senha.');
+      setErro('Informe seu usuário e sua senha.');
       return;
     }
     envioRef.current = true;
@@ -55,7 +55,7 @@ export default function TelaLogin({ onLoginSuccess }: TelaLoginProps) {
 
           <div>
             <label htmlFor="login-email" className="block text-xs font-bold text-dark mb-1.5">
-              Usuário (nome.ultimonome) ou e-mail
+              Usuário
             </label>
             <input
               id="login-email"
