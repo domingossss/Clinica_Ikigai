@@ -129,22 +129,20 @@ export default function ServicosAgendamentos({
     });
   }, [iniciarConsulta, showToast]);
 
-  const carregarExcecoes = useCallback(async (silencioso = false) => {
+  const carregarExcecoes = useCallback(() => {
     const controller = iniciarConsulta('excecoes');
-    if (!silencioso) setLoadingExcecoes(true);
-    try {
-      const res = await apiFetch('/api/excecoes', { signal: controller.signal });
+    return apiFetch('/api/excecoes', { signal: controller.signal }).then(async res => {
       const data = await res.json();
       if (!res.ok || !data.sucesso || !Array.isArray(data.dados)) {
         throw new Error(data.erro || 'Falha ao consultar exceções.');
       }
       if (!controller.signal.aborted) setExcecoes(data.dados);
-    } catch (erro) {
+    }).catch((erro: unknown) => {
       if (controller.signal.aborted) return;
       showToast(erro instanceof Error ? erro.message : 'Não foi possível atualizar as exceções.', 'error');
-    } finally {
+    }).finally(() => {
       if (!controller.signal.aborted) setLoadingExcecoes(false);
-    }
+    });
   }, [iniciarConsulta, showToast]);
 
   useEffect(() => {
@@ -161,7 +159,7 @@ export default function ServicosAgendamentos({
     const geral = !change.recursos.length;
     if (geral || change.recursos.some(r => ['servicos', 'categorias'].includes(r))) void carregarEspecialidades();
     if (isAdmin && (geral || change.recursos.includes('profissionais'))) void carregarProfissionais();
-    if (isAdmin && (geral || change.recursos.includes('excecoes'))) void carregarExcecoes(true);
+    if (isAdmin && (geral || change.recursos.includes('excecoes'))) void carregarExcecoes();
   }, ['servicos', 'categorias', 'profissionais', 'excecoes']);
 
   // ==========================================

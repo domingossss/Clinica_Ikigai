@@ -1,5 +1,6 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../api';
+import { useClinicUpdates } from '../services/clinicUpdates';
 import PainelWhatsApp from './PainelWhatsApp';
 
 const rotulos = {
@@ -62,6 +63,7 @@ export default function Comunicacoes({
   const erro = resultadoAtual?.erro;
   const [aviso, setAviso] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const [confirmandoStatus, setConfirmandoStatus] = useState(false);
   const [abrindoWhatsApp, setAbrindoWhatsApp] = useState(false);
   const [linkWhatsApp, setLinkWhatsApp] = useState<{ buscaUrl: string; href: string } | null>(null);
   const [revisao, setRevisao] = useState(0);
@@ -79,7 +81,7 @@ export default function Comunicacoes({
       if (estadoFiltro) filtros.set('estado', estadoFiltro);
       if (paginaFiltro) filtros.set('pagina', paginaFiltro);
       try {
-        const resposta = await apiFetch('/api/comunicacoes?' + filtros, { signal: controller.signal });
+        const resposta = await apiFetch('/api/comunicacoes?' + filtros, { signal: controller.signal, cache: 'no-store' });
         const json = await lerResposta<Consulta>(resposta, 'Falha ao consultar mensagens.');
         if (!controller.signal.aborted) setResultadoConsulta({ buscaUrl, dados: json, erro: '' });
       } catch (e) {
@@ -89,6 +91,11 @@ export default function Comunicacoes({
     void carregar();
     return () => controller.abort();
   }, [isAdmin, buscaUrl, numeroAtendimento, estadoFiltro, paginaFiltro, numeroInvalido, revisao]);
+
+  const atualizarConsulta = useCallback(() => {
+    setRevisao(v => v + 1);
+  }, []);
+  useClinicUpdates(atualizarConsulta, ['comunicacoes', 'agendamentos']);
 
   function aplicarFiltros(alteracao: { agendamento?: string; estado?: string; pagina?: string }) {
     const filtros = new URLSearchParams(buscaUrl);
@@ -162,6 +169,39 @@ export default function Comunicacoes({
       setAviso(rotulos[json.dados.estado] + (json.dados.erro ? ' · ' + json.dados.erro : ''));
     } catch (e) { setAviso(e instanceof Error ? e.message : 'Não foi possível obter o resultado do envio.'); }
     finally { setEnviando(false); setRevisao(v => v + 1); }
+  }
+
+  async function confirmarPresencaAtendimento(atendimentoAlvo: Atendimento) {
+    setConfirmandoStatus(true);
+    setAviso('');
+    try {
+      const resposta = await apiFetch(`/api/agendamentos/${atendimentoAlvo.id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Confirmado' }),
+      });
+      await lerResposta<{ sucesso?: boolean }>(resposta, 'Não foi possível confirmar o atendimento.');
+      setResultadoConsulta(prev => {
+        if (!prev?.dados?.atendimento || prev.dados.atendimento.id !== atendimentoAlvo.id) return prev;
+        return {
+          ...prev,
+          dados: {
+            ...prev.dados,
+            atendimento: { ...prev.dados.atendimento, status: 'Confirmado' },
+          },
+        };
+      });
+      const msg = `Atendimento #${atendimentoAlvo.id} (${atendimentoAlvo.paciente}) confirmado com sucesso!`;
+      setAviso(msg);
+      onNotify?.(msg, 'success');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Não foi possível confirmar o atendimento.';
+      setAviso(msg);
+      onNotify?.(msg, 'error');
+    } finally {
+      setConfirmandoStatus(false);
+      setRevisao(v => v + 1);
+    }
   }
 
   const atendimento = consulta?.atendimento;
@@ -372,6 +412,16 @@ export default function Comunicacoes({
 
             <div className="p-6 space-y-3">
               <div className="flex flex-wrap items-center gap-2.5">
+                {['Agendado', 'Reagendado'].includes(atendimento.status) && (
+                  <button
+                    type="button"
+                    disabled={confirmandoStatus}
+                    onClick={() => void confirmarPresencaAtendimento(atendimento)}
+                    className="rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {confirmandoStatus ? 'Confirmando…' : 'Confirmar atendimento'}
+                  </button>
+                )}
                 {podeConfirmar && (
                   <button
                     type="button"

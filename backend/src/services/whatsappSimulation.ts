@@ -274,6 +274,8 @@ export class WhatsAppSimulationService {
         ...(tentativasAtuais > 0 ? { tentativasAuth: tentativasAtuais } : {}),
         ...(sessao.contexto.escalonadoEm ? { escalonadoEm: sessao.contexto.escalonadoEm } : {}),
         ...(sessao.contexto.escalonadoMotivo ? { escalonadoMotivo: sessao.contexto.escalonadoMotivo } : {}),
+        ...(sessao.contexto.pacienteIdentificadoUuid ? { pacienteIdentificadoUuid: sessao.contexto.pacienteIdentificadoUuid } : {}),
+        ...(sessao.contexto.pacienteIdentificadoNome ? { pacienteIdentificadoNome: sessao.contexto.pacienteIdentificadoNome } : {}),
         ...novo,
       };
       return base as typeof sessao.contexto;
@@ -294,11 +296,25 @@ export class WhatsAppSimulationService {
 
     // 2. Solicitação explícita ou em linguagem natural de transbordo humano (inclusive opção 6 do menu)
     if (ehSolicitacaoTransbordoHumano(value, sessao.etapa)) {
+      let identificado: { uuid: string; nome: string; totalMatches: number } | null = null;
+      if (!sessao.pacienteUuid && this.repository.identificarPacientePorTelefone) {
+        try {
+          identificado = await this.repository.identificarPacientePorTelefone(event.phone);
+        } catch {
+          identificado = null;
+        }
+      }
       sessao.etapa = 'MENU_PRINCIPAL';
       sessao.intencaoAtual = 'menu';
       sessao.contexto = preservarBloqueio({
         escalonadoEm: this.now().toISOString(),
-        escalonadoMotivo: 'Solicitação de atendimento humano via WhatsApp'
+        escalonadoMotivo: 'Solicitação de atendimento humano via WhatsApp',
+        ...(identificado
+          ? {
+              pacienteIdentificadoUuid: identificado.uuid,
+              pacienteIdentificadoNome: identificado.nome,
+            }
+          : {}),
       });
       return {
         intent: 'menu',

@@ -389,26 +389,6 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
     }
   };
 
-  // Formatar CPF para exibição na tabela
-  const formatarCPFExibicao = (cpf: string) => {
-    if (!cpf) return 'Não informado';
-    if (cpf.length !== 11) return cpf;
-    return `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`;
-  };
-
-  // Formatar Telefone para exibição na tabela
-  const formatarTelefoneExibicao = (tel: string) => {
-    if (!tel) return 'Não informado';
-    if (tel.startsWith('+')) return tel;
-    if (tel.length === 11) {
-      return `(${tel.slice(0, 2)}) ${tel.slice(2, 7)}-${tel.slice(7)}`;
-    }
-    if (tel.length === 10) {
-      return `(${tel.slice(0, 2)}) ${tel.slice(2, 6)}-${tel.slice(6)}`;
-    }
-    return tel;
-  };
-
   // Filtragem da lista
   const filteredPacientes = pacientes;
 
@@ -689,34 +669,26 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
               </div>
             </div>
 
-            {/* Tabela de Dados */}
-            <div className="overflow-x-auto flex-1">
+            {/* Tabela de Pacientes (nome e ações) */}
+            <div className="overflow-x-auto flex-1 ikigai-scrollbar rounded-xl border border-gray/10">
               <table className="min-w-full divide-y divide-gray/10">
-                <thead>
+                <thead className="bg-light-gray">
                   <tr className="bg-light-gray text-left text-[10px] font-extrabold text-gray uppercase tracking-wider">
-                    <th className="px-4 py-3 rounded-l-xl">Paciente</th>
-                    <th className="px-4 py-3">CPF</th>
-                    <th className="px-4 py-3">Telefone</th>
-                    <th className="px-4 py-3">Endereço</th>
-                    <th className="px-4 py-3">Cadastro</th>
-                    <th className="px-4 py-3 text-right rounded-r-xl">Ações</th>
+                    <th className="px-4 py-3 whitespace-nowrap">Paciente</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray/5 text-xs">
                   {loadingPacientes ? (
                     Array.from({ length: 4 }).map((_, idx) => (
                       <tr key={idx} className="animate-pulse">
-                        <td className="px-4 py-4"><div className="h-4 w-28 bg-gray/10 rounded" /></td>
-                        <td className="px-4 py-4"><div className="h-3 w-20 bg-gray/10 rounded" /></td>
-                        <td className="px-4 py-4"><div className="h-3 w-24 bg-gray/10 rounded" /></td>
-                        <td className="px-4 py-4"><div className="h-3 w-36 bg-gray/10 rounded" /></td>
-                        <td className="px-4 py-4"><div className="h-3 w-14 bg-gray/10 rounded" /></td>
-                        <td className="px-4 py-4 text-right"><div className="h-8 w-16 bg-gray/10 rounded ml-auto" /></td>
+                        <td className="px-4 py-4"><div className="h-4 w-40 bg-gray/10 rounded" /></td>
+                        <td className="px-4 py-4 text-right"><div className="h-8 w-36 bg-gray/10 rounded ml-auto" /></td>
                       </tr>
                     ))
                   ) : filteredPacientes.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="text-center py-12 text-gray font-medium">
+                      <td colSpan={2} className="text-center py-12 text-gray font-medium">
                         Nenhum paciente cadastrado encontrado.
                       </td>
                     </tr>
@@ -734,57 +706,51 @@ export default function CadastroPacientes({ onNovoAgendamento, usuarioLogado }: 
                             <span className="opacity-0 group-hover:opacity-100 text-[10px] bg-secondary/15 text-primary-dark font-semibold px-1.5 py-0.5 rounded transition-opacity">
                               {isProfissional ? 'Abrir Prontuário' : 'Ver Histórico'}
                             </span>
-                          </button> : <span>{p.nome_completo}</span>}
+                          </button> : <span className="font-bold text-dark">{p.nome_completo}</span>}
                         </td>
-                        <td className="px-4 py-4 text-gray font-mono">{formatarCPFExibicao(p.cpf)}</td>
-                        <td className="px-4 py-4 text-gray font-semibold">{formatarTelefoneExibicao(p.telefone)}</td>
-                        <td className="px-4 py-4 text-gray max-w-[150px] truncate" title={p.endereco}>
-                          {p.endereco}
-                        </td>
-                        <td className="px-4 py-4 text-gray font-semibold">
-                          {new Date(p.criado_em).toLocaleDateString('pt-BR')}
-                        </td>
-                        <td className="px-4 py-4 text-right flex items-center justify-end gap-2">
-                          {(isProfissional || admin) && (
-                            <button
-                              type="button"
-                              onClick={() => setProntuarioPaciente(p)}
-                              title="Abrir Prontuário Completo e Linha do Tempo Vertical"
-                              className="px-2.5 py-1.5 bg-primary/10 hover:bg-primary hover:text-white text-primary text-xs font-bold rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                        <td className="px-4 py-4 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-2">
+                            {(isProfissional || admin) && (
+                              <button
+                                type="button"
+                                onClick={() => setProntuarioPaciente(p)}
+                                title="Abrir Prontuário Completo e Linha do Tempo Vertical"
+                                className="px-2.5 py-1.5 bg-primary/10 hover:bg-primary hover:text-white text-primary text-xs font-bold rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                              >
+                                <span>📋</span>
+                                <span>Prontuário</span>
+                              </button>
+                            )}
+                            {admin && <button
+                              onClick={() => handleAbrirHistorico(p)}
+                              title="Visualizar histórico de atendimentos (IK-77)"
+                              className="p-1.5 bg-light-gray hover:bg-secondary/30 text-gray hover:text-primary-dark rounded-lg transition-colors cursor-pointer"
                             >
-                              <span>📋</span>
-                              <span>Prontuário</span>
-                            </button>
-                          )}
-                          {admin && <button
-                            onClick={() => handleAbrirHistorico(p)}
-                            title="Visualizar histórico de atendimentos (IK-77)"
-                            className="p-1.5 bg-light-gray hover:bg-secondary/30 text-gray hover:text-primary-dark rounded-lg transition-colors cursor-pointer"
-                          >
-                            <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                          </button>}
-                          {usuarioLogado && !isProfissional && <button
-                            onClick={() => handleEditClick(p)}
-                            title="Editar paciente"
-                            className="p-1.5 bg-light-gray hover:bg-primary/15 text-gray hover:text-primary rounded-lg transition-colors cursor-pointer"
-                          >
-                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                            </svg>
-                          </button>}
-                          {admin && (
-                            <button
-                              onClick={() => handleDeleteClick(p.id, p.nome_completo)}
-                              title="Excluir paciente"
-                              className="p-1.5 bg-light-gray hover:bg-red-500/15 text-gray hover:text-red-600 rounded-lg transition-colors cursor-pointer"
+                              <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            </button>}
+                            {usuarioLogado && !isProfissional && <button
+                              onClick={() => handleEditClick(p)}
+                              title="Editar paciente"
+                              className="p-1.5 bg-light-gray hover:bg-primary/15 text-gray hover:text-primary rounded-lg transition-colors cursor-pointer"
                             >
                               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                               </svg>
-                            </button>
-                          )}
+                            </button>}
+                            {admin && (
+                              <button
+                                onClick={() => handleDeleteClick(p.id, p.nome_completo)}
+                                title="Excluir paciente"
+                                className="p-1.5 bg-light-gray hover:bg-red-500/15 text-gray hover:text-red-600 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))

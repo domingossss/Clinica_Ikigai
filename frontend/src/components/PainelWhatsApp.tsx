@@ -39,6 +39,13 @@ interface TransbordoSessao {
   paciente_nome: string | null;
   contato_final: string | null;
   motivo: string;
+  proximo_agendamento?: {
+    id: number;
+    ocorrencia: string;
+    status: string;
+    procedimento: string | null;
+    profissional: string | null;
+  } | null;
 }
 
 interface AgendamentoEscalonado {
@@ -143,6 +150,7 @@ export default function PainelWhatsApp({
   const [filtroEstado, setFiltroEstado] = useState('');
   const [filtroTipo, setFiltroTipo] = useState('');
   const [resolvendoId, setResolvendoId] = useState<number | null>(null);
+  const [confirmandoAgendamentoId, setConfirmandoAgendamentoId] = useState<number | null>(null);
   const [processandoFila, setProcessandoFila] = useState(false);
 
   const consultaRef = useRef<AbortController | null>(null);
@@ -158,6 +166,7 @@ export default function PainelWhatsApp({
       const sufixo = qs.toString() ? `?${qs}` : '';
       const resposta = await apiFetch('/api/comunicacoes/whatsapp/painel' + sufixo, {
         signal: controller.signal,
+        cache: 'no-store',
       });
       const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string; dados?: DadosPainelWhatsApp }>(resposta);
       if (controller.signal.aborted) return;
@@ -210,6 +219,21 @@ export default function PainelWhatsApp({
       if (!resposta.ok || !json?.sucesso) {
         throw new Error(json?.erro || 'Não foi possível encerrar o atendimento.');
       }
+      setDados(prev => {
+        if (!prev) return prev;
+        const transbordos = prev.transbordos.map(t =>
+          t.id_sessao === idSessao
+            ? { ...t, pendente: false, status_sessao: 'Duvida_Resolvida' }
+            : t
+        );
+        const transbordosPendentes = transbordos.filter(t => t.pendente).length;
+        onTransbordosPendentesChange?.(transbordosPendentes);
+        return {
+          ...prev,
+          transbordos,
+          resumo: { ...prev.resumo, transbordosPendentes },
+        };
+      });
       onNotify?.(`Atendimento humano #${idSessao} marcado como atendido.`, 'success');
       await carregar();
     } catch (e) {
@@ -218,6 +242,49 @@ export default function PainelWhatsApp({
       onNotify?.(msg, 'error');
     } finally {
       setResolvendoId(null);
+    }
+  }
+
+  async function confirmarAgendamento(idAgendamento: number, pacienteNome?: string | null) {
+    setConfirmandoAgendamentoId(idAgendamento);
+    try {
+      const resposta = await apiFetch(`/api/agendamentos/${idAgendamento}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Confirmado' }),
+      });
+      const json = await lerJsonSeguro<{ sucesso?: boolean; erro?: string }>(resposta);
+      if (!resposta.ok || !json?.sucesso) {
+        throw new Error(json?.erro || 'Não foi possível confirmar o atendimento.');
+      }
+      setDados(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          transbordos: prev.transbordos.map(t =>
+            t.proximo_agendamento?.id === idAgendamento
+              ? { ...t, proximo_agendamento: null }
+              : t
+          ),
+          agendamentosEscalonados: prev.agendamentosEscalonados.map(ag =>
+            ag.id === idAgendamento ? { ...ag, status: 'Confirmado' } : ag
+          ),
+          comunicacoes: prev.comunicacoes.map(m =>
+            m.id_agendamento === idAgendamento ? { ...m, status_agendamento: 'Confirmado' } : m
+          ),
+        };
+      });
+      onNotify?.(
+        `Atendimento #${idAgendamento}${pacienteNome ? ` (${pacienteNome})` : ''} confirmado com sucesso!`,
+        'success'
+      );
+      await carregar();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Falha ao confirmar o atendimento.';
+      setErro(msg);
+      onNotify?.(msg, 'error');
+    } finally {
+      setConfirmandoAgendamentoId(null);
     }
   }
 
@@ -424,17 +491,37 @@ export default function PainelWhatsApp({
                       {item.motivo} · Iniciado em {formatarDataHora(item.data_hora_inicio)}
                       {item.data_hora_fim ? ` · Encerrado em ${formatarDataHora(item.data_hora_fim)}` : ''}
                     </p>
+                    {item.pendente && item.proximo_agendamento && (
+                      <p className="text-xs font-medium text-primary-dark">
+                        Próximo agendamento #{item.proximo_agendamento.id}: {formatarDataHora(item.proximo_agendamento.ocorrencia)}
+                        {item.proximo_agendamento.procedimento ? ` · ${item.proximo_agendamento.procedimento}` : ''}
+                        {' · '}
+                        <span className="font-bold">{item.proximo_agendamento.status}</span>
+                      </p>
+                    )}
                   </div>
-                  {item.pendente && (
-                    <button
-                      type="button"
-                      disabled={resolvendoId === item.id_sessao}
-                      onClick={() => void resolverTransbordo(item.id_sessao)}
-                      className="rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary-dark disabled:opacity-50 cursor-pointer"
-                    >
-                      {resolvendoId === item.id_sessao ? 'Salvando…' : 'Marcar como atendido'}
-                    </button>
-                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {item.pendente && item.proximo_agendamento && (
+                      <button
+                        type="button"
+                        disabled={confirmandoAgendamentoId === item.proximo_agendamento.id}
+                        onClick={() => void confirmarAgendamento(item.proximo_agendamento!.id, item.paciente_nome)}
+                        className="rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                      >
+                        {confirmandoAgendamentoId === item.proximo_agendamento.id ? 'Confirmando…' : 'Confirmar atendimento'}
+                      </button>
+                    )}
+                    {item.pendente && (
+                      <button
+                        type="button"
+                        disabled={resolvendoId === item.id_sessao}
+                        onClick={() => void resolverTransbordo(item.id_sessao)}
+                        className="rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary-dark disabled:opacity-50 cursor-pointer"
+                      >
+                        {resolvendoId === item.id_sessao ? 'Salvando…' : 'Marcar como atendido'}
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -452,9 +539,21 @@ export default function PainelWhatsApp({
                         {formatarDataHora(ag.ocorrencia)} · {ag.procedimento || 'Procedimento'} ({ag.profissional || 'Profissional'})
                       </span>
                     </div>
-                    <span className="rounded-full bg-secondary-light px-2.5 py-0.5 font-semibold text-primary-dark">
-                      {ag.status}{ag.contato_final ? ` · Final ${ag.contato_final}` : ''}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {['Agendado', 'Reagendado'].includes(ag.status) && (
+                        <button
+                          type="button"
+                          disabled={confirmandoAgendamentoId === ag.id}
+                          onClick={() => void confirmarAgendamento(ag.id, ag.paciente)}
+                          className="rounded-xl bg-emerald-600 px-3 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                        >
+                          {confirmandoAgendamentoId === ag.id ? 'Confirmando…' : 'Confirmar atendimento'}
+                        </button>
+                      )}
+                      <span className="rounded-full bg-secondary-light px-2.5 py-0.5 font-semibold text-primary-dark">
+                        {ag.status}{ag.contato_final ? ` · Final ${ag.contato_final}` : ''}
+                      </span>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -526,17 +625,29 @@ export default function PainelWhatsApp({
                     </p>
                     {m.erro && <p className="text-xs font-medium text-red-700">{m.erro}</p>}
                   </div>
-                  <span
-                    className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                      m.estado === 'FALHA'
-                        ? 'bg-red-50 text-red-800'
-                        : m.estado === 'ENTREGUE'
-                          ? 'bg-emerald-50 text-emerald-800'
-                          : 'bg-secondary-light text-primary-dark'
-                    }`}
-                  >
-                    {rotulosEstadoCom[m.estado]}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {['Agendado', 'Reagendado'].includes(m.status_agendamento) && (
+                      <button
+                        type="button"
+                        disabled={confirmandoAgendamentoId === m.id_agendamento}
+                        onClick={() => void confirmarAgendamento(m.id_agendamento, m.paciente)}
+                        className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                      >
+                        {confirmandoAgendamentoId === m.id_agendamento ? 'Confirmando…' : 'Confirmar atendimento'}
+                      </button>
+                    )}
+                    <span
+                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                        m.estado === 'FALHA'
+                          ? 'bg-red-50 text-red-800'
+                          : m.estado === 'ENTREGUE'
+                            ? 'bg-emerald-50 text-emerald-800'
+                            : 'bg-secondary-light text-primary-dark'
+                      }`}
+                    >
+                      {rotulosEstadoCom[m.estado]}
+                    </span>
+                  </div>
                 </li>
               ))}
             </ul>

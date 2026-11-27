@@ -125,6 +125,8 @@ export interface ConversationContext {
   contatoFinal?: string;
   escalonadoEm?: string;
   escalonadoMotivo?: string;
+  pacienteIdentificadoUuid?: string;
+  pacienteIdentificadoNome?: string;
 }
 
 export interface WhatsAppConversationSession {
@@ -190,6 +192,7 @@ export interface WhatsAppClinicRepository {
     phone: string,
     cpfInput: string
   ): Promise<ResultadoAutenticacaoPaciente>;
+  identificarPacientePorTelefone?(phone: string): Promise<{ uuid: string; nome: string; totalMatches: number } | null>;
   obterPacientePorUuid(uuid: string): Promise<WhatsAppPaciente | null>;
   cadastrarPacienteRapidoWhatsApp(params: {
     nomeCompleto: string;
@@ -522,6 +525,20 @@ export class InMemoryWhatsAppClinicRepository implements WhatsAppClinicRepositor
       whatsapp: p.whatsapp,
       etapa_tratamento: p.etapa_tratamento || 'Avaliação',
       atendimento_status: 'IA'
+    };
+  }
+
+  async identificarPacientePorTelefone(
+    phone: string
+  ): Promise<{ uuid: string; nome: string; totalMatches: number } | null> {
+    const matches = this.store.pacientes
+      .map((p, idx) => this.mapMockPaciente(p, idx))
+      .filter(p => telefonesEquivalentes(p.whatsapp, phone) || telefonesEquivalentes(p.telefone, phone));
+    if (matches.length === 0) return null;
+    return {
+      uuid: matches[0].uuid,
+      nome: matches.length === 1 ? matches[0].nome_completo : `${matches[0].nome_completo} (+${matches.length - 1})`,
+      totalMatches: matches.length
     };
   }
 
@@ -1207,6 +1224,17 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       this.tabelasVerificadas = true;
       return;
     }
+    try {
+      // Verifica via SELECT (compatível com usuário de menor privilégio sem GRANT CREATE)
+      await this.dbPool.query('SELECT 1 FROM whatsapp_sessao_conversa LIMIT 1');
+      await this.dbPool.query('SELECT 1 FROM whatsapp_evento_processado LIMIT 1');
+      this.tabelasVerificadas = true;
+      return;
+    } catch (err: any) {
+      if (err?.code !== 'ER_NO_SUCH_TABLE') {
+        throw err;
+      }
+    }
     await this.dbPool.query(`
       CREATE TABLE IF NOT EXISTS whatsapp_sessao_conversa (
         conversation_id VARCHAR(64) PRIMARY KEY,
@@ -1543,6 +1571,30 @@ export class MySqlWhatsAppClinicRepository implements WhatsAppClinicRepository {
       whatsapp: String(row.whatsapp || ''),
       etapa_tratamento: String(row.etapa_tratamento || 'Avaliação'),
       atendimento_status: row.atendimento_status === 'IA' ? 'IA' : 'Humano'
+    };
+  }
+
+  async identificarPacientePorTelefone(
+    phone: string
+  ): Promise<{ uuid: string; nome: string; totalMatches: number } | null> {
+    const variantes = variantesTelefoneBr(phone);
+    if (!variantes.length) return null;
+    const placeholders = variantes.map(() => '?').join(', ');
+    const [rows] = await this.dbPool.query<RowDataPacket[]>(
+      `SELECT uuid, nome
+       FROM paciente
+       WHERE REGEXP_REPLACE(COALESCE(whatsapp, ''), '[^0-9]', '') IN (${placeholders})
+          OR REGEXP_REPLACE(COALESCE(telefone, ''), '[^0-9]', '') IN (${placeholders})
+       ORDER BY id_paciente DESC
+       LIMIT 5`,
+      [...variantes, ...variantes]
+    );
+    if (!rows.length) return null;
+    const principal = rows[0];
+    return {
+      uuid: String(principal.uuid),
+      nome: rows.length === 1 ? String(principal.nome) : `${String(principal.nome)} (+${rows.length - 1})`,
+      totalMatches: rows.length
     };
   }
 

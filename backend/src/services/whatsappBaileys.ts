@@ -40,6 +40,7 @@ export interface BaileysSocketLike {
     removeAllListeners?(event?: string): void;
   };
   sendMessage(jid: string, content: { text: string }): Promise<WAMessage | undefined>;
+  onWhatsApp?(...jids: string[]): Promise<Array<{ exists: boolean; jid: string }> | undefined>;
   end(error: Error | undefined): Promise<void> | void;
 }
 
@@ -83,6 +84,24 @@ export function normalizePhoneDigits(raw: string): string | null {
     return null;
   }
   return digits;
+}
+
+/**
+ * Gera variantes equivalentes de telefone brasileiro com e sem o 9º dígito após o DDD,
+ * pois o WhatsApp frequentemente entrega JIDs de DDDs fora de SP (ex.: DDD 12) com 12 dígitos.
+ */
+export function expandBrazilianPhoneVariants(normalizedPhone: string): string[] {
+  const digits = normalizePhoneDigits(normalizedPhone);
+  if (!digits) return [];
+  const variants = new Set<string>([digits]);
+  const ddd = digits.slice(2, 4);
+  const local = digits.slice(4);
+  if (local.length === 9 && local.startsWith('9')) {
+    variants.add(`55${ddd}${local.slice(1)}`);
+  } else if (local.length === 8) {
+    variants.add(`55${ddd}9${local}`);
+  }
+  return Array.from(variants);
 }
 
 export function parseAllowedNumbers(raw: string | undefined): string[] {
@@ -187,8 +206,11 @@ export function extractNormalizedConversation(key: WAMessageKey | undefined): {
     return null;
   }
 
-  // Suporte à mudança da Baileys v7: sessões podem usar @lid com número real em remoteJidAlt
-  const candidates = [remoteJid, remoteJidAlt].filter((item): item is string => typeof item === 'string' && item.length > 0);
+  // Suporte à mudança da Baileys v7: sessões podem usar @lid com número real em remoteJidAlt ou senderPn
+  const senderPn = (key as { senderPn?: string }).senderPn?.trim();
+  const candidates = [remoteJid, remoteJidAlt, senderPn].filter(
+    (item): item is string => typeof item === 'string' && item.length > 0
+  );
   for (const candidate of candidates) {
     const normalizedJid = jidNormalizedUser(candidate);
     if (normalizedJid.endsWith('@s.whatsapp.net') || normalizedJid.endsWith('@c.us')) {
@@ -207,14 +229,26 @@ export function extractNormalizedConversation(key: WAMessageKey | undefined): {
 }
 
 export function extractTextFromWAMessage(msg: WAMessage): string | null {
-  const content = msg.message;
+  let content: Record<string, any> | null | undefined = msg.message as Record<string, any> | null | undefined;
   if (!content) return null;
 
-  if (typeof content.conversation === 'string' && content.conversation.trim().length > 0) {
+  // Desembrulha mensagens temporárias (ephemeral), visualização única ou editadas
+  for (let depth = 0; depth < 3 && content; depth++) {
+    const wrapped =
+      content.ephemeralMessage?.message ??
+      content.viewOnceMessage?.message ??
+      content.viewOnceMessageV2?.message ??
+      content.viewOnceMessageV2Extension?.message ??
+      content.editedMessage?.message;
+    if (!wrapped || typeof wrapped !== 'object') break;
+    content = wrapped as Record<string, any>;
+  }
+
+  if (typeof content?.conversation === 'string' && content.conversation.trim().length > 0) {
     return content.conversation;
   }
 
-  if (typeof content.extendedTextMessage?.text === 'string' && content.extendedTextMessage.text.trim().length > 0) {
+  if (typeof content?.extendedTextMessage?.text === 'string' && content.extendedTextMessage.text.trim().length > 0) {
     return content.extendedTextMessage.text;
   }
 
@@ -246,7 +280,8 @@ export class BaileysMessageProvider implements MessageProvider {
     private readonly isAllowedPhone: (phone: string) => boolean,
     private readonly resolveReplyJid: (phone: string) => string,
     private readonly onMessageSent: (messageId: string | undefined) => void,
-    private readonly log: (entry: string) => void
+    private readonly log: (entry: string) => void,
+    private readonly hasKnownReplyJid: (phone: string) => boolean = () => false
   ) {}
 
   async send(phone: string, text: string): Promise<void> {
@@ -310,7 +345,19 @@ export class BaileysMessageProvider implements MessageProvider {
     }
 
     try {
-      const replyJid = this.resolveReplyJid(normalizedPhone);
+      let replyJid = this.resolveReplyJid(normalizedPhone);
+      if (!this.hasKnownReplyJid(normalizedPhone) && typeof socket.onWhatsApp === 'function') {
+        try {
+          const candidates = expandBrazilianPhoneVariants(normalizedPhone);
+          const lookup = await socket.onWhatsApp(...candidates);
+          const found = lookup?.find(entry => entry?.exists && entry?.jid);
+          if (found?.jid) {
+            replyJid = found.jid;
+          }
+        } catch {
+          // Mantém JID padrão caso a consulta auxiliar onWhatsApp falhe
+        }
+      }
       const sent = await socket.sendMessage(replyJid, { text });
       const sentId = sent?.key?.id ?? undefined;
       this.onMessageSent(sentId);
@@ -379,7 +426,13 @@ export class WhatsAppBaileysConnector implements ConectorWhatsAppAtivo {
       () => this.status,
       () => this.config.sendEnabled,
       (phone: string) => this.isNumberAuthorized(phone),
-      (phone: string) => this.replyJids.get(phone) ?? `${phone}@s.whatsapp.net`,
+      (phone: string) => {
+        for (const variant of expandBrazilianPhoneVariants(phone)) {
+          const known = this.replyJids.get(variant);
+          if (known) return known;
+        }
+        return `${phone}@s.whatsapp.net`;
+      },
       (sentId: string | undefined) => {
         if (sentId) {
           this.sentMessageIds.add(sentId);
@@ -389,7 +442,8 @@ export class WhatsAppBaileysConnector implements ConectorWhatsAppAtivo {
           }
         }
       },
-      this.log
+      this.log,
+      (phone: string) => expandBrazilianPhoneVariants(phone).some(variant => this.replyJids.has(variant))
     );
 
     this.simulationService =
@@ -404,7 +458,7 @@ export class WhatsAppBaileysConnector implements ConectorWhatsAppAtivo {
     const normalized = normalizePhoneDigits(phone);
     if (!normalized) return false;
     if (this.allowAnyNumber) return true;
-    return this.allowedNumbers.has(normalized);
+    return expandBrazilianPhoneVariants(normalized).some(variant => this.allowedNumbers.has(variant));
   }
 
   getStatus() {

@@ -278,6 +278,63 @@ export async function runComunicacaoTests() {
         t.id_sessao === itemBot.id_sessao && t.pendente),
       'expiração de 30 min da conversa não apaga solicitação de transbordo humano pendente'
     );
+
+    // Paciente já cadastrado que pede atendimento humano sem informar CPF:
+    // 1) aparece identificado pelo nome + próximo agendamento pendente no painel
+    // 2) autoatendimento (opção 1) continua exigindo CPF (LGPD preservada)
+    // 3) recepção consegue confirmar o atendimento direto pela tela de comunicação
+    const uuidCadastrado = randomUUID();
+    const telefoneCadastrado = '5512991914387';
+    await pool.query(
+      "INSERT INTO paciente (uuid, nome, whatsapp) VALUES (?, 'Paciente Handoff Identificado', ?)",
+      [uuidCadastrado, telefoneCadastrado]
+    );
+    const idAgendCadastrado = await criarAtendimento(uuidCadastrado);
+    await botService.process({
+      messageId: 'e2e-handoff-cadastrado-1-' + randomUUID().slice(0, 8),
+      phone: telefoneCadastrado,
+      text: '6',
+      origin: 'baileys-local'
+    });
+    const painelIdentificado = await (await fetch(url + '/comunicacoes/whatsapp/painel', { headers: { Cookie: cookieRecepcao } })).json() as any;
+    const itemIdentificado = painelIdentificado.dados.transbordos.find((t: { contato_final: string | null; pendente: boolean }) =>
+      t.contato_final === '4387' && t.pendente);
+    verificar(
+      Boolean(itemIdentificado) &&
+      itemIdentificado.paciente_uuid === uuidCadastrado &&
+      itemIdentificado.paciente_nome === 'Paciente Handoff Identificado' &&
+      itemIdentificado.proximo_agendamento?.id === idAgendCadastrado &&
+      itemIdentificado.proximo_agendamento?.status === 'Agendado',
+      'paciente já cadastrado aparece identificado com próximo agendamento ao solicitar atendimento humano sem informar CPF'
+    );
+
+    // Autoatendimento continua exigindo CPF mesmo após identificação passiva para a recepção
+    const respAutoatendimento = await botService.process({
+      messageId: 'e2e-handoff-cadastrado-lgpd-' + randomUUID().slice(0, 8),
+      phone: telefoneCadastrado,
+      text: '1',
+      origin: 'baileys-local'
+    });
+    verificar(
+      respAutoatendimento.step === 'AGUARDANDO_CPF',
+      'identificação para a recepção não libera autoatendimento sem validação de CPF'
+    );
+
+    // Confirmação direta do atendimento pela recepção atualiza status e limpa pendência de confirmação
+    const confirmacaoDireta = await fetch(url + `/agendamentos/${idAgendCadastrado}/status`, {
+      method: 'PUT',
+      headers: { Cookie: cookieRecepcao, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'Confirmado' })
+    });
+    const painelAposConfirmar = await (await fetch(url + '/comunicacoes/whatsapp/painel', { headers: { Cookie: cookieRecepcao } })).json() as any;
+    const itemPosConfirmar = painelAposConfirmar.dados.transbordos.find((t: { id_sessao: number }) =>
+      t.id_sessao === itemIdentificado.id_sessao);
+    verificar(
+      confirmacaoDireta.ok &&
+      Boolean(itemPosConfirmar) &&
+      itemPosConfirmar.proximo_agendamento === null,
+      'recepção confirma agendamento diretamente pela tela de comunicação e status atualiza no painel'
+    );
     return { pass, fail: 0 };
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));

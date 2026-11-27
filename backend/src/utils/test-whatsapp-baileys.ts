@@ -450,3 +450,48 @@ test('envio bloqueado por configuração e falha ao enviar resposta não alteram
   await failingConnector.stop();
 });
 
+test('autoriza variação do 9º dígito brasileiro (ex.: DDD 12) e lê mensagens temporárias (ephemeralMessage)', async () => {
+  const activeSocket = new MockBaileysSocket();
+  const connector = new WhatsAppBaileysConnector(
+    createTestConfig({ allowedNumbers: ['5512991914387'], sendEnabled: true }),
+    {
+      authStateFactory: async () => createFakeAuthState(true).bundle,
+      socketFactory: () => activeSocket,
+      log: () => {}
+    }
+  );
+
+  await connector.start();
+  activeSocket.emitConnectionUpdate({ connection: 'open' });
+
+  // Mensagem recebida com JID sem o 9º dígito (551291914387) e encapsulada em ephemeralMessage
+  const res = await connector.processSingleWAMessage({
+    key: {
+      id: 'msg-ddd12-ephemeral',
+      remoteJid: '551291914387@s.whatsapp.net',
+      fromMe: false
+    },
+    messageTimestamp: Math.floor(Date.now() / 1000),
+    message: {
+      ephemeralMessage: {
+        message: {
+          extendedTextMessage: { text: 'oi' }
+        }
+      }
+    }
+  } as any);
+
+  assert.ok(res);
+  assert.equal(res.intent, 'menu');
+  assert.equal(res.reply, MENU);
+  assert.equal(activeSocket.sentMessages.length, 1);
+  assert.equal(activeSocket.sentMessages[0].jid, '551291914387@s.whatsapp.net');
+
+  // Envio ativo (confirmação/lembrete) usando o número com 9º dígito do cadastro resolve para o JID real sem 9º dígito
+  const envioAtivo = await connector.enviarMensagemAtiva('5512991914387', 'Lembrete de consulta');
+  assert.equal(envioAtivo.ok, true);
+  assert.equal(activeSocket.sentMessages.length, 2);
+  assert.equal(activeSocket.sentMessages[1].jid, '551291914387@s.whatsapp.net');
+  await connector.stop();
+});
+

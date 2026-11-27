@@ -29,3 +29,31 @@ html {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+.ikigai-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(38, 43, 107, 0.45) rgba(107, 114, 128, 0.12);
+}
+
+.ikigai-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ikigai-scrollbar::-webkit-scrollbar-track {
+  background: rgba(107, 114, 128, 0.12);
+  border-radius: 9999px;
+}
+
+.ikigai-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(38, 43, 107, 0.45);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.ikigai-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(38, 43, 107, 0.75);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}

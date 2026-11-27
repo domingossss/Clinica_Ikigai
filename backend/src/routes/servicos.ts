@@ -118,18 +118,29 @@ router.get('/servicos', async (req: Request, res: Response): Promise<any> => {
   try {
     const { apenas_ativos, ativos, profissional_id } = req.query;
     const params: any[] = [];
-    let sql = `
-      SELECT s.id, s.nome, s.preco, s.duracao_minutos, COALESCE(s.ativo, 1) as ativo, c.id as categoria_id, c.nome as categoria_nome 
-      FROM servicos s 
-      JOIN categorias c ON s.categoria_id = c.id 
-    `;
+    const filtrarPorProfissional = profissional_id !== undefined && profissional_id !== '';
+    let sql = filtrarPorProfissional
+      ? `
+        SELECT s.id, s.nome,
+               COALESCE(pp.preco_profissional, s.preco) AS preco,
+               COALESCE(pp.duracao_minutos_profissional, s.duracao_minutos) AS duracao_minutos,
+               CASE WHEN COALESCE(s.ativo, 1) = 1 AND COALESCE(pp.ativo_profissional, 1) = 1 THEN 1 ELSE 0 END AS ativo,
+               c.id AS categoria_id, c.nome AS categoria_nome
+        FROM servicos s
+        JOIN categorias c ON s.categoria_id = c.id
+      `
+      : `
+        SELECT s.id, s.nome, s.preco, s.duracao_minutos, COALESCE(s.ativo, 1) AS ativo, c.id AS categoria_id, c.nome AS categoria_nome
+        FROM servicos s
+        JOIN categorias c ON s.categoria_id = c.id
+      `;
 
-    if (profissional_id !== undefined && profissional_id !== '') {
+    if (filtrarPorProfissional) {
       const profId = Number(profissional_id);
       if (!Number.isSafeInteger(profId) || profId <= 0) {
         return res.status(400).json({ sucesso: false, erro: 'Identificador de profissional inválido.' });
       }
-      if (req.usuario?.perfil === 'PROFISSIONAL' && req.usuario.profissional_id !== profId) {
+      if (req.usuario?.perfil === 'PROFISSIONAL' && Number(req.usuario.profissional_id) !== profId) {
         return res.status(403).json({ sucesso: false, erro: 'Acesso restrito aos procedimentos do próprio profissional.' });
       }
       sql += ' INNER JOIN profissional_procedimento pp ON pp.id_procedimento = s.id AND pp.id_profissional = ? ';
@@ -137,7 +148,9 @@ router.get('/servicos', async (req: Request, res: Response): Promise<any> => {
     }
 
     if (apenas_ativos === 'true' || ativos === '1') {
-      sql += ' WHERE (s.ativo = 1 OR s.ativo IS NULL)';
+      sql += filtrarPorProfissional
+        ? ' WHERE (s.ativo = 1 OR s.ativo IS NULL) AND COALESCE(pp.ativo_profissional, 1) = 1'
+        : ' WHERE (s.ativo = 1 OR s.ativo IS NULL)';
     }
 
     sql += ' ORDER BY s.nome';

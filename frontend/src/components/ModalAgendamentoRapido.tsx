@@ -249,7 +249,7 @@ function FormularioAgendamento({
         setErrorMessage('Não foi possível consultar os profissionais habilitados. Tente novamente.');
       });
     return () => controller.abort();
-  }, [servicoId, profissionais]);
+  }, [servicoId, profissionais, profissionalRestritoId]);
 
   useEffect(() => {
     if (!initialPacienteId || pacienteEscolhido) return;

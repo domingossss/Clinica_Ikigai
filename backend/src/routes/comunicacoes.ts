@@ -146,8 +146,14 @@ router.get('/whatsapp/painel', async (req: Request, res: Response, next: NextFun
       LIMIT 50
     `);
 
-    const transbordos = transbordosRows.map(row => {
-      let contexto: { contatoFinal?: string; escalonadoMotivo?: string; escalonadoEm?: string } = {};
+    const transbordosParciais = transbordosRows.map(row => {
+      let contexto: {
+        contatoFinal?: string;
+        escalonadoMotivo?: string;
+        escalonadoEm?: string;
+        pacienteIdentificadoUuid?: string;
+        pacienteIdentificadoNome?: string;
+      } = {};
       if (typeof row.contexto_json === 'string' && row.contexto_json) {
         try {
           contexto = JSON.parse(row.contexto_json);
@@ -159,6 +165,12 @@ router.get('/whatsapp/painel', async (req: Request, res: Response, next: NextFun
         (typeof row.paciente_contato_final === 'string' && row.paciente_contato_final.length > 0
           ? row.paciente_contato_final
           : contexto.contatoFinal) || null;
+      const pacienteUuid =
+        (row.paciente_uuid ? String(row.paciente_uuid) : null) ||
+        (contexto.pacienteIdentificadoUuid ? String(contexto.pacienteIdentificadoUuid) : null);
+      const pacienteNome =
+        (row.paciente_nome ? String(row.paciente_nome) : null) ||
+        (contexto.pacienteIdentificadoNome ? String(contexto.pacienteIdentificadoNome) : null);
 
       return {
         id_sessao: Number(row.id_sessao),
@@ -170,12 +182,100 @@ router.get('/whatsapp/painel', async (req: Request, res: Response, next: NextFun
         pendente: row.status_sessao === 'Em_Andamento',
         etapa: row.etapa ? String(row.etapa) : null,
         intencao_atual: row.intencao_atual ? String(row.intencao_atual) : null,
-        paciente_uuid: row.paciente_uuid ? String(row.paciente_uuid) : null,
-        paciente_nome: row.paciente_nome ? String(row.paciente_nome) : null,
+        paciente_uuid: pacienteUuid,
+        paciente_nome: pacienteNome,
         contato_final: contatoFinal,
         motivo: contexto.escalonadoMotivo || 'Solicitação de atendimento humano via WhatsApp'
       };
     });
+
+    // Fallback para sessões antigas sem paciente_uuid salvo: identifica pelo final de 4 dígitos quando houver correspondência única
+    const finaisSemPaciente = [...new Set(
+      transbordosParciais
+        .filter(t => !t.paciente_nome && t.contato_final && /^\d{4}$/.test(t.contato_final))
+        .map(t => t.contato_final as string)
+    )];
+    const mapaPorFinal = new Map<string, { uuid: string; nome: string; count: number }>();
+    if (finaisSemPaciente.length > 0) {
+      const placeholdersFinais = finaisSemPaciente.map(() => '?').join(', ');
+      const [pacsPorFinal] = await pool.query<RowDataPacket[]>(
+        `SELECT uuid, nome,
+                RIGHT(REGEXP_REPLACE(COALESCE(NULLIF(whatsapp, ''), telefone, ''), '[^0-9]', ''), 4) AS final4
+         FROM paciente
+         WHERE RIGHT(REGEXP_REPLACE(COALESCE(NULLIF(whatsapp, ''), telefone, ''), '[^0-9]', ''), 4) IN (${placeholdersFinais})`,
+        finaisSemPaciente
+      );
+      for (const pac of pacsPorFinal) {
+        const f4 = String(pac.final4 || '');
+        if (!f4) continue;
+        const atual = mapaPorFinal.get(f4);
+        if (!atual) {
+          mapaPorFinal.set(f4, { uuid: String(pac.uuid), nome: String(pac.nome), count: 1 });
+        } else {
+          atual.count += 1;
+        }
+      }
+    }
+
+    const transbordosComPaciente = transbordosParciais.map(item => {
+      if (!item.paciente_nome && item.contato_final) {
+        const match = mapaPorFinal.get(item.contato_final);
+        if (match && match.count === 1) {
+          return { ...item, paciente_uuid: match.uuid, paciente_nome: match.nome };
+        }
+      }
+      return item;
+    });
+
+    // Anexa o próximo agendamento pendente de confirmação (Agendado / Reagendado) de cada paciente identificado
+    const uuidsTransbordo = [...new Set(
+      transbordosComPaciente
+        .map(t => t.paciente_uuid)
+        .filter((u): u is string => Boolean(u))
+    )];
+    const proximoAgendamentoPorPaciente = new Map<string, {
+      id: number;
+      ocorrencia: string;
+      status: string;
+      procedimento: string | null;
+      profissional: string | null;
+    }>();
+    if (uuidsTransbordo.length > 0) {
+      const placeholdersUuids = uuidsTransbordo.map(() => '?').join(', ');
+      const [proxRows] = await pool.query<RowDataPacket[]>(
+        `SELECT a.id_agendamento AS id,
+                a.paciente_uuid,
+                DATE_FORMAT(a.data_hora_agendamento, '%Y-%m-%d %H:%i:%s') AS ocorrencia,
+                a.status,
+                s.nome AS procedimento,
+                pr.nome AS profissional
+         FROM agendamento a
+         LEFT JOIN procedimento s ON s.id_procedimento = a.id_procedimento
+         LEFT JOIN profissional pr ON pr.id_profissional = a.id_profissional
+         WHERE a.paciente_uuid IN (${placeholdersUuids})
+           AND a.status IN ('Agendado', 'Reagendado')
+           AND a.data >= CURDATE()
+         ORDER BY a.data_hora_agendamento ASC, a.id_agendamento ASC`,
+        uuidsTransbordo
+      );
+      for (const row of proxRows) {
+        const u = String(row.paciente_uuid || '');
+        if (u && !proximoAgendamentoPorPaciente.has(u)) {
+          proximoAgendamentoPorPaciente.set(u, {
+            id: Number(row.id),
+            ocorrencia: String(row.ocorrencia),
+            status: String(row.status),
+            procedimento: row.procedimento ? String(row.procedimento) : null,
+            profissional: row.profissional ? String(row.profissional) : null,
+          });
+        }
+      }
+    }
+
+    const transbordos = transbordosComPaciente.map(item => ({
+      ...item,
+      proximo_agendamento: item.paciente_uuid ? (proximoAgendamentoPorPaciente.get(item.paciente_uuid) ?? null) : null,
+    }));
 
     const [agendamentosEscalonados] = await pool.query<RowDataPacket[]>(`
       SELECT a.id_agendamento AS id,
@@ -264,6 +364,7 @@ router.get('/whatsapp/painel', async (req: Request, res: Response, next: NextFun
       ? Number((avaliacoesRecentes.reduce((acc, item) => acc + Number(item.nota_nps), 0) / avaliacoesRecentes.length).toFixed(1))
       : null;
 
+    res.set('Cache-Control', 'no-store');
     res.json({
       sucesso: true,
       dados: {
