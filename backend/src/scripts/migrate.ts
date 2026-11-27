@@ -24,6 +24,7 @@ const versaoCheckin = '2026-11-23-validacao-checkin-recepcao';
 const versaoProntuarioELogin = '2026-11-24-prontuario-consulta-e-login-usuario';
 const versaoWhatsAppEtapa2 = '2026-11-24-whatsapp-etapa-2';
 const versaoAuditoriaHardening = '2026-11-24-auditoria-hardening-e-procedimentos-profissional';
+const versaoRemocaoViews = '2026-11-27-remocao-views-compatibilidade';
 const trava = createHash('sha256').update(`ikigai:migracao:${esquema}`).digest('hex');
 
 async function colunas(tabela: string) {
@@ -168,6 +169,11 @@ try {
     const idxSess = await indicesExistentes('sessao_chatbot');
     if (!idxSess.has('idx_sessao_escalonado')) {
       await conexao.query('CREATE INDEX idx_sessao_escalonado ON sessao_chatbot (escalonado_humano)');
+    }
+  });
+  await aplicarVersao(versaoRemocaoViews, async () => {
+    for (const view of ['agendamentos', 'bloqueios', 'categorias', 'pacientes', 'profissionais', 'servicos']) {
+      await conexao.query(`DROP VIEW IF EXISTS ${view}`);
     }
   });
   console.log('Estrutura atualizada. Dados existentes preservados.');

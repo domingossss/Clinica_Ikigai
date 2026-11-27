@@ -77,7 +77,7 @@ O banco padrão é `clinica_ikigai_db`, com codificação `utf8mb4`. O modelo co
 | `avaliacao_atendimento` e `pagamento` | Avaliações pós-atendimento (NPS 0 a 10) e registros financeiros previstos no modelo. |
 | `revisao_clinica` | Controle de revisão usado para sincronizar atualizações em tempo real. |
 
-As views `pacientes`, `profissionais`, `servicos`, `categorias`, `agendamentos` e `bloqueios` adaptam os nomes consumidos pela API. A tabela legada `capacidade_diaria` permanece no schema por compatibilidade; o cálculo atual da ocupação utiliza `agenda_capacidade_snapshot`. O script de migração registra cada etapa concluída em `schema_migrations`.
+Todas as consultas da API acessam diretamente as tabelas físicas no singular (`paciente`, `profissional`, `procedimento`, `especialidade`, `agendamento` e `bloqueio_agenda`), sem views intermediárias. A tabela legada `capacidade_diaria` permanece no schema por compatibilidade; o cálculo atual da ocupação utiliza `agenda_capacidade_snapshot`. O script de migração registra cada etapa concluída em `schema_migrations`.
 
 ### Regras de integridade
 

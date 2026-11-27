@@ -14,14 +14,14 @@ router.get('/profissionais', async (req: Request, res: Response): Promise<any> =
 
     if (procId) {
       const [rows] = await pool.query(`
-        SELECT p.id, p.nome, p.especialidade, p.ativo,
+        SELECT p.id_profissional AS id, p.nome, COALESCE(p.especialidade_principal, 'Especialista') AS especialidade, p.ativo,
                COALESCE(pp.duracao_minutos_profissional, pr.duracao_minutos) AS duracao_minutos,
                COALESCE(pp.preco_profissional, pr.preco) AS preco
-        FROM profissionais p
-        INNER JOIN profissional_procedimento pp ON p.id = pp.id_profissional
+        FROM profissional p
+        INNER JOIN profissional_procedimento pp ON p.id_profissional = pp.id_profissional
         INNER JOIN procedimento pr ON pr.id_procedimento = pp.id_procedimento
         WHERE pp.id_procedimento = ? AND p.ativo = 1 AND pp.ativo_profissional = 1 AND pr.ativo = 1
-        ORDER BY p.id ASC
+        ORDER BY p.id_profissional ASC
       `, [procId]);
       return res.status(200).json({ sucesso: true, dados: rows });
     }
@@ -30,9 +30,9 @@ router.get('/profissionais', async (req: Request, res: Response): Promise<any> =
       if (req.usuario?.perfil !== 'ADMIN') return res.status(403).json({ sucesso: false, erro: 'Acesso restrito.' });
       const [linhas] = await pool.query<(RowDataPacket & {
         id: number; nome: string; especialidade: string | null; ativo: number; id_procedimento: number | null;
-      })[]>(`SELECT p.id, p.nome, p.especialidade, p.ativo, pp.id_procedimento
-        FROM profissionais p LEFT JOIN profissional_procedimento pp ON pp.id_profissional = p.id
-        ORDER BY p.id, pp.id_procedimento`);
+      })[]>(`SELECT p.id_profissional AS id, p.nome, COALESCE(p.especialidade_principal, 'Especialista') AS especialidade, p.ativo, pp.id_procedimento
+        FROM profissional p LEFT JOIN profissional_procedimento pp ON pp.id_profissional = p.id_profissional
+        ORDER BY p.id_profissional, pp.id_procedimento`);
       const profissionais = new Map<number, { id: number; nome: string; especialidade: string | null; ativo: number; procedimento_ids: number[] }>();
       for (const { id, nome, especialidade, ativo, id_procedimento } of linhas) {
         const profissional = profissionais.get(id) ?? { id, nome, especialidade, ativo, procedimento_ids: [] };
@@ -42,7 +42,7 @@ router.get('/profissionais', async (req: Request, res: Response): Promise<any> =
       return res.json({ sucesso: true, dados: [...profissionais.values()] });
     }
 
-    const [rows] = await pool.query('SELECT id, nome, especialidade, ativo FROM profissionais ORDER BY id ASC');
+    const [rows] = await pool.query("SELECT id_profissional AS id, nome, COALESCE(especialidade_principal, 'Especialista') AS especialidade, ativo FROM profissional ORDER BY id_profissional ASC");
     return res.status(200).json({ sucesso: true, dados: rows });
   } catch (error: any) {
     if (error instanceof ErroOperacao) return responderFalha(res, error);
@@ -195,7 +195,7 @@ router.delete('/profissionais/:id', async (req: Request, res: Response): Promise
 
     // Verificar se existem agendamentos vinculados a este profissional
     const [agendamentos]: any = await pool.query(
-      'SELECT COUNT(*) as total FROM agendamentos WHERE profissional_id = ?',
+      'SELECT COUNT(*) as total FROM agendamento WHERE id_profissional = ?',
       [id]
     );
 
@@ -206,7 +206,7 @@ router.delete('/profissionais/:id', async (req: Request, res: Response): Promise
       });
     }
 
-    const [result]: any = await pool.query('DELETE FROM profissionais WHERE id = ?', [id]);
+    const [result]: any = await pool.query('DELETE FROM profissional WHERE id_profissional = ?', [id]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Profissional não encontrado.' });
@@ -275,7 +275,7 @@ router.get('/profissionais/:id/procedimentos', async (req: Request, res: Respons
     validarEscopoProfissional(req, id);
 
     // Verificar se o profissional existe
-    const [profs]: any = await pool.query('SELECT id, nome, especialidade FROM profissionais WHERE id = ?', [id]);
+    const [profs]: any = await pool.query("SELECT id_profissional AS id, nome, COALESCE(especialidade_principal, 'Especialista') AS especialidade FROM profissional WHERE id_profissional = ?", [id]);
     if (profs.length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Profissional não encontrado.' });
     }
@@ -586,14 +586,14 @@ const handleProfissionaisPorServico = async (req: Request, res: Response): Promi
 
     const [rows]: any = await pool.query(`
       SELECT 
-        p.id, 
+        p.id_profissional AS id, 
         p.nome, 
-        p.especialidade, 
+        COALESCE(p.especialidade_principal, 'Especialista') AS especialidade, 
         p.ativo,
         COALESCE(pp.duracao_minutos_profissional, pr.duracao_minutos) AS duracao_minutos,
         COALESCE(pp.preco_profissional, pr.preco) AS preco
-      FROM profissionais p
-      INNER JOIN profissional_procedimento pp ON p.id = pp.id_profissional
+      FROM profissional p
+      INNER JOIN profissional_procedimento pp ON p.id_profissional = pp.id_profissional
       INNER JOIN procedimento pr ON pr.id_procedimento = pp.id_procedimento
       WHERE pp.id_procedimento = ? AND p.ativo = 1 AND pp.ativo_profissional = 1 AND pr.ativo = 1
       ORDER BY p.nome ASC

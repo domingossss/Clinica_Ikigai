@@ -20,7 +20,7 @@ export async function runInativarProcedimentoTests() {
 
   try {
     // Preparação: Criar um procedimento temporário de teste
-    const [catRows]: any = await pool.query('SELECT id FROM categorias LIMIT 1');
+    const [catRows]: any = await pool.query('SELECT id_especialidade AS id FROM especialidade LIMIT 1');
     const catId = catRows[0]?.id || 1;
 
     const [insertResult]: any = await pool.query(
@@ -30,7 +30,7 @@ export async function runInativarProcedimentoTests() {
     const procId = insertResult.insertId;
 
     // Criar um agendamento com esse procedimento para testar preservação de histórico
-    const [profRows]: any = await pool.query('SELECT id FROM profissionais LIMIT 1');
+    const [profRows]: any = await pool.query('SELECT id_profissional AS id FROM profissional LIMIT 1');
     const profId = profRows[0]?.id || 1;
     const [pacRows]: any = await pool.query('SELECT id_paciente, uuid FROM paciente LIMIT 1');
     const pacId = pacRows[0]?.id_paciente || 1;
@@ -61,13 +61,13 @@ export async function runInativarProcedimentoTests() {
       'CA03: Agendamentos e históricos existentes continuam referenciando corretamente o procedimento inativado'
     );
 
-    // --- TESTE 3: View servicos e filtro de ativos excluem o inativo ---
-    const [servAtivos]: any = await pool.query('SELECT id FROM servicos WHERE (ativo = 1 OR ativo IS NULL) AND id = ?', [procId]);
+    // --- TESTE 3: Filtro de ativos na tabela procedimento exclui o inativo ---
+    const [servAtivos]: any = await pool.query('SELECT id_procedimento AS id FROM procedimento WHERE (ativo = 1 OR ativo IS NULL) AND id_procedimento = ?', [procId]);
     assert(servAtivos.length === 0, 'CA02: Procedimento inativo não aparece na lista de procedimentos disponíveis');
 
     // --- TESTE 4: Reativação do procedimento funciona perfeitamente ---
     await pool.query('UPDATE procedimento SET ativo = 1 WHERE id_procedimento = ?', [procId]);
-    const [servReativado]: any = await pool.query('SELECT id, ativo FROM servicos WHERE id = ?', [procId]);
+    const [servReativado]: any = await pool.query('SELECT id_procedimento AS id, ativo FROM procedimento WHERE id_procedimento = ?', [procId]);
     assert(servReativado.length === 1 && servReativado[0].ativo === 1, 'CA01: Reativação do procedimento restaura status ativo com sucesso');
 
     // Limpeza dos dados temporários de teste

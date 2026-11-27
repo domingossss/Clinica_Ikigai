@@ -101,7 +101,7 @@ export async function runAgendaProfissionalTests(): Promise<{ total: number; pas
     console.log('\n--- SUÍTE 2: CA01 — Seleção do Profissional ---');
 
     // 1. Obter um profissional ativo cadastrado
-    const [profs]: any = await pool.query('SELECT id, nome, especialidade FROM profissionais WHERE ativo = 1 LIMIT 1');
+    const [profs]: any = await pool.query("SELECT id_profissional AS id, nome, COALESCE(especialidade_principal, 'Especialista') AS especialidade FROM profissional WHERE ativo = 1 LIMIT 1");
     const profTeste = profs && profs.length > 0
       ? profs[0]
       : { id: 1, nome: 'Dr. Ulisses Higo', especialidade: 'Terapeuta Ortomolecular' };
@@ -143,8 +143,8 @@ export async function runAgendaProfissionalTests(): Promise<{ total: number; pas
 
     // Inserir agendamento controlado para teste
     const dataTesteA = '2026-09-21'; // Segunda-feira
-    const [pacientes]: any = await pool.query('SELECT id, nome_completo, whatsapp FROM pacientes LIMIT 1');
-    const [servicos]: any = await pool.query('SELECT id, nome, duracao_minutos FROM servicos LIMIT 1');
+    const [pacientes]: any = await pool.query('SELECT uuid AS id, nome AS nome_completo, whatsapp FROM paciente LIMIT 1');
+    const [servicos]: any = await pool.query('SELECT id_procedimento AS id, nome, duracao_minutos FROM procedimento LIMIT 1');
 
     if (pacientes.length > 0 && servicos.length > 0) {
       const pacId = pacientes[0].id;
@@ -152,31 +152,31 @@ export async function runAgendaProfissionalTests(): Promise<{ total: number; pas
 
       // Limpar possíveis dados de teste anteriores na data
       await pool.query(
-        'DELETE FROM agendamentos WHERE profissional_id = ? AND data = ?',
+        'DELETE FROM agendamento WHERE id_profissional = ? AND data = ?',
         [profTeste.id, dataTesteA]
       );
 
       // Inserir agendamento 1: 09:00 às 10:15
       await pool.query(
-        `INSERT INTO agendamentos (paciente_id, profissional_id, servico_id, data, horario_inicio, horario_fim, status)
+        `INSERT INTO agendamento (paciente_uuid, id_profissional, id_procedimento, data, horario_inicio, horario_fim, status)
          VALUES (?, ?, ?, ?, '09:00:00', '10:15:00', 'Confirmado')`,
         [pacId, profTeste.id, servId, dataTesteA]
       );
 
       // Inserir agendamento 2: 14:00 às 15:15
       await pool.query(
-        `INSERT INTO agendamentos (paciente_id, profissional_id, servico_id, data, horario_inicio, horario_fim, status)
+        `INSERT INTO agendamento (paciente_uuid, id_profissional, id_procedimento, data, horario_inicio, horario_fim, status)
          VALUES (?, ?, ?, ?, '14:00:00', '15:15:00', 'Agendado')`,
         [pacId, profTeste.id, servId, dataTesteA]
       );
 
       // Inserir bloqueio controlado na data: 12:00 às 13:00
       await pool.query(
-        'DELETE FROM bloqueios WHERE profissional_id = ? AND data = ?',
+        'DELETE FROM bloqueio_agenda WHERE id_profissional = ? AND data = ?',
         [profTeste.id, dataTesteA]
       );
       await pool.query(
-        `INSERT INTO bloqueios (profissional_id, data, horario_inicio, horario_fim, motivo)
+        `INSERT INTO bloqueio_agenda (id_profissional, data, horario_inicio, horario_fim, motivo)
          VALUES (?, ?, '12:00:00', '13:00:00', 'Almoço Técnico')`,
         [profTeste.id, dataTesteA]
       );
@@ -211,8 +211,8 @@ export async function runAgendaProfissionalTests(): Promise<{ total: number; pas
       );
 
       // Cleanup
-      await pool.query('DELETE FROM agendamentos WHERE profissional_id = ? AND data = ?', [profTeste.id, dataTesteA]);
-      await pool.query('DELETE FROM bloqueios WHERE profissional_id = ? AND data = ?', [profTeste.id, dataTesteA]);
+      await pool.query('DELETE FROM agendamento WHERE id_profissional = ? AND data = ?', [profTeste.id, dataTesteA]);
+      await pool.query('DELETE FROM bloqueio_agenda WHERE id_profissional = ? AND data = ?', [profTeste.id, dataTesteA]);
     }
 
     // -------------------------------------------------------------------------
@@ -231,14 +231,14 @@ export async function runAgendaProfissionalTests(): Promise<{ total: number; pas
 
       // Inserir compromisso no período A (Terça)
       await pool.query(
-        `INSERT INTO agendamentos (paciente_id, profissional_id, servico_id, data, horario_inicio, horario_fim, status)
+        `INSERT INTO agendamento (paciente_uuid, id_profissional, id_procedimento, data, horario_inicio, horario_fim, status)
          VALUES (?, ?, ?, ?, '10:00:00', '11:00:00', 'Confirmado')`,
         [pacId, profTeste.id, servId, dataPeriodoA]
       );
 
       // Inserir compromisso no período B (Quarta)
       await pool.query(
-        `INSERT INTO agendamentos (paciente_id, profissional_id, servico_id, data, horario_inicio, horario_fim, status)
+        `INSERT INTO agendamento (paciente_uuid, id_profissional, id_procedimento, data, horario_inicio, horario_fim, status)
          VALUES (?, ?, ?, ?, '15:00:00', '16:00:00', 'Confirmado')`,
         [pacId, profTeste.id, servId, dataPeriodoB]
       );
@@ -277,7 +277,7 @@ export async function runAgendaProfissionalTests(): Promise<{ total: number; pas
       );
 
       // Cleanup
-      await pool.query('DELETE FROM agendamentos WHERE profissional_id = ? AND data IN (?, ?)', [profTeste.id, dataPeriodoA, dataPeriodoB]);
+      await pool.query('DELETE FROM agendamento WHERE id_profissional = ? AND data IN (?, ?)', [profTeste.id, dataPeriodoA, dataPeriodoB]);
     }
 
     // -------------------------------------------------------------------------

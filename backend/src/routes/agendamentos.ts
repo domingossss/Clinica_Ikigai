@@ -23,7 +23,7 @@ import {
 } from '../middleware/security.js';
 
 const statusComChegada = ['Na Recepção', 'Em Atendimento', 'Concluído', 'Realizado'];
-const chegadaPendente = `(original.checkin_recepcao = 0 AND ${reservaExcepcionalNaOcorrencia('original')})`;
+const chegadaPendente = `(a.checkin_recepcao = 0 AND ${reservaExcepcionalNaOcorrencia('a')})`;
 
 function visualizaDetalhesAgenda(req: Request, profissionalId: number): boolean {
   return req.usuario?.perfil !== 'PROFISSIONAL' || req.usuario.profissional_id === Number(profissionalId);
@@ -243,7 +243,7 @@ router.get('/profissionais/:id/agenda', async (req: Request, res: Response): Pro
   try {
     // 1. Verificar se o profissional existe (CA01)
     const [profs]: any = await pool.query(
-      'SELECT id, nome, especialidade, ativo FROM profissionais WHERE id = ?',
+      "SELECT id_profissional AS id, nome, COALESCE(especialidade_principal, 'Especialista') AS especialidade, ativo FROM profissional WHERE id_profissional = ?",
       [profId]
     );
 
@@ -256,27 +256,26 @@ router.get('/profissionais/:id/agenda', async (req: Request, res: Response): Pro
     // 2. Buscar agendamentos do profissional no período (CA02)
     const [agendamentos]: any = await pool.query(
       `SELECT 
-         a.id,
+         a.id_agendamento AS id,
          DATE_FORMAT(a.data, '%Y-%m-%d') as data,
          TIME_FORMAT(a.horario_inicio, '%H:%i') as horario_inicio,
          TIME_FORMAT(a.horario_fim, '%H:%i') as horario_fim,
          a.status,
          ${chegadaPendente} AS exige_validacao_chegada,
-         p.id as paciente_id,
-         p.nome_completo as paciente_nome,
+         p.uuid as paciente_id,
+         p.nome as paciente_nome,
          ${req.usuario?.perfil === 'PROFISSIONAL' ? 'NULL' : 'p.whatsapp'} as paciente_whatsapp,
-         pr.id as profissional_id,
+         pr.id_profissional as profissional_id,
          pr.nome as profissional_nome,
-         s.id as servico_id,
+         s.id_procedimento as servico_id,
          s.nome as servico_nome,
          s.duracao_minutos,
          s.preco
-       FROM agendamentos a
-       JOIN agendamento original ON original.id_agendamento = a.id
-       JOIN pacientes p ON a.paciente_id = p.id
-       JOIN profissionais pr ON a.profissional_id = pr.id
-       JOIN servicos s ON a.servico_id = s.id
-       WHERE a.profissional_id = ?
+       FROM agendamento a
+       JOIN paciente p ON a.paciente_uuid = p.uuid
+       JOIN profissional pr ON a.id_profissional = pr.id_profissional
+       JOIN procedimento s ON a.id_procedimento = s.id_procedimento
+       WHERE a.id_profissional = ?
          AND a.data >= ?
          AND a.data <= ?
          AND a.status != 'Cancelado'
@@ -289,14 +288,14 @@ router.get('/profissionais/:id/agenda', async (req: Request, res: Response): Pro
     try {
       const [blRows]: any = await pool.query(
         `SELECT 
-           id,
-           profissional_id,
+           id_bloqueio AS id,
+           id_profissional AS profissional_id,
            DATE_FORMAT(data, '%Y-%m-%d') as data,
            TIME_FORMAT(horario_inicio, '%H:%i') as horario_inicio,
            TIME_FORMAT(horario_fim, '%H:%i') as horario_fim,
            motivo
-         FROM bloqueios
-         WHERE profissional_id = ?
+         FROM bloqueio_agenda
+         WHERE id_profissional = ?
            AND data >= ?
            AND data <= ?
          ORDER BY data ASC, horario_inicio ASC`,
@@ -355,34 +354,33 @@ router.get('/agendamentos/dia', async (req: Request, res: Response): Promise<any
 
     let queryAg = `
       SELECT 
-         a.id,
+         a.id_agendamento AS id,
          DATE_FORMAT(a.data, '%Y-%m-%d') as data,
          TIME_FORMAT(a.horario_inicio, '%H:%i') as horario_inicio,
          TIME_FORMAT(a.horario_fim, '%H:%i') as horario_fim,
          a.status,
          ${chegadaPendente} AS exige_validacao_chegada,
-         p.id as paciente_id,
-         p.nome_completo as paciente_nome,
+         p.uuid as paciente_id,
+         p.nome as paciente_nome,
          ${req.usuario?.perfil === 'PROFISSIONAL' ? 'NULL' : 'p.whatsapp'} as paciente_whatsapp,
-         pr.id as profissional_id,
+         pr.id_profissional as profissional_id,
          pr.nome as profissional_nome,
          s.nome as servico_nome,
          s.duracao_minutos
-       FROM agendamentos a
-       JOIN agendamento original ON original.id_agendamento = a.id
-       JOIN pacientes p ON a.paciente_id = p.id
-       JOIN profissionais pr ON a.profissional_id = pr.id
-       JOIN servicos s ON a.servico_id = s.id
+       FROM agendamento a
+       JOIN paciente p ON a.paciente_uuid = p.uuid
+       JOIN profissional pr ON a.id_profissional = pr.id_profissional
+       JOIN procedimento s ON a.id_procedimento = s.id_procedimento
        WHERE a.data = ? AND a.status != 'Cancelado'
     `;
     const paramsAg: any[] = [data as string];
 
     if (profissional_id) {
-      queryAg += ` AND a.profissional_id = ?`;
+      queryAg += ` AND a.id_profissional = ?`;
       paramsAg.push(Number(profissional_id));
     }
 
-    queryAg += ` ORDER BY pr.id, a.horario_inicio`;
+    queryAg += ` ORDER BY pr.id_profissional, a.horario_inicio`;
 
     const [rows] = await pool.query<any[]>(queryAg, paramsAg);
 
@@ -391,21 +389,21 @@ router.get('/agendamentos/dia', async (req: Request, res: Response): Promise<any
     try {
       let queryBl = `
         SELECT 
-           id,
-           profissional_id,
+           id_bloqueio AS id,
+           id_profissional AS profissional_id,
            DATE_FORMAT(data, '%Y-%m-%d') as data,
            TIME_FORMAT(horario_inicio, '%H:%i') as horario_inicio,
            TIME_FORMAT(horario_fim, '%H:%i') as horario_fim,
            motivo
-         FROM bloqueios
+         FROM bloqueio_agenda
          WHERE data = ?
       `;
       const paramsBl: any[] = [data as string];
       if (profissional_id) {
-        queryBl += ` AND profissional_id = ?`;
+        queryBl += ` AND id_profissional = ?`;
         paramsBl.push(Number(profissional_id));
       }
-      queryBl += ` ORDER BY profissional_id, horario_inicio`;
+      queryBl += ` ORDER BY id_profissional, horario_inicio`;
 
       const [blRows] = await pool.query(queryBl, paramsBl);
       bloqueios = blRows as any[];
@@ -601,16 +599,16 @@ router.get('/bloqueios', async (req: Request, res: Response): Promise<any> => {
 
     let sql = `
       SELECT 
-        b.id,
-        b.profissional_id,
+        b.id_bloqueio AS id,
+        b.id_profissional AS profissional_id,
         pr.nome as profissional_nome,
         DATE_FORMAT(b.data, '%Y-%m-%d') as data,
         TIME_FORMAT(b.horario_inicio, '%H:%i') as horario_inicio,
         TIME_FORMAT(b.horario_fim, '%H:%i') as horario_fim,
         b.motivo,
         b.criado_em
-      FROM bloqueios b
-      JOIN profissionais pr ON b.profissional_id = pr.id
+      FROM bloqueio_agenda b
+      JOIN profissional pr ON b.id_profissional = pr.id_profissional
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -620,7 +618,7 @@ router.get('/bloqueios', async (req: Request, res: Response): Promise<any> => {
       params.push(data);
     }
     if (profissional_id) {
-      sql += ' AND b.profissional_id = ?';
+      sql += ' AND b.id_profissional = ?';
       params.push(profissional_id);
     }
 

@@ -226,7 +226,7 @@ router.post('/pacientes', async (req: Request, res: Response): Promise<any> => {
     }
 
     // Validar CPF único
-    const [existing] = await pool.query('SELECT id FROM pacientes WHERE cpf = ?', [cleanCpf]);
+    const [existing] = await pool.query('SELECT uuid AS id FROM paciente WHERE cpf = ?', [cleanCpf]);
     if ((existing as any[]).length > 0) {
       return res.status(400).json({
         sucesso: false,
@@ -243,7 +243,7 @@ router.post('/pacientes', async (req: Request, res: Response): Promise<any> => {
 
     // Salvar paciente no MySQL (mapeando whatsapp para o telefone limpo)
     await pool.query(
-      `INSERT INTO pacientes (id, nome_completo, cpf, telefone, whatsapp, endereco) 
+      `INSERT INTO paciente (uuid, nome, cpf, telefone, whatsapp, endereco) 
        VALUES (?, ?, ?, ?, ?, ?)`,
       [id, nomeSanitizado, cleanCpf, cleanTelefone, cleanTelefone, enderecoSanitizado]
     );
@@ -299,13 +299,13 @@ router.post('/pacientes/rapido', async (req: Request, res: Response): Promise<an
     const finalCpf = cpf ? cpf.replace(/\D/g, '') : null;
     if (finalCpf !== null && !validarCPF(finalCpf)) return res.status(400).json({ sucesso:false, erro:'CPF inválido.' });
     if (finalCpf) {
-      const [duplicados] = await pool.query<any[]>('SELECT id FROM pacientes WHERE cpf = ?', [finalCpf]);
+      const [duplicados] = await pool.query<any[]>('SELECT uuid AS id FROM paciente WHERE cpf = ?', [finalCpf]);
       if (duplicados.length) return res.status(409).json({ sucesso:false, erro:'CPF já cadastrado. Selecione o paciente existente.' });
     }
     const id = randomUUID();
 
     await pool.query(
-      `INSERT INTO pacientes (id, nome_completo, cpf, telefone, whatsapp, endereco, etapa_tratamento, atendimento_status) 
+      `INSERT INTO paciente (uuid, nome, cpf, telefone, whatsapp, endereco, etapa_tratamento, atendimento_status) 
        VALUES (?, ?, ?, ?, ?, ?, 'Avaliação', 'Humano')`,
       [
         id, 
@@ -426,7 +426,7 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
     }
 
     // Verificar se o novo CPF já está cadastrado em outro paciente
-    const [dupCpf] = await pool.query('SELECT id FROM pacientes WHERE cpf = ? AND id != ?', [cleanCpf, pacienteUuid]);
+    const [dupCpf] = await pool.query('SELECT uuid AS id FROM paciente WHERE cpf = ? AND uuid != ?', [cleanCpf, pacienteUuid]);
     if ((dupCpf as any[]).length > 0) {
       return res.status(400).json({ sucesso: false, erro: 'Este CPF já está cadastrado em outro paciente.' });
     }
@@ -437,11 +437,11 @@ router.put('/pacientes/:id', async (req: Request, res: Response): Promise<any> =
 
     // Compare e grave na mesma instrução para não perder edições concorrentes.
     const atualizado = await gravarEdicaoPaciente(req, pacienteAtual, posterior,
-      `UPDATE pacientes 
-       SET versao = versao + 1, nome_completo = ?, cpf = ?, telefone = ?, whatsapp = ?, endereco = ?, 
+      `UPDATE paciente 
+       SET versao = versao + 1, nome = ?, cpf = ?, telefone = ?, whatsapp = ?, endereco = ?, 
            etapa_tratamento = ?, historico_clinico = ?, observacoes = ?,
            atendimento_status = COALESCE(?, atendimento_status)
-       WHERE id = ? AND versao = ?`,
+       WHERE uuid = ? AND versao = ?`,
       [
         nomeSanitizado,
         cleanCpf,

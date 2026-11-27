@@ -24,7 +24,7 @@ export async function runExpedienteExcecoesTests() {
 
   try {
     // Obter um profissional de teste
-    const [profRows]: any = await pool.query('SELECT id FROM profissionais LIMIT 1');
+    const [profRows]: any = await pool.query('SELECT id_profissional AS id FROM profissional LIMIT 1');
     const profId = profRows[0]?.id || 1;
 
     // --- TESTE IK-14 / CA04: Validações de Horários Inválidos ou Sobrepostos ---

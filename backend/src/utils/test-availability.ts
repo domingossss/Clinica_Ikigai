@@ -32,7 +32,7 @@ async function runAvailabilityTests() {
     // 1. Limpar agendamentos de teste
     console.log(`[Setup] Limpando agendamentos do dia ${testDate}...`);
     await pool.query(
-      'DELETE FROM agendamentos WHERE data = ? AND profissional_id = ?',
+      'DELETE FROM agendamento WHERE data = ? AND id_profissional = ?',
       [testDate, profissionalId]
     );
 
@@ -42,7 +42,7 @@ async function runAvailabilityTests() {
       const horaFim = '18:00:00';
 
       const [agendamentos] = await pool.query(
-        'SELECT horario_inicio, horario_fim FROM agendamentos WHERE profissional_id = ? AND data = ? AND status != "Cancelado"',
+        'SELECT horario_inicio, horario_fim FROM agendamento WHERE id_profissional = ? AND data = ? AND status != "Cancelado"',
         [profissionalId, testDate]
       );
 
@@ -94,7 +94,7 @@ async function runAvailabilityTests() {
     const horarioFim = '15:15:00'; // 14:00 + 60 min + 15 min buffer
     
     await pool.query(
-      `INSERT INTO agendamentos (paciente_id, profissional_id, servico_id, data, horario_inicio, horario_fim, status) 
+      `INSERT INTO agendamento (paciente_uuid, id_profissional, id_procedimento, data, horario_inicio, horario_fim, status) 
        VALUES (?, ?, ?, ?, ?, ?, 'Agendado')`,
       [pacienteId, profissionalId, servicoCurtoId, testDate, horarioInicio, horarioFim]
     );
@@ -163,7 +163,7 @@ async function runAvailabilityTests() {
     
     // Limpar após o teste
     await pool.query(
-      'DELETE FROM agendamentos WHERE data = ? AND profissional_id = ?',
+      'DELETE FROM agendamento WHERE data = ? AND id_profissional = ?',
       [testDate, profissionalId]
     );
     process.exit(0);

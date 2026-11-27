@@ -4,7 +4,7 @@ import { sanitizarTexto, validarIdNumerico, registrarErro } from '../middleware/
 const router = Router();
 router.get('/categorias', async (_req: Request, res: Response): Promise<any> => {
   try {
-    const [rows] = await pool.query('SELECT id, nome FROM categorias ORDER BY nome');
+    const [rows] = await pool.query('SELECT id_especialidade AS id, nome FROM especialidade ORDER BY nome');
     return res.status(200).json({ sucesso: true, dados: rows });
   } catch (error: any) {
     if (error instanceof ErroOperacao) return res.status(error.status).json({sucesso:false,erro:error.message});
@@ -30,7 +30,7 @@ router.post('/categorias', async (req: Request, res: Response): Promise<any> => 
       return res.status(400).json({ sucesso: false, erro: 'Nome da categoria contém caracteres inválidos.' });
     }
 
-    const [result] = await pool.query('INSERT INTO categorias (nome) VALUES (?)', [nomeSanitizado]);
+    const [result] = await pool.query('INSERT INTO especialidade (nome) VALUES (?)', [nomeSanitizado]);
     return res.status(201).json({
       sucesso: true,
       mensagem: 'Categoria criada com sucesso!',
@@ -62,12 +62,12 @@ router.put('/categorias/:id', async (req: Request, res: Response): Promise<any> 
       return res.status(400).json({ sucesso: false, erro: 'Nome da categoria contém caracteres inválidos.' });
     }
 
-    const [existente] = await pool.query('SELECT id FROM categorias WHERE id = ?', [id]);
+    const [existente] = await pool.query('SELECT id_especialidade AS id FROM especialidade WHERE id_especialidade = ?', [id]);
     if ((existente as any[]).length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Categoria não encontrada.' });
     }
 
-    await pool.query('UPDATE categorias SET nome = ? WHERE id = ?', [nomeSanitizado, id]);
+    await pool.query('UPDATE especialidade SET nome = ? WHERE id_especialidade = ?', [nomeSanitizado, id]);
 
     return res.status(200).json({
       sucesso: true,
@@ -90,12 +90,12 @@ router.delete('/categorias/:id', async (req: Request, res: Response): Promise<an
   try {
     const { id } = req.params;
 
-    const [existente] = await pool.query('SELECT id, nome FROM categorias WHERE id = ?', [id]);
+    const [existente] = await pool.query('SELECT id_especialidade AS id, nome FROM especialidade WHERE id_especialidade = ?', [id]);
     if ((existente as any[]).length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Categoria não encontrada.' });
     }
 
-    await pool.query('DELETE FROM categorias WHERE id = ?', [id]);
+    await pool.query('DELETE FROM especialidade WHERE id_especialidade = ?', [id]);
 
     return res.status(200).json({
       sucesso: true,
@@ -121,18 +121,18 @@ router.get('/servicos', async (req: Request, res: Response): Promise<any> => {
     const filtrarPorProfissional = profissional_id !== undefined && profissional_id !== '';
     let sql = filtrarPorProfissional
       ? `
-        SELECT s.id, s.nome,
+        SELECT s.id_procedimento AS id, s.nome,
                COALESCE(pp.preco_profissional, s.preco) AS preco,
                COALESCE(pp.duracao_minutos_profissional, s.duracao_minutos) AS duracao_minutos,
                CASE WHEN COALESCE(s.ativo, 1) = 1 AND COALESCE(pp.ativo_profissional, 1) = 1 THEN 1 ELSE 0 END AS ativo,
-               c.id AS categoria_id, c.nome AS categoria_nome
-        FROM servicos s
-        JOIN categorias c ON s.categoria_id = c.id
+               c.id_especialidade AS categoria_id, c.nome AS categoria_nome
+        FROM procedimento s
+        JOIN especialidade c ON s.id_especialidade = c.id_especialidade
       `
       : `
-        SELECT s.id, s.nome, s.preco, s.duracao_minutos, COALESCE(s.ativo, 1) AS ativo, c.id AS categoria_id, c.nome AS categoria_nome
-        FROM servicos s
-        JOIN categorias c ON s.categoria_id = c.id
+        SELECT s.id_procedimento AS id, s.nome, s.preco, s.duracao_minutos, COALESCE(s.ativo, 1) AS ativo, c.id_especialidade AS categoria_id, c.nome AS categoria_nome
+        FROM procedimento s
+        JOIN especialidade c ON s.id_especialidade = c.id_especialidade
       `;
 
     if (filtrarPorProfissional) {
@@ -143,7 +143,7 @@ router.get('/servicos', async (req: Request, res: Response): Promise<any> => {
       if (req.usuario?.perfil === 'PROFISSIONAL' && Number(req.usuario.profissional_id) !== profId) {
         return res.status(403).json({ sucesso: false, erro: 'Acesso restrito aos procedimentos do próprio profissional.' });
       }
-      sql += ' INNER JOIN profissional_procedimento pp ON pp.id_procedimento = s.id AND pp.id_profissional = ? ';
+      sql += ' INNER JOIN profissional_procedimento pp ON pp.id_procedimento = s.id_procedimento AND pp.id_profissional = ? ';
       params.push(profId);
     }
 
@@ -198,13 +198,13 @@ router.post('/servicos', async (req: Request, res: Response): Promise<any> => {
     }
 
     // Verificar se a categoria existe
-    const [categorias] = await pool.query('SELECT id FROM categorias WHERE id = ?', [categoria_id]);
+    const [categorias] = await pool.query('SELECT id_especialidade AS id FROM especialidade WHERE id_especialidade = ?', [categoria_id]);
     if ((categorias as any[]).length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Categoria nao encontrada.' });
     }
 
     const [result] = await pool.query(
-      'INSERT INTO servicos (categoria_id, nome, preco, duracao_minutos) VALUES (?, ?, ?, ?)',
+      'INSERT INTO procedimento (id_especialidade, nome, preco, duracao_minutos) VALUES (?, ?, ?, ?)',
       [categoria_id, nomeSanitizado, precoVal, duracaoVal]
     );
 
@@ -268,19 +268,19 @@ router.put('/servicos/:id', async (req: Request, res: Response): Promise<any> =>
     }
 
     // Verificar se o serviço existe
-    const [servicos] = await pool.query('SELECT id FROM servicos WHERE id = ?', [id]);
+    const [servicos] = await pool.query('SELECT id_procedimento AS id FROM procedimento WHERE id_procedimento = ?', [id]);
     if ((servicos as any[]).length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Servico nao encontrado.' });
     }
 
     // Verificar se a categoria existe
-    const [categorias] = await pool.query('SELECT id FROM categorias WHERE id = ?', [categoria_id]);
+    const [categorias] = await pool.query('SELECT id_especialidade AS id FROM especialidade WHERE id_especialidade = ?', [categoria_id]);
     if ((categorias as any[]).length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Categoria nao encontrada.' });
     }
 
     await pool.query(
-      'UPDATE servicos SET categoria_id = ?, nome = ?, preco = ?, duracao_minutos = ? WHERE id = ?',
+      'UPDATE procedimento SET id_especialidade = ?, nome = ?, preco = ?, duracao_minutos = ? WHERE id_procedimento = ?',
       [categoria_id, nomeSanitizado, precoVal, duracaoVal, id]
     );
 
@@ -361,7 +361,7 @@ router.delete('/servicos/:id', async (req: Request, res: Response): Promise<any>
     }
 
     // Verificar se o serviço existe
-    const [servicos]: any = await pool.query('SELECT id, nome, ativo FROM servicos WHERE id = ?', [id]);
+    const [servicos]: any = await pool.query('SELECT id_procedimento AS id, nome, ativo FROM procedimento WHERE id_procedimento = ?', [id]);
     if (servicos.length === 0) {
       return res.status(404).json({ sucesso: false, erro: 'Serviço não encontrado.' });
     }

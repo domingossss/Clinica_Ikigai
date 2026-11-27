@@ -14,7 +14,7 @@ async function runPatientTests() {
   try {
     // 1. Limpar paciente de teste pré-existente
     console.log('[Setup] Limpando dados de teste anteriores...');
-    await pool.query('DELETE FROM pacientes WHERE cpf = ?', [testCpf]);
+    await pool.query('DELETE FROM paciente WHERE cpf = ?', [testCpf]);
 
     // Simulação de chamada de API: Cadastro bem sucedido com sanitização
     console.log('\n--- Teste 1: Cadastro de Paciente com Sanitização ---');
@@ -44,14 +44,14 @@ async function runPatientTests() {
     const id = crypto.randomUUID();
 
     await pool.query(
-      `INSERT INTO pacientes (id, nome_completo, cpf, telefone, whatsapp, endereco) 
+      `INSERT INTO paciente (uuid, nome, cpf, telefone, whatsapp, endereco) 
        VALUES (?, ?, ?, ?, ?, ?)`,
       [id, payload.nome_completo, cleanCpf, cleanTelefone, cleanTelefone, payload.endereco]
     );
     console.log(`   Paciente inserido no banco com UUID: ${id}`);
 
     // Consultar o banco de dados para garantir que foi salvo sem máscaras
-    const [rows]: any = await pool.query('SELECT * FROM pacientes WHERE id = ?', [id]);
+    const [rows]: any = await pool.query('SELECT * FROM paciente WHERE uuid = ?', [id]);
     
     if (rows.length === 0) {
       throw new Error('Falha no salvamento: Paciente não encontrado no banco.');
@@ -67,7 +67,7 @@ async function runPatientTests() {
     console.log('\n--- Teste 2: Validação de CPF Único (Colisão) ---');
     
     // Tentar buscar se o CPF já existe
-    const [existing]: any = await pool.query('SELECT id FROM pacientes WHERE cpf = ?', [cleanCpf]);
+    const [existing]: any = await pool.query('SELECT uuid AS id FROM paciente WHERE cpf = ?', [cleanCpf]);
     if (existing.length > 0) {
       console.log('   ✅ PASSOU: CPF já detectado como existente no banco. Impedindo novo cadastro.');
     } else {
@@ -79,7 +79,7 @@ async function runPatientTests() {
     console.log("================================================================");
 
     // Limpar dados de teste
-    await pool.query('DELETE FROM pacientes WHERE id = ?', [id]);
+    await pool.query('DELETE FROM paciente WHERE uuid = ?', [id]);
     process.exit(0);
 
   } catch (err: any) {
