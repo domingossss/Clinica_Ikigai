@@ -2,123 +2,157 @@
 
 ## 1. Sobre o Projeto
 
-A Clínica Ikigai é um sistema web de gestão clínica que reúne agendamento de consultas, cadastro de pacientes, configuração de serviços e profissionais e acompanhamento de indicadores. A operação da recepção e os indicadores gerenciais têm rotas próprias no painel principal e compartilham a mesma API e o mesmo banco de dados.
+A Clínica Ikigai é um sistema web de gestão clínica desenvolvido em grupo como **Projeto Integrador do 3º semestre da graduação em Gestão da Tecnologia da Informação**, em parceria com a própria clínica e com os colaboradores do projeto.
 
-## 2. Tecnologias e Estrutura
+A aplicação reúne em um único ambiente a operação diária da recepção, o acompanhamento clínico pelos profissionais, a comunicação via WhatsApp (bot de autoatendimento, lembretes automáticos e transbordo para atendimento humano) e o painel de indicadores gerenciais. Todas as áreas compartilham a mesma API e o mesmo banco de dados.
+
+## 2. Colaboradores
+
+Projeto desenvolvido em equipe para o 3º semestre de Gestão da Tecnologia da Informação, em parceria com a Clínica Ikigai:
+
+- Alecsander Campos
+- Gabriel Higo
+- Ismael Nascimento
+- Victor Domingos Bastos
+
+## 3. Tecnologias e Estrutura
 
 | Camada | Tecnologias |
 | --- | --- |
-| Interface | React, TypeScript, Vite, Tailwind CSS e SweetAlert2 |
+| Interface | React 19, TypeScript, Vite, Tailwind CSS e SweetAlert2 |
 | Indicadores | TypeScript e Chart.js |
-| API | Node.js, Express e TypeScript |
+| API | Node.js 24 LTS, Express e TypeScript |
 | Banco de dados | MySQL 8.0+, InnoDB e mysql2 |
-| Proteções da API | Helmet, CORS, limite de requisições e validação de entradas |
-| Organização e qualidade | npm workspaces, ESLint e verificações de tipos do TypeScript |
+| WhatsApp e automação | Baileys (`@whiskeysockets/baileys`) e workflow auxiliar n8n |
+| Tempo real | Server-Sent Events (SSE) |
+| Proteções da API | Helmet, CORS, limite de requisições, sessões em banco (HttpOnly) e RBAC |
+| Organização e qualidade | npm workspaces, ESLint, TypeScript e testes automatizados |
 
 ```text
 Clinica_Ikigai/
 ├── frontend/
 │   └── src/
-│       ├── components/       # Agenda, cadastros e formulários
-│       ├── indicadores/      # Dashboard, gráficos e cálculos
-│       └── services/         # Comunicação compartilhada de atualizações
+│       ├── components/       # Agenda, pacientes, prontuário, serviços, usuários e comunicação
+│       ├── hooks/            # Acessibilidade de modais e diálogos
+│       ├── indicadores/      # Dashboard gerencial, gráficos e cálculos de métricas
+│       ├── services/         # Autenticação e assinatura SSE de atualizações
+│       └── utils/            # Máscaras, fuso horário da clínica e utilitários
 ├── backend/
 │   ├── .env.example          # Modelo de configuração local
+│   ├── n8n/                  # Fluxo de referência n8n (Etapa 1)
 │   └── src/
-│       ├── config/           # Conexões, transações e eventos
-│       ├── controllers/      # Consultas do dashboard
-│       ├── middleware/       # Validações e tratamento seguro de erros
-│       ├── routes/           # Endpoints da operação e dos indicadores
-│       ├── scripts/          # Migração, backup e carga de apresentação
-│       ├── services/         # Serviços de negócio
-│       └── utils/            # Regras auxiliares e testes existentes
+│       ├── config/           # Pool MySQL, transações e polyfill WebCrypto
+│       ├── controllers/      # Consultas agregadas do dashboard
+│       ├── middleware/       # Autenticação, permissões por perfil e validação de entradas
+│       ├── routes/           # Endpoints da operação, comunicação e indicadores
+│       ├── scripts/          # Migração, backup, provisionamento de admin e carga de apresentação
+│       ├── services/         # Agenda transacional, SSE, lembretes e motor WhatsApp/Baileys
+│       └── utils/            # Regras auxiliares, runner Baileys e suítes de testes
 ├── database/
 │   ├── schema.sql            # Estrutura, relacionamentos, views e gatilhos
-│   ├── seed.sql              # Dados fictícios de demonstração
-│   └── queries_kpis.sql      # Consultas SQL de referência
+│   ├── seed.sql              # Base reduzida usada em desenvolvimento e testes
+│   └── queries_kpis.sql      # Consultas SQL de referência dos indicadores
 ├── package.json              # Workspaces e comandos integrados
 ├── package-lock.json         # Versões resolvidas das dependências
 └── README.md
 ```
 
-O projeto utiliza uma instalação de dependências na raiz. As pastas `frontend/dist/`, `backend/dist/` e os arquivos `*.tsbuildinfo` são gerados automaticamente e não são versionados. Credenciais e backups também ficam fora do Git.
+O projeto utiliza instalação unificada de dependências na raiz. As pastas `frontend/dist/`, `backend/dist/`, `.whatsapp-session/` e `backend/backups/` são geradas localmente e ficam fora do versionamento, assim como arquivos `.env`.
 
-## 3. Banco de Dados
+## 4. Banco de Dados
 
-O banco padrão é `clinica_ikigai_db`, com codificação `utf8mb4`. O modelo concentra os dados operacionais e os registros utilizados pelos indicadores.
+O banco padrão é `clinica_ikigai_db`, com codificação `utf8mb4`. O modelo concentra a operação clínica, o controle de acesso, a comunicação via WhatsApp e os dados históricos utilizados nos indicadores.
 
 | Tabelas principais | Responsabilidade |
 | --- | --- |
-| `paciente` | Identificação, contato, informações clínicas e versão do cadastro para controle de edições concorrentes. |
-| `especialidade` e `procedimento` | Categorias de atendimento, serviços, duração, preço e situação de atividade. |
-| `profissional`, `profissional_especialidade` e `profissional_procedimento` | Profissionais e vínculos com especialidades e procedimentos habilitados. |
-| `agendamento` | Consulta vinculada a paciente, profissional e procedimento, com horários, status, tipo de atendimento e observações. |
-| `historico_status_agendamento` | Histórico das mudanças de situação de cada agendamento. |
-| `jornada_profissional`, `excecao_disponibilidade` e `bloqueio_agenda` | Expediente semanal, intervalos, feriados, horários especiais e períodos indisponíveis. |
-| `agenda_capacidade_snapshot` | Capacidade diária registrada para cálculo histórico da ocupação. |
-| `avaliacao_atendimento`, `pagamento` e `sessao_chatbot` | Registros de avaliação, pagamento e sessões de conversa previstos no modelo. |
+| `usuario` e `sessao_usuario` | Contas de acesso por perfil (`ADMIN`, `RECEPCAO`, `PROFISSIONAL`), flag de primeiro acesso e sessões ativas. |
+| `paciente`, `paciente_evolucao` e `prontuario_consulta` | Cadastro de pacientes com controle de versão, evolução clínica geral e registros individuais por consulta com autoria. |
+| `especialidade` e `procedimento` | Categorias de atendimento, procedimentos, duração padrão, valor e status de atividade. |
+| `profissional`, `profissional_especialidade` e `profissional_procedimento` | Profissionais, vínculos e configurações individuais de duração, preço e ativação por procedimento. |
+| `agendamento` e `historico_status_agendamento` | Consultas vinculadas a paciente, profissional e procedimento, validação de chegada e trilha de auditoria de status. |
+| `expediente_clinica`, `jornada_profissional`, `excecao_disponibilidade` e `bloqueio_agenda` | Grade padrão da clínica, expediente semanal do profissional, intervalos, feriados, horários especiais e bloqueios. |
+| `agenda_capacidade_snapshot` | Capacidade diária registrada para cálculo histórico da taxa de ocupação. |
+| `comunicacao_agendamento` | Registro de envios de lembretes e confirmações com controle de tentativas e estado. |
+| `sessao_chatbot`, `whatsapp_sessao_conversa` e `whatsapp_evento_processado` | Histórico de atendimentos do robô, estado conversacional, transbordo humano e idempotência de mensagens. |
+| `avaliacao_atendimento` e `pagamento` | Avaliações pós-atendimento (NPS 0 a 10) e registros financeiros previstos no modelo. |
+| `revisao_clinica` | Controle de revisão usado para sincronizar atualizações em tempo real. |
 
-As views `pacientes`, `profissionais`, `servicos`, `categorias`, `agendamentos` e `bloqueios` adaptam os nomes utilizados pela API às tabelas do modelo. A tabela legada `capacidade_diaria` permanece no schema; o cálculo atual da ocupação utiliza `agenda_capacidade_snapshot`. O script de migração registra sua execução em `schema_migrations`.
+As views `pacientes`, `profissionais`, `servicos`, `categorias`, `agendamentos` e `bloqueios` adaptam os nomes consumidos pela API. A tabela legada `capacidade_diaria` permanece no schema por compatibilidade; o cálculo atual da ocupação utiliza `agenda_capacidade_snapshot`. O script de migração registra cada etapa concluída em `schema_migrations`.
 
 ### Regras de integridade
 
-- Reservas e reagendamentos respeitam a habilitação do profissional, a jornada, os intervalos, as exceções e os bloqueios.
-- A reserva inclui a duração do procedimento e 15 minutos de intervalo adicional.
-- Transações impedem reservas simultâneas conflitantes para o profissional ou para o paciente.
-- Alterações de jornada e exceções são rejeitadas quando invalidam atendimentos pendentes. Profissionais com reservas pendentes a partir da data atual não podem ser inativados.
-- Serviços inativados deixam de aparecer nas opções de novos agendamentos, preservando os vínculos históricos.
-- Pacientes com agendamentos vinculados não podem ser excluídos. A edição cadastral preserva informações clínicas não enviadas e rejeita versões desatualizadas.
-- O pré-cadastro aceita CPF ausente. Quando informado, o CPF deve ser válido e não pode estar duplicado. Telefones compartilhados não identificam automaticamente uma mesma pessoa.
-- Novos cadastros sem data de nascimento mantêm o campo nulo. Datas legadas exigem conferência antes de qualquer correção.
+- Reservas e reagendamentos validam o vínculo ativo do profissional com o procedimento (`ativo_profissional = 1`), usando duração e preço individuais quando definidos.
+- Toda reserva considera a duração do procedimento somada a 15 minutos de intervalo adicional.
+- Transações com bloqueio de linha impedem reservas simultâneas conflitantes para o profissional ou para o paciente.
+- Alterações de jornada e exceções são bloqueadas quando invalidam atendimentos pendentes. Profissionais com reservas pendentes a partir da data atual não podem ser inativados.
+- Serviços inativados deixam de aparecer para novos agendamentos sem perder o histórico de consultas anteriores.
+- Pacientes com agendamentos vinculados não podem ser excluídos. A edição cadastral preserva os dados clínicos não enviados e rejeita gravações com versão desatualizada.
+- O pré-cadastro aceita CPF ausente. Quando informado, o CPF é validado e não pode estar duplicado. Telefones compartilhados não identificam automaticamente a mesma pessoa no autoatendimento.
 
-## 4. Funcionamento
+## 5. Funcionamento
 
 ### Páginas e fluxos
 
-- **`/agendamentos`:** grade diária e semanal por profissional, criação e reagendamento de consultas, alteração de status e bloqueio de horários.
-- **Pacientes:** cadastro completo ou rápido, busca com paginação, edição e consulta ao histórico de atendimentos.
-- **Serviços e configurações:** categorias, procedimentos, profissionais, vínculos de habilitação, jornadas e exceções de disponibilidade.
-- **`/dashboard`:** indicadores por período e especialidade, análises detalhadas e calendário de atendimentos.
-- **`/`:** redirecionamento para a agenda.
+- **`/login` e `/primeiro-acesso`:** autenticação por e-mail ou login (`nome.ultimonome`). Contas novas com senha temporária são direcionadas para `/primeiro-acesso` até definirem uma senha pessoal.
+- **`/inicio`:** resumo operacional do dia para administradores (total de consultas, aguardando confirmação e próximos horários).
+- **`/agendamentos`:** grade diária e semanal por profissional, criação e reagendamento de consultas, filtro de serviços por profissional, mudança de status, bloqueios de horário, reserva excepcional e atalhos para histórico e prontuário.
+- **`/pacientes`:** busca paginada, formulário de cadastro/edição com busca de endereço por CEP e listagem simplificada exibindo nome do paciente e ações (prontuário, histórico de atendimentos, edição e exclusão).
+- **`/servicos` e `/meus-procedimentos`:** administração de categorias, procedimentos, profissionais, expediente da clínica, jornadas e exceções; o perfil profissional gerencia sua própria lista de procedimentos com duração, valor e ativação individuais.
+- **`/usuarios`:** criação e manutenção de contas pela administração, geração automática de login, credencial temporária e vínculo com profissional.
+- **`/comunicacao`:** painel de conexão do WhatsApp, fila de atendimentos encaminhados para a recepção (com identificação de pacientes cadastrados e confirmação direta de agendamento), busca de atendimentos, envio de confirmações, histórico de comunicações e avaliações NPS recentes.
+- **`/dashboard`:** indicadores por período e especialidade, análises detalhadas, calendário anual e atualização em tempo real.
 
-O acesso começa em `/login`. Cada conta possui um perfil e o administrador gerencia as contas na interface. O servidor revalida a conta e o perfil em cada requisição autenticada. A sessão dura até 12 horas e o logout a revoga no banco. Desativar uma conta ou trocar sua senha revoga todas as suas sessões.
+A sessão dura até 12 horas em cookie `HttpOnly` (`SameSite=Lax`). O servidor revalida conta e perfil em cada requisição, e o logout, a desativação da conta ou a troca de senha revogam as sessões no banco.
+
+### Perfis de acesso
+
+- **Administrador (`ADMIN`):** acesso completo a todas as telas, gestão de usuários, configurações da clínica, envio manual de confirmações e processamento manual da fila de lembretes.
+- **Recepção (`RECEPCAO`):** opera a agenda, realiza reservas, cadastra e edita pacientes (sem acesso à evolução clínica/prontuário), acompanha o painel do WhatsApp em Comunicação (atendendo transbordos humanos e confirmando agendamentos) e consulta os indicadores.
+- **Profissional (`PROFISSIONAL`):** acessa a própria agenda, edita jornada e bloqueios, cria reserva excepcional em dia fechado, personaliza seus procedimentos em **Meus Procedimentos** e registra a evolução clínica e o prontuário dos pacientes vinculados aos seus atendimentos.
 
 ### Atualização automática
 
-A API publica avisos por Server-Sent Events (SSE). As páginas consultam novamente os recursos afetados após alterações concluídas, inclusive entre abas conectadas à mesma instância da API, sem recarregar a página. Os avisos não transportam dados de pacientes.
+A API publica avisos de alteração via Server-Sent Events (`/api/eventos`). As telas conectadas atualizam automaticamente os dados afetados sem recarregar a página e sem trafegar dados pessoais nos eventos. A reconexão e o retorno à aba recuperam o estado atual.
 
-A reconexão e o retorno à aba recuperam os dados atuais. Alterações realizadas diretamente no MySQL não emitem eventos. O mecanismo atual atende uma única instância da API.
+### Comunicação e WhatsApp
+
+O sistema oferece suporte ao modo de simulação e ao conector WhatsApp via Baileys:
+
+- **Bot de autoatendimento:** menu com opções para agendar consulta (`1`), consultar agendamentos (`2`), confirmar presença (`3`), reagendar (`4`), responder pesquisa de satisfação NPS de 0 a 10 (`5`) e falar com a recepção (`6` ou solicitação em linguagem natural).
+- **Segurança (LGPD):** as opções de autoatendimento exigem validação por CPF vinculado ao telefone, com bloqueio temporário após tentativas inválidas. Quando um paciente já cadastrado solicita atendimento humano sem informar o CPF, seu nome aparece para a equipe na tela de Comunicação, sem liberar o autoatendimento sem CPF.
+- **Lembretes e confirmações:** a fila executa a cada minuto para atendimentos futuros dentro da antecedência configurada (padrão de 24 horas no fuso `America/Sao_Paulo`). Na tela de Comunicação, a equipe pode acompanhar os envios, confirmar agendamentos diretamente e marcar solicitações encaminhadas como atendidas.
 
 ### Indicadores
 
-O dashboard acompanha não comparecimento, reagendamento, ocupação, atraso, retorno, ticket médio, satisfação e métricas de sessões do chatbot, conforme os registros disponíveis. A existência de tabelas de apoio não representa uma integração externa ativa de WhatsApp ou chatbot.
+O dashboard consolida métricas de comparecimento, faltas, reagendamentos, taxa de ocupação, atraso registrado, retorno, ticket médio, NPS e funil de conversas do chatbot.
 
-A capacidade diária é registrada enquanto a API está em execução. Períodos sem cobertura completa não exibem taxa de ocupação; dados anteriores não são recalculados com jornadas novas. Atraso não registrado e ausência de amostra são apresentados separadamente de valores iguais a zero. Indicadores do chatbot são globais e não seguem o filtro de especialidade.
+A capacidade diária é gravada enquanto a API está em execução. Períodos sem cobertura completa não exibem taxa de ocupação e registros passados não são recalculados com jornadas novas. Atraso não registrado e ausência de amostra são diferenciados de zero. Os indicadores do chatbot são globais e não seguem filtro por especialidade.
 
 ### Endpoints principais
 
 | Endpoint | Finalidade |
 | --- | --- |
-| `GET /api/health` e `GET /health` | Verificar a disponibilidade da API e do banco. |
-| `POST /api/auth/login`, `GET /api/auth/me` e `POST /api/auth/logout` | Abrir, consultar e encerrar a sessão com cookie HttpOnly. |
-| `/api/usuarios` | Listar, criar, editar e ativar ou desativar contas, com acesso administrativo. |
-| `/api/pacientes` | Cadastros, busca e histórico dos pacientes. |
-| `/api/agendamentos` | Reservas, consultas da agenda e mudanças de situação. |
-| `/api/servicos`, `/api/categorias` e `/api/profissionais` | Configuração de atendimentos e profissionais. |
-| `/api/bloqueios`, `/api/excecoes` e `/api/janelas` | Disponibilidade da agenda. |
-| `GET /api/eventos` | Fluxo de avisos de atualização. |
-| `GET /api/dashboard/dados-painel` e `GET /api/dashboard/especialidades` | Dados dos indicadores e filtros. |
+| `GET /api/health` e `GET /health` | Verificar disponibilidade da API e do banco. |
+| `POST /api/auth/login`, `POST /api/auth/primeiro-acesso/senha`, `GET /api/auth/me` e `POST /api/auth/logout` | Autenticação, definição de senha no primeiro acesso, sessão atual e logout. |
+| `/api/usuarios` | Gestão administrativa de contas. |
+| `/api/pacientes` e `/api/pacientes/:id/prontuario` | Cadastros, busca, histórico de consultas e prontuário clínico. |
+| `/api/agendamentos` | Reservas, grade da agenda, mudanças de status, reagendamentos e auditoria. |
+| `/api/servicos`, `/api/categorias`, `/api/profissionais` e `/api/profissionais/:id/procedimentos` | Catálogo de serviços, profissionais e vínculos individuais. |
+| `/api/expediente-clinica`, `/api/bloqueios`, `/api/excecoes` e `/api/janelas` | Configuração de expediente e cálculo de disponibilidade. |
+| `/api/comunicacoes` e `/api/comunicacoes/whatsapp/painel` | Histórico de mensagens, confirmações, status do WhatsApp, transbordos e NPS. |
+| `GET /api/eventos` | Fluxo SSE de avisos de atualização. |
+| `GET /api/dashboard/dados-painel` e `GET /api/dashboard/especialidades` | Dados agregados dos indicadores e filtros. |
 
-## 5. Instalação e Execução
+## 6. Instalação e Execução
 
 ### Pré-requisitos
 
 - Git.
 - Node.js 24 LTS e npm.
 - MySQL 8.0 ou superior em execução.
-- Cliente `mysql` disponível no terminal; `mysqldump` é necessário para backups.
+- Cliente `mysql` disponível no terminal (`mysqldump` para backups).
 
-Os comandos abaixo são executados a partir da raiz do repositório. Os exemplos de configuração de arquivos utilizam PowerShell.
+Os comandos abaixo partem da raiz do repositório e os exemplos de ambiente usam PowerShell.
 
 ### 1. Clonar e instalar
 
@@ -128,11 +162,11 @@ cd Clinica_Ikigai
 npm install
 ```
 
-O `npm install` instala os dois workspaces e executa `npm run build` por meio do `postinstall`, gerando as duas pastas `dist`. A compilação não precisa de conexão com o banco. Dependências de desenvolvimento são necessárias nessa etapa; `--ignore-scripts` desativa a compilação automática.
+O `npm install` instala os dois workspaces e executa `npm run build` via `postinstall`, gerando `frontend/dist/` e `backend/dist/`. A compilação não depende de conexão com o banco.
 
 ### 2. Configurar o ambiente
 
-Na primeira configuração, copie o modelo sem substituir um arquivo local existente:
+Copie o arquivo modelo sem sobrescrever um `.env` já existente:
 
 ```powershell
 if (-not (Test-Path backend/.env)) {
@@ -140,7 +174,7 @@ if (-not (Test-Path backend/.env)) {
 }
 ```
 
-Edite `backend/.env` com as credenciais da máquina:
+Preencha `backend/.env` conforme o ambiente local (consulte `backend/.env.example` para todas as opções):
 
 ```dotenv
 HOST=127.0.0.1
@@ -157,27 +191,32 @@ RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=100
 ```
 
-`DB_USER` e `DB_PASS` são usados pela API. Migração, backup e testes utilizam `DB_ADMIN_USER` e `DB_ADMIN_PASS` quando configurados; caso contrário, utilizam as credenciais da aplicação. `DB_PASSWORD` é aceito como alternativa a `DB_PASS`.
+`DB_USER` e `DB_PASS` (ou `DB_PASSWORD`) são usados pela API. Migração, backup e testes utilizam `DB_ADMIN_USER` e `DB_ADMIN_PASS` quando definidos.
 
-O frontend utiliza a API no mesmo endereço do site. Em desenvolvimento, o Vite encaminha `/api` para `http://127.0.0.1:3000`. Se a porta da API mudar, ajuste também o destino em `frontend/vite.config.ts`. `VITE_API_URL` é opcional para configurações com API externa e exige alinhamento das origens permitidas e da política de conteúdo.
+Para habilitar comunicação em simulação ou WhatsApp via Baileys, ajuste também no `backend/.env`:
+
+```dotenv
+COMUNICACAO_PROVEDOR=simulado
+WHATSAPP_MODE=simulation
+```
+
+No modo Baileys, defina `WHATSAPP_MODE=baileys`, `WHATSAPP_BAILEYS_ENABLED=true`, `WHATSAPP_SEND_ENABLED=true`, `COMUNICACAO_PROVEDOR=whatsapp` e informe os números autorizados em `WHATSAPP_ALLOWED_NUMBERS` (ou `WHATSAPP_ALLOW_ANY_NUMBER=true` quando desejar atendimento aberto). Para parear o QR Code separadamente, utilize `npm run whatsapp:baileys`.
+
+O frontend acessa a API na mesma origem. Em desenvolvimento, o Vite redireciona `/api` para `http://127.0.0.1:3000` (ajustável em `frontend/vite.config.ts`). `VITE_API_URL` é opcional.
 
 ### 3. Criar o banco em uma instalação nova
 
-Execute com uma conta administrativa do MySQL. A senha será solicitada pelo cliente:
+Execute com uma conta administrativa do MySQL:
 
 ```powershell
 mysql --default-character-set=utf8mb4 -h localhost -P 3306 -u root -p --execute="SOURCE database/schema.sql"
 ```
 
-O script cria o banco `clinica_ikigai_db`, suas tabelas, views e gatilhos. Para utilizar outro nome, ajuste o `CREATE DATABASE`, o `USE` do script e `DB_NAME` antes da criação.
-
-Crie a conta de operação pelo cliente MySQL:
+Em seguida, crie o usuário da aplicação no MySQL:
 
 ```powershell
 mysql -h localhost -P 3306 -u root -p
 ```
-
-No console SQL, substitua a senha abaixo pela mesma definida em `DB_PASS`. Os comandos pressupõem uma conta ainda inexistente:
 
 ```sql
 CREATE USER 'ikigai_app'@'localhost'
@@ -189,21 +228,19 @@ ON clinica_ikigai_db.* TO 'ikigai_app'@'localhost';
 EXIT;
 ```
 
-A instalação inicial não exige dados fictícios. Cadastre categorias, serviços e profissionais pela aplicação e configure os vínculos e jornadas antes de agendar.
-
 #### Dados fictícios para apresentação (opcional)
 
-Para carregar a base completa de demonstração (38 pacientes com CPFs válidos, agendamentos distribuídos de 01/06/2026 até 30/11/2026 em todos os status, avaliações NPS, sessões do robô WhatsApp, pendências de transbordo humano e snapshots de capacidade para os Indicadores), execute após `schema.sql`, `seed.sql` e `npm run db:migrate`:
+Para popular uma base demonstrativa completa (38 pacientes, agendamentos de `01/06/2026` a `30/11/2026`, avaliações NPS, sessões do bot, pendências de transbordo humano e snapshots de capacidade), execute após `schema.sql`, `seed.sql` e `npm run db:migrate`:
 
 ```powershell
 npm run db:seed:apresentacao
 ```
 
-O script é idempotente: pode ser executado novamente sem duplicar pacientes nem agendamentos fictícios.
+O script é idempotente e não duplica registros ao ser executado novamente. Observação: `database/seed.sql` executa `TRUNCATE` e deve ser usado apenas em bancos de desenvolvimento ou demonstração.
 
 #### Primeiro administrador
 
-Após criar ou migrar o banco, provisione a primeira conta pelo terminal local. A API inicia sem criar contas automaticamente. No PowerShell, informe o e-mail e uma senha exclusiva de pelo menos 12 caracteres. O comando recusa bancos que já possuem usuários.
+A API inicia sem criar contas padrão. Provisione o primeiro administrador pelo terminal (senha com no mínimo 12 caracteres):
 
 ```powershell
 $env:ADMIN_INITIAL_EMAIL = Read-Host 'E-mail do administrador'
@@ -217,24 +254,20 @@ try {
 }
 ```
 
-Em produção, configure `NODE_ENV=production` e um `SESSION_SECRET` aleatório e estável de pelo menos 32 bytes no ambiente protegido do serviço. Gere um valor com `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`. Sirva a aplicação via HTTPS. Para um proxy reverso na mesma máquina, mantenha o Express em loopback, configure o proxy para sobrescrever `X-Forwarded-Proto` e habilite `TRUST_PROXY_LOOPBACK=true`. O cookie usa `HttpOnly`, `SameSite=Lax`, caminho `/` e `Secure` em produção. O cliente web utiliza o cookie de sessão. Clientes da API devem guardar o cookie de login e enviá-lo nas chamadas seguintes.
-
-Ao atualizar uma instalação anterior, os usuários existentes são preservados e precisam entrar novamente. Se a instalação criou o administrador com a senha padrão da versão anterior, altere a senha em Gestão de usuários antes de disponibilizar o serviço. Para recuperar o banco anterior, restaure o backup feito antes da migração em um banco separado e use a versão correspondente da aplicação.
-
-**Dados de demonstração:** `database/seed.sql` contém operações `TRUNCATE` que apagam registros existentes. Seu uso é exclusivo de bancos descartáveis de desenvolvimento. Ele não faz parte da instalação operacional.
+Em produção, defina `NODE_ENV=production`, configure um `SESSION_SECRET` estável de pelo menos 32 bytes (gerado com `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`) e sirva a aplicação via HTTPS. Com proxy reverso na mesma máquina, mantenha o Express em loopback, sobrescreva `X-Forwarded-Proto` no proxy e habilite `TRUST_PROXY_LOOPBACK=true`.
 
 ### 4. Atualizar um banco existente
 
-Para um banco criado por uma versão anterior, configure as credenciais administrativas, interrompa a API e execute:
+Com a API parada e as credenciais administrativas configuradas no `.env`:
 
 ```powershell
 npm run db:backup
 npm run db:migrate
 ```
 
-Prossiga com a migração somente após a conclusão do backup. O comando `db:migrate` atualiza um banco já existente; não substitui a criação inicial com `schema.sql`. A instalação de dependências não executa migrações nem cargas de dados. Execute a atualização com a API parada porque o MySQL confirma mudanças de estrutura separadamente. O migrador registra cada versão concluída e pode ser executado novamente para retomar uma alteração interrompida.
+Prossiga com a migração somente após a conclusão do backup. O migrador registra cada versão concluída em `schema_migrations` e pode ser executado novamente com segurança.
 
-A recepção ou a administração registra a chegada em reservas excepcionais criadas pelo próprio profissional. Esse registro autoriza o acesso ao prontuário por esse atendimento. Reservas comuns e reagendamentos feitos pela recepção ou administração autorizam o profissional responsável quando o atendimento está ativo ou foi concluído. Em outras agendas, o perfil profissional visualiza somente a ocupação dos horários. Na migração, o histórico comprova as chegadas registradas por contas da recepção ou da administração sem alterações posteriores no cadastro. Para uma reserva excepcional antiga com chegada já registrada e autoria incerta, abra o atendimento na Agenda e use **Validar chegada** após confirmar o comparecimento. A ação preserva o status e o horário registrados.
+Para reservas excepcionais criadas pelo próprio profissional, a recepção ou administração valida a chegada na Agenda (**Validar chegada**), autorizando o acesso ao prontuário vinculado àquele atendimento.
 
 ### 5. Iniciar em desenvolvimento
 
@@ -242,53 +275,32 @@ A recepção ou a administração registra a chegada em reservas excepcionais cr
 npm run dev
 ```
 
-O comando inicia a API e o frontend com acompanhamento das alterações no código.
-
 | Serviço | Endereço |
 | --- | --- |
-| Agenda | http://127.0.0.1:5173/agendamentos |
+| Interface web | http://127.0.0.1:5173/agendamentos |
 | Dashboard | http://127.0.0.1:5173/dashboard |
 | Saúde da API | http://127.0.0.1:3000/api/health |
 
-Para iniciar cada parte separadamente, use terminais distintos:
+Para subir backend e frontend em terminais separados:
 
 ```powershell
 npm run dev:backend
-```
-
-```powershell
 npm run dev:frontend
 ```
 
 ### 6. Executar a versão compilada
-
-A primeira compilação já ocorre durante `npm install`:
-
-```powershell
-npm start
-```
-
-O Express entrega o site e a API na porta 3000:
-
-- Agenda: http://127.0.0.1:3000/agendamentos
-- Dashboard: http://127.0.0.1:3000/dashboard
-
-Após modificar o código, atualize a versão compilada antes de iniciá-la novamente:
 
 ```powershell
 npm run build
 npm start
 ```
 
-### Comunicação com pacientes em simulação
+O Express serve a interface compilada e a API na porta `3000`:
 
-Administradores acessam `/comunicacao` ou abrem as mensagens a partir do atendimento. A confirmação usa o WhatsApp cadastrado para o paciente. Cada tentativa identifica o atendimento, o horário a que se refere e o resultado. Apenas uma falha definitiva permite solicitar nova tentativa. Uma submissão com resultado incerto fica disponível para conferência.
+- Agenda: http://127.0.0.1:3000/agendamentos
+- Dashboard: http://127.0.0.1:3000/dashboard
 
-Após a migração, configure `COMUNICACAO_PROVEDOR=simulado` em um ambiente de teste e reinicie o servidor. O simulador não envia mensagens a pacientes. Use `COMUNICACAO_SIMULAR_RESULTADO` para exercitar os resultados `submetida`, `entregue`, `rejeitada` e `timeout`. Deixe o provedor vazio para desabilitar o envio.
-
-A clínica usa uma antecedência de 24 horas (1440 minutos), no fuso `America/Sao_Paulo`. A cada minuto o servidor seleciona atendimentos futuros agendados, confirmados e reagendados que entraram na janela. O horário atual do atendimento identifica a ocorrência. Alterar o horário pode gerar um lembrete para a nova ocorrência quando ela se tornar elegível. Tentativas pendentes são reavaliadas após o reinício.
-
-### Verificações do projeto
+### 7. Verificações e testes
 
 ```powershell
 npm run lint
@@ -296,26 +308,18 @@ npm run build
 npm test
 ```
 
-Os testes criam um banco temporário isolado, aplicam o schema e dados fictícios e removem esse banco ao terminar. A conta utilizada precisa de permissões para criar e remover bancos, tabelas e gatilhos de teste. A suíte principal não usa o banco operacional para gravar seus cenários.
+A suíte (`npm test`) executa os testes unitários do frontend, a suíte de integração em um banco MySQL temporário descartável (criado e removido automaticamente, sem alterar o banco operacional) e os testes do módulo WhatsApp. Para rodar apenas os testes de WhatsApp, utilize `npm run test:whatsapp`.
 
-### Backup e recuperação
+### 8. Backup e recuperação
 
 ```powershell
 npm run db:backup
 ```
 
-O backup utiliza `mysqldump`, inclui gatilhos e rotinas e grava arquivos em `backend/backups/`. Somente arquivos concluídos recebem a extensão `.sql`; arquivos `.partial` não são backups válidos. Caso o executável não esteja no `PATH`, configure `MYSQLDUMP_PATH` no `.env`:
+Os arquivos concluídos são salvos em `backend/backups/` com extensão `.sql` (arquivos `.partial` indicam processo interrompido). Caso `mysqldump` não esteja no `PATH`, informe `MYSQLDUMP_PATH` no `backend/.env`:
 
 ```dotenv
 MYSQLDUMP_PATH="C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
 ```
 
-Mantenha uma cópia protegida fora da máquina. Para recuperar dados, interrompa a API, importe o backup em um banco de recuperação e confira registros e vínculos antes de alterar `DB_NAME`. Não valide restaurações sobrescrevendo o banco operacional. Backups e arquivos `.env` contêm informações privadas e não devem ser enviados ao repositório.
-
-### Perfis e comunicação
-
-O administrador abre o resumo do dia em `/inicio` e tem acesso a todas as telas. A recepção abre a agenda, realiza reservas, gerencia cadastros de pacientes e consulta os indicadores. O profissional vinculado pode editar a jornada, os bloqueios e o status dos atendimentos da própria agenda e registrar a evolução clínica de pacientes. O administrador pode vincular uma conta profissional a um cadastro existente ou criar o cadastro em Gestão de Usuários. O botão **Reserva excepcional** permite ao profissional selecionar um paciente existente e confirmar uma reserva na própria agenda em dia fechado. A reserva respeita jornada individual, pausas, bloqueios e ocupações.
-
-Em **Serviços e Configurações → Exceções**, o administrador configura o expediente semanal da clínica. Até configurar um dia da semana, a disponibilidade segue a jornada individual e as exceções da data.
-
-A área **Comunicação** fica disponível ao administrador, inclusive pelo detalhe do atendimento. Para testes locais com dados fictícios, configure `COMUNICACAO_PROVEDOR=simulado`. A simulação distingue submissão, entrega, rejeição e resultado incerto. O simulador usa a regra de 24 horas da clínica. O WhatsApp externo aguarda homologação.
+Para validar uma restauração, importe o arquivo em um banco separado antes de apontar `DB_NAME` para ele. Não versionar backups nem arquivos `.env`.
